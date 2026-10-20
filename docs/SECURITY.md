@@ -1,5 +1,15 @@
 # Segurança
 
+## Como aplicar as regras
+
+O arquivo `firestore.rules` só passa a valer depois do deploy:
+
+```bash
+npx firebase-tools deploy --only firestore:rules
+```
+
+O `firebase.json` na raiz já aponta para `firestore.rules`. Faça o deploy depois de mergear mudanças de regra e antes de testar o fluxo de convite em produção.
+
 ## Regras do Firestore (aplicadas)
 
 As regras em `firestore.rules` foram endurecidas:

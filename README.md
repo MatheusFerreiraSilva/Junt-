@@ -115,16 +115,20 @@ Este projeto foi pensado para rodar no AI Studio:
 ## 🔐 Segurança
 
 - Nunca comite `.env` nem chaves privadas.
-- As regras atuais do Firestore (`firestore.rules`) permitem que qualquer usuário autenticado leia/escreva documentos de casais. Para produção, restrinja por `request.auth.uid` e membros do casal (veja `docs/SECURITY.md`).
+- As regras do Firestore (`firestore.rules`) exigem vínculo de casal (`partner1Uid`/`partner2Uid` ou `users/{uid}.coupleId`) e usam `coupleInvites/{code}` para convites, sem `list` de casais. Detalhes em `docs/SECURITY.md`.
+- **Aplicar as regras no Firebase** (elas só valem depois do deploy):
+  ```bash
+  npx firebase-tools deploy --only firestore:rules
+  ```
+  O `firebase.json` já aponta para `firestore.rules`.
 - O app usa a API key pública do Firebase no cliente — isso é esperado; a proteção real vem das regras do Firestore e dos domínios autorizados no console do Firebase.
 
 ## 🗺️ Próximos passos recomendados
 
 1. Dividir o `FinanceContext` em contextos de domínio (auth, finanças, investimentos, UI).
-2. Adicionar testes de integração para fluxos de transação e onboarding.
-3. Endurecer as regras do Firestore com `partnerUids`.
-4. Integrar monitoramento de erros (Sentry/GlitchTip) e Web Vitals.
-5. Avaliar i18n (pt-BR → es-AR/en-US).
+2. Adicionar testes de integração para fluxos de transação, convite e onboarding.
+3. Integrar monitoramento de erros (Sentry/GlitchTip) e Web Vitals.
+4. Avaliar i18n (pt-BR → es-AR/en-US).
 
 Veja mais detalhes em [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), [`docs/UPGRADE.md`](docs/UPGRADE.md) e [`docs/SECURITY.md`](docs/SECURITY.md).
 
