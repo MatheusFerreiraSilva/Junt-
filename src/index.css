@@ -1,0 +1,188 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  --app-accent-primary: #059669;
+  --app-accent-hover: #047857;
+  --app-accent-light: #ecfdf5;
+  --app-accent-text: #047857;
+  --app-accent-border: #a7f3d0;
+  --app-accent-surface: #ecfdf5;
+  --app-accent-gradient-from: #065f46;
+  --app-accent-gradient-to: #115e59;
+  --app-accent-glow: rgba(5, 150, 105, 0.25);
+  --app-accent-subtle: rgba(5, 150, 105, 0.08);
+}
+
+@layer base {
+  body {
+    font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+    color: #0f172a;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+  .dark body {
+    color: #f8fafc;
+  }
+  h1, h2, h3, h4, .font-display {
+    font-family: 'Outfit', 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+    letter-spacing: -0.015em;
+  }
+}
+
+/* Dynamic Accent Theme Classes */
+.btn-primary-accent {
+  background-color: var(--app-accent-primary, #059669) !important;
+  color: #ffffff !important;
+  transition: all 0.15s ease-in-out;
+}
+
+.btn-primary-accent:hover {
+  background-color: var(--app-accent-hover, #047857) !important;
+  filter: brightness(1.05);
+}
+
+.btn-primary-accent:active {
+  transform: scale(0.97);
+}
+
+.bg-accent-primary {
+  background-color: var(--app-accent-primary, #059669) !important;
+}
+
+.bg-accent-light {
+  background-color: var(--app-accent-light, #ecfdf5) !important;
+}
+
+.bg-accent-surface {
+  background-color: var(--app-accent-surface, #ecfdf5) !important;
+}
+
+.bg-accent-subtle {
+  background-color: var(--app-accent-subtle, rgba(5, 150, 105, 0.08)) !important;
+}
+
+.text-accent-primary {
+  color: var(--app-accent-primary, #059669) !important;
+}
+
+.text-accent-text {
+  color: var(--app-accent-text, #047857) !important;
+}
+
+.text-accent-themed {
+  color: var(--app-accent-text, #047857) !important;
+}
+
+.border-accent-primary {
+  border-color: var(--app-accent-primary, #059669) !important;
+}
+
+.border-accent-border {
+  border-color: var(--app-accent-border, #a7f3d0) !important;
+}
+
+.border-accent-themed {
+  border-color: var(--app-accent-border, #a7f3d0) !important;
+}
+
+.ring-accent-primary {
+  --tw-ring-color: var(--app-accent-primary, #059669) !important;
+}
+
+.card-hero-accent {
+  background: linear-gradient(135deg, var(--app-accent-gradient-from, #065f46), var(--app-accent-gradient-to, #115e59)) !important;
+  color: #ffffff !important;
+}
+
+.badge-accent-theme {
+  background-color: var(--app-accent-surface, #ecfdf5) !important;
+  color: var(--app-accent-text, #047857) !important;
+  border: 1.5px solid var(--app-accent-border, #a7f3d0) !important;
+}
+
+.badge-accent-solid {
+  background-color: var(--app-accent-primary, #059669) !important;
+  color: #ffffff !important;
+}
+
+.card-accent-outline {
+  border: 1.5px solid var(--app-accent-border, #a7f3d0) !important;
+}
+
+.card-accent-highlight {
+  border-left: 4px solid var(--app-accent-primary, #059669) !important;
+}
+
+.shadow-accent-glow {
+  box-shadow: 0 10px 30px -5px var(--app-accent-glow, rgba(5, 150, 105, 0.25)) !important;
+}
+
+.gradient-accent-text {
+  background: linear-gradient(135deg, var(--app-accent-primary, #059669), var(--app-accent-hover, #047857)) !important;
+  -webkit-background-clip: text !important;
+  -webkit-text-fill-color: transparent !important;
+}
+
+/* Glassmorphism utilities */
+.glass-bar {
+  background: rgba(255, 255, 255, 0.9);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+.dark .glass-bar {
+  background: rgba(15, 23, 42, 0.92);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+/* HIGH-CONTRAST READABILITY & BOUNDARY SEPARATION SYSTEM */
+/* Prevents eye strain by ensuring solid optical contrast on all text and card surfaces */
+:root {
+  --app-card-border: #cbd5e1; /* Slate-300: crisp separation against canvas */
+  --app-card-bg: #ffffff;
+  --app-subtle-bg: #f1f5f9; /* Slate-100: clear inner panel separation */
+}
+
+.dark {
+  --app-card-border: #334155; /* Slate-700: distinct separation against dark canvas */
+  --app-card-bg: #0f172a;
+  --app-subtle-bg: #1e293b; /* Slate-800 */
+}
+
+/* Contrast enhancement: ensure muted text has at least 4.5:1 WCAG AA ratio on light & dark mode */
+html:not(.dark) .text-slate-400 {
+  color: #475569 !important; /* Slate-600 */
+}
+
+html:not(.dark) .text-slate-500 {
+  color: #334155 !important; /* Slate-700 */
+}
+
+.dark .text-slate-400 {
+  color: #cbd5e1 !important; /* Slate-300 */
+}
+
+.dark .text-slate-500 {
+  color: #e2e8f0 !important; /* Slate-200 */
+}
+
+/* Crisp card boundaries with visible separation */
+.card-distinct {
+  background-color: var(--app-card-bg);
+  border: 2px solid var(--app-card-border);
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -2px rgba(0, 0, 0, 0.05);
+}
+
+/* High contrast inputs and controls */
+input::placeholder {
+  color: #64748b !important;
+  opacity: 0.9 !important;
+}
+
+.dark input::placeholder {
+  color: #94a3b8 !important;
+  opacity: 0.9 !important;
+}

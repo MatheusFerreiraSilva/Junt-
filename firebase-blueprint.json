@@ -1,0 +1,115 @@
+{
+  "entities": {
+    "CoupleAccount": {
+      "title": "CoupleAccount",
+      "description": "Shared finance workspace for the couple",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "inviteCode": { "type": "string" },
+        "partner1Name": { "type": "string" },
+        "partner2Name": { "type": "string" },
+        "partner1Income": { "type": "number" },
+        "partner2Income": { "type": "number" },
+        "themeMode": { "type": "string" },
+        "accentTheme": { "type": "string" },
+        "investmentsPercentage": { "type": "number" },
+        "isInitialHomePhase": { "type": "boolean" },
+        "emergencyReserveMonthsTarget": { "type": "number" },
+        "expectedYieldAnnual": { "type": "number" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "inviteCode", "partner1Name", "partner2Name"]
+    },
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "User profile linking to a couple account",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string" },
+        "displayName": { "type": "string" },
+        "coupleId": { "type": "string" },
+        "partnerRole": { "type": "string", "enum": ["partner1", "partner2"] }
+      },
+      "required": ["uid", "email", "coupleId"]
+    },
+    "Expense": {
+      "title": "Expense",
+      "description": "Detailed transaction expense item",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "description": { "type": "string" },
+        "amount": { "type": "number" },
+        "category": { "type": "string" },
+        "subcategory": { "type": "string" },
+        "date": { "type": "string" },
+        "paidBy": { "type": "string" },
+        "bankName": { "type": "string" },
+        "notes": { "type": "string" },
+        "installmentId": { "type": "string" }
+      },
+      "required": ["id", "description", "amount", "category", "date"]
+    },
+    "Installment": {
+      "title": "Installment",
+      "description": "Installment purchase plan",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "category": { "type": "string" },
+        "totalAmount": { "type": "number" },
+        "installmentsCount": { "type": "number" },
+        "installmentAmount": { "type": "number" },
+        "startMonth": { "type": "string" },
+        "paidInstallmentsCount": { "type": "number" },
+        "active": { "type": "boolean" },
+        "paidBy": { "type": "string" },
+        "bankName": { "type": "string" }
+      },
+      "required": ["id", "title", "totalAmount", "installmentsCount"]
+    },
+    "Goal": {
+      "title": "Goal",
+      "description": "Piggy bank or investment target",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "emoji": { "type": "string" },
+        "purpose": { "type": "string" },
+        "currentAmount": { "type": "number" },
+        "targetAmount": { "type": "number" },
+        "monthlyDeposit": { "type": "number" },
+        "totalInvested": { "type": "number" },
+        "yieldAccumulated": { "type": "number" },
+        "completed": { "type": "boolean" }
+      },
+      "required": ["id", "name", "targetAmount"]
+    }
+  },
+  "firestore": {
+    "/couples/{coupleId}": {
+      "schema": "CoupleAccount",
+      "description": "Couple shared settings and state"
+    },
+    "/users/{userId}": {
+      "schema": "UserProfile",
+      "description": "Individual user lookup"
+    },
+    "/couples/{coupleId}/expenses/{expenseId}": {
+      "schema": "Expense",
+      "description": "List of couple expenses"
+    },
+    "/couples/{coupleId}/installments/{installmentId}": {
+      "schema": "Installment",
+      "description": "List of active/completed installments"
+    },
+    "/couples/{coupleId}/goals/{goalId}": {
+      "schema": "Goal",
+      "description": "Investment piggy banks and goals"
+    }
+  }
+}

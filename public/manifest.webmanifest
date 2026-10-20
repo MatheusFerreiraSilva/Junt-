@@ -1,0 +1,26 @@
+{
+  "id": "/",
+  "name": "JUNTÔ - Finanças do Casal",
+  "short_name": "JUNTÔ",
+  "description": "O painel de controle financeiro do casal simples, visual, acolhedor e inteligente.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#F8FAF9",
+  "theme_color": "#F43F5E",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "192x192 512x512",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/favicon.svg",
+      "sizes": "192x192 512x512",
+      "type": "image/svg+xml",
+      "purpose": "maskable"
+    }
+  ]
+}
