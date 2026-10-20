@@ -15,11 +15,8 @@ import {
   getDoc,
   setDoc,
   updateDoc,
-  collection,
+  deleteDoc,
   onSnapshot,
-  query,
-  where,
-  getDocs,
 } from 'firebase/firestore';
 import { auth, db } from '../lib/firebase';
 import {
@@ -231,6 +228,31 @@ export const ACCENT_THEMES: Record<
     gradientTo: '#0f172a',
   },
 };
+
+/**
+ * Couple IDs are unguessable so Firestore rules can safely allow `get` by ID
+ * while still requiring membership. Older couples used `couple-${Date.now()}`.
+ */
+function makeCoupleId(): string {
+  const uuid =
+    typeof globalThis.crypto !== 'undefined' &&
+    typeof globalThis.crypto.randomUUID === 'function'
+      ? globalThis.crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  return `couple-${uuid}`;
+}
+
+/**
+ * Creates the public invite lookup document. The invite code is the secret;
+ * only `coupleId` is stored here, never financial data.
+ */
+async function writeInviteDoc(code: string, coupleId: string, uid: string) {
+  await setDoc(doc(db, 'coupleInvites', code), {
+    coupleId,
+    createdAt: new Date().toISOString(),
+    createdBy: uid,
+  });
+}
 
 const STORAGE_KEY = 'junto_app_financeiro_state_v4';
 
@@ -663,6 +685,7 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
   }, [state]);
 
   const isRemoteSync = useRef(false);
+  const inviteBackfillRef = useRef<string | null>(null);
 
   // Auth Listener & Realtime Cloud Synchronization
   useEffect(() => {
@@ -683,6 +706,48 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
               unsubCouple = onSnapshot(coupleRef, (cSnap) => {
                 if (cSnap.exists()) {
                   const cData = cSnap.data();
+
+                  // Backfill member UIDs for couples created before the
+                  // security hardening. This lets us tighten Firestore rules
+                  // without locking existing users out.
+                  const shouldBackfillPartner1 =
+                    !cData.partner1Uid && profileData.partnerRole === 'partner1';
+                  const shouldBackfillPartner2 =
+                    !cData.partner2Uid && profileData.partnerRole === 'partner2';
+
+                  if (shouldBackfillPartner1 || shouldBackfillPartner2) {
+                    void updateDoc(coupleRef, {
+                      ...(shouldBackfillPartner1
+                        ? { partner1Uid: user.uid }
+                        : {}),
+                      ...(shouldBackfillPartner2
+                        ? { partner2Uid: user.uid }
+                        : {}),
+                    }).catch((err) =>
+                      console.warn('Could not backfill couple member UIDs:', err)
+                    );
+                  }
+
+                  const currentCoupleId = cData.id || profileData.coupleId;
+
+                  // Create the public invite lookup doc once per session for
+                  // the partner who owns the invite code. This also migrates
+                  // couples created before coupleInvites existed.
+                  if (
+                    profileData.partnerRole === 'partner1' &&
+                    cData.inviteCode &&
+                    inviteBackfillRef.current !== currentCoupleId
+                  ) {
+                    inviteBackfillRef.current = currentCoupleId;
+                    void writeInviteDoc(
+                      cData.inviteCode,
+                      currentCoupleId,
+                      user.uid
+                    ).catch((err) =>
+                      console.warn('Could not backfill couple invite doc:', err)
+                    );
+                  }
+
                   setCoupleAccount({
                     id: cData.id || profileData.coupleId,
                     inviteCode: cData.inviteCode,
@@ -830,13 +895,22 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
     }
 
     if (coupleAccount?.id) {
+      const oldCode = coupleAccount.inviteCode;
+      const uid = currentUser?.uid || 'unknown';
       try {
+        await writeInviteDoc(code, coupleAccount.id, uid);
         const coupleRef = doc(db, 'couples', coupleAccount.id);
         await updateDoc(coupleRef, { inviteCode: code });
-      } catch {
-        // fallback
+        if (oldCode && oldCode !== code) {
+          await deleteDoc(doc(db, 'coupleInvites', oldCode)).catch((err) =>
+            console.warn('Could not remove old invite doc:', err)
+          );
+        }
+      } catch (err) {
+        console.warn('Could not generate new invite code:', err);
+        throw err;
       }
-      setCoupleAccount(prev => prev ? { ...prev, inviteCode: code } : null);
+      setCoupleAccount(prev => (prev ? { ...prev, inviteCode: code } : null));
     }
     return code;
   };
@@ -850,7 +924,7 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
   ) => {
     const cred = await createUserWithEmailAndPassword(auth, emailVal, passVal);
     const uid = cred.user.uid;
-    const coupleId = `couple-${Date.now()}`;
+    const coupleId = makeCoupleId();
     const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
     let inviteCode = '';
     for (let i = 0; i < 6; i++) {
@@ -860,6 +934,7 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
     const newCouple = {
       id: coupleId,
       inviteCode,
+      partner1Uid: uid,
       partner1Name: displayNameVal || partner1NameVal || 'Seu Nome',
       partner2Name: 'Aguardando Par...',
       partner1Income: 0,
@@ -868,6 +943,9 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
     };
 
     await setDoc(doc(db, 'couples', coupleId), newCouple);
+    await writeInviteDoc(inviteCode, coupleId, uid).catch((err) =>
+      console.warn('Could not create couple invite doc:', err)
+    );
 
     const newProfile: UserAuthProfile = {
       uid,
@@ -967,7 +1045,7 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
     if (!userSnap.exists()) {
       // User is registering for the first time with Google!
       // Create a new couple space
-      const coupleId = `couple-${Date.now()}`;
+      const coupleId = makeCoupleId();
       const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
       let inviteCode = '';
       for (let i = 0; i < 6; i++) {
@@ -977,6 +1055,7 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
       const newCouple = {
         id: coupleId,
         inviteCode,
+        partner1Uid: uid,
         partner1Name: displayNameVal,
         partner2Name: 'Aguardando Par...',
         partner1Income: 0,
@@ -985,6 +1064,9 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
       };
 
       await setDoc(doc(db, 'couples', coupleId), newCouple);
+      await writeInviteDoc(inviteCode, coupleId, uid).catch((err) =>
+        console.warn('Could not create couple invite doc:', err)
+      );
 
       const newProfile: UserAuthProfile = {
         uid,
@@ -1085,91 +1167,137 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
         user = anonCred.user;
         setCurrentUser(anonCred.user);
       } catch (authErr) {
-        console.warn('Anonymous auth note (proceeding with local/hybrid sync):', authErr);
+        console.warn('Anonymous auth note:', authErr);
+        throw new Error(
+          'Não foi possível autenticar. Faça login para entrar com um código.'
+        );
       }
     }
+
+    // The invite code is the secret. The lookup document only contains the
+    // coupleId, never financial data, and cannot be listed.
+    const inviteSnap = await getDoc(doc(db, 'coupleInvites', cleanCode));
+    if (!inviteSnap.exists()) {
+      throw new Error(
+        'Código inválido ou expirado. Peça ao seu par para gerar um novo código no app.'
+      );
+    }
+
+    const coupleId = inviteSnap.data().coupleId as string;
+    if (!coupleId) {
+      throw new Error('Convite inválido. Peça um novo código ao seu par.');
+    }
+
+    const partnerName =
+      user.displayName || state.profile.partner1Name || 'Par Conectado';
+    const previousCoupleId = userProfile?.coupleId || '';
+
+    const updatedProfile: UserAuthProfile = {
+      uid: user.uid,
+      email: user.email || '',
+      displayName: partnerName,
+      coupleId,
+      partnerRole: 'partner2',
+    };
+
+    // Membership is required before reading the couple document, so we link
+    // the profile first. If the couple cannot be joined, we restore it below.
+    await setDoc(doc(db, 'users', user.uid), updatedProfile, { merge: true });
+    setUserProfile(updatedProfile);
 
     try {
-      const q = query(collection(db, 'couples'), where('inviteCode', '==', cleanCode));
-      const snap = await getDocs(q);
-
-      if (!snap.empty) {
-        const coupleDoc = snap.docs[0];
-        const coupleData = coupleDoc.data();
-        const partnerName = user?.displayName || state.profile.partner1Name || 'Par Conectado';
-
-        if (user) {
-          const updatedProfile: UserAuthProfile = {
-            uid: user.uid,
-            email: user.email || '',
-            displayName: partnerName,
-            coupleId: coupleDoc.id,
-            partnerRole: 'partner2',
-          };
-          await setDoc(doc(db, 'users', user.uid), updatedProfile, { merge: true });
-          
-          const coupleRef = doc(db, 'couples', coupleDoc.id);
-          await updateDoc(coupleRef, {
-            partner2Name: partnerName,
-          });
-
-          setUserProfile(updatedProfile);
-        }
-
-        setCoupleAccount({
-          id: coupleDoc.id,
-          inviteCode: coupleData.inviteCode,
-          partner1Name: coupleData.partner1Name,
-          partner2Name: partnerName,
-          partner1Income: coupleData.partner1Income !== undefined ? coupleData.partner1Income : 0,
-          partner2Income: coupleData.partner2Income !== undefined ? coupleData.partner2Income : 0,
-          createdAt: coupleData.createdAt || new Date().toISOString(),
-        });
-
-        // Sync shared data from the couple doc into state
-        setState(prev => ({
-          ...prev,
-          profile: {
-            ...prev.profile,
-            partner1Name: coupleData.partner1Name || prev.profile.partner1Name,
-            partner2Name: partnerName,
-            partner1Income: coupleData.partner1Income !== undefined ? coupleData.partner1Income : prev.profile.partner1Income,
-            partner2Income: coupleData.partner2Income !== undefined ? coupleData.partner2Income : prev.profile.partner2Income,
-          },
-          expenses: Array.isArray(coupleData.expenses) ? coupleData.expenses : prev.expenses,
-          incomes: Array.isArray(coupleData.incomes) ? coupleData.incomes : prev.incomes,
-          pluggyAccounts: Array.isArray(coupleData.pluggyAccounts) ? coupleData.pluggyAccounts : prev.pluggyAccounts,
-          pluggyCredentials: coupleData.pluggyCredentials ? { ...prev.pluggyCredentials, ...coupleData.pluggyCredentials } : prev.pluggyCredentials,
-          installments: Array.isArray(coupleData.installments) ? coupleData.installments : prev.installments,
-          piggyBanks: Array.isArray(coupleData.piggyBanks) ? coupleData.piggyBanks : prev.piggyBanks,
-        }));
-
-        setIsCloudSynced(true);
-        return;
+      const coupleRef = doc(db, 'couples', coupleId);
+      const coupleSnap = await getDoc(coupleRef);
+      if (!coupleSnap.exists()) {
+        throw new Error(
+          'O casal não foi encontrado. Peça um novo código ao seu par.'
+        );
       }
-    } catch (firestoreErr) {
-      console.warn('Firestore couple query error (using robust local link):', firestoreErr);
-    }
 
-    // Graceful reliable link for simulation / local mode so fusion ALWAYS succeeds!
-    const partnerDisplayName = cleanCode === (coupleAccount?.inviteCode || 'CASAL6') ? 'Você & Par' : 'Parceiro(a) Conectado';
-    setCoupleAccount({
-      id: `couple-${cleanCode}`,
-      inviteCode: cleanCode,
-      partner1Name: state.profile.partner1Name,
-      partner2Name: partnerDisplayName,
-      partner1Income: state.profile.partner1Income,
-      partner2Income: state.profile.partner2Income || 0,
-      createdAt: new Date().toISOString(),
-    });
-    setState(prev => ({
-      ...prev,
-      profile: {
-        ...prev.profile,
-        partner2Name: partnerDisplayName,
-      },
-    }));
-    setIsCloudSynced(true);
+      const coupleData = coupleSnap.data();
+
+      if (
+        coupleData.partner2Uid &&
+        coupleData.partner2Uid !== user.uid
+      ) {
+        throw new Error(
+          'Este casal já está completo. Peça ao seu par para gerar um novo código.'
+        );
+      }
+
+      await updateDoc(coupleRef, {
+        partner2Name: partnerName,
+        partner2Uid: user.uid,
+      });
+
+      setCoupleAccount({
+        id: coupleId,
+        inviteCode: coupleData.inviteCode,
+        partner1Name: coupleData.partner1Name,
+        partner2Name: partnerName,
+        partner1Income:
+          coupleData.partner1Income !== undefined
+            ? coupleData.partner1Income
+            : 0,
+        partner2Income:
+          coupleData.partner2Income !== undefined
+            ? coupleData.partner2Income
+            : 0,
+        createdAt: coupleData.createdAt || new Date().toISOString(),
+      });
+
+      // Sync shared data from the couple doc into state
+      setState((prev) => ({
+        ...prev,
+        profile: {
+          ...prev.profile,
+          partner1Name:
+            coupleData.partner1Name || prev.profile.partner1Name,
+          partner2Name: partnerName,
+          partner1Income:
+            coupleData.partner1Income !== undefined
+              ? coupleData.partner1Income
+              : prev.profile.partner1Income,
+          partner2Income:
+            coupleData.partner2Income !== undefined
+              ? coupleData.partner2Income
+              : prev.profile.partner2Income,
+        },
+        expenses: Array.isArray(coupleData.expenses)
+          ? coupleData.expenses
+          : prev.expenses,
+        incomes: Array.isArray(coupleData.incomes)
+          ? coupleData.incomes
+          : prev.incomes,
+        pluggyAccounts: Array.isArray(coupleData.pluggyAccounts)
+          ? coupleData.pluggyAccounts
+          : prev.pluggyAccounts,
+        pluggyCredentials: coupleData.pluggyCredentials
+          ? { ...prev.pluggyCredentials, ...coupleData.pluggyCredentials }
+          : prev.pluggyCredentials,
+        installments: Array.isArray(coupleData.installments)
+          ? coupleData.installments
+          : prev.installments,
+        piggyBanks: Array.isArray(coupleData.piggyBanks)
+          ? coupleData.piggyBanks
+          : prev.piggyBanks,
+      }));
+
+      setIsCloudSynced(true);
+    } catch (err) {
+      // Roll back the profile link if the couple was not joinable.
+      await setDoc(
+        doc(db, 'users', user.uid),
+        { coupleId: previousCoupleId },
+        { merge: true }
+      ).catch(() =>
+        console.warn('Could not restore previous coupleId after failed join')
+      );
+      setUserProfile((prev) =>
+        prev ? { ...prev, coupleId: previousCoupleId } : null
+      );
+      throw err;
+    }
   };
 
   const signInAsGuest = async () => {
