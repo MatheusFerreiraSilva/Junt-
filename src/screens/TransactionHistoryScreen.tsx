@@ -146,7 +146,7 @@ export const TransactionHistoryScreen: React.FC<TransactionHistoryScreenProps> =
       if (sortBy === 'amount-asc') return a.amount - b.amount;
       return 0;
     });
-  }, [state.expenses, searchTerm, selectedCategory, selectedSubcategory, selectedPaidBy, selectedMonth, sortBy]);
+  }, [state.expenses, viewMode, searchTerm, selectedCategory, selectedSubcategory, selectedPaidBy, selectedMonth, sortBy]);
 
   // Aggregate totals for the filtered set
   const filteredTotal = useMemo(() => {

@@ -15,13 +15,15 @@ export default defineConfig(() => {
       tailwindcss(),
       VitePWA({
         registerType: 'autoUpdate',
-        includeAssets: ['favicon.svg'],
+        injectRegister: false,
+        includeAssets: ['favicon.svg', 'push-handler.js'],
         manifest: {
           id: '/',
           name: 'JUNTÔ — Finanças Inteligentes de Casal',
           short_name: 'JUNTÔ',
           description: 'O painel de controle financeiro do casal simples, visual e acolhedor.',
-          theme_color: '#0D9488',
+          lang: 'pt-BR',
+          theme_color: '#F43F5E',
           background_color: '#F8FAF9',
           display: 'standalone',
           orientation: 'portrait-primary',
@@ -43,13 +45,24 @@ export default defineConfig(() => {
           ],
         },
         workbox: {
-          globPatterns: ['**/*.{js,css,html,svg}'],
+          globPatterns: ['**/*.{js,css,html,svg,png,ico,webp,woff2}'],
+          cleanupOutdatedCaches: true,
+          clientsClaim: true,
+          skipWaiting: true,
+          navigateFallback: '/index.html',
+          navigateFallbackDenylist: [/^\/api\//],
+          importScripts: ['/push-handler.js'],
         },
         devOptions: {
           enabled: false,
         },
       }),
     ],
+    build: {
+      target: 'es2020',
+      sourcemap: false,
+      chunkSizeWarningLimit: 900,
+    },
     resolve: {
       alias: {
         '@': path.resolve(__dirname, '.'),

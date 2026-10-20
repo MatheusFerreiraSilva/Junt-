@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useCallback, useState, useMemo } from 'react';
 import {
   TrendingUp,
   Sparkles,
@@ -21,19 +21,22 @@ export const ProjectionsScreen: React.FC = () => {
   const monthlyYield = Math.pow(1 + annualYield, 1 / 12) - 1;
 
   // Calculate future values for 5, 10, 20, 30 years
-  const horizons = [5, 10, 20, 30];
+  const horizons = useMemo(() => [5, 10, 20, 30], []);
 
-  const calculateFutureValue = (years: number, monthly: number, currentInitial: number) => {
-    const totalMonths = years * 12;
-    // Compound interest formula with monthly deposits: FV = PV*(1+r)^n + PMT * [((1+r)^n - 1) / r]
-    let total = currentInitial * Math.pow(1 + monthlyYield, totalMonths);
-    if (monthlyYield > 0) {
-      total += monthly * ((Math.pow(1 + monthlyYield, totalMonths) - 1) / monthlyYield);
-    } else {
-      total += monthly * totalMonths;
-    }
-    return Math.round(total);
-  };
+  const calculateFutureValue = useCallback(
+    (years: number, monthly: number, currentInitial: number) => {
+      const totalMonths = years * 12;
+      // Compound interest formula with monthly deposits: FV = PV*(1+r)^n + PMT * [((1+r)^n - 1) / r]
+      let total = currentInitial * Math.pow(1 + monthlyYield, totalMonths);
+      if (monthlyYield > 0) {
+        total += monthly * ((Math.pow(1 + monthlyYield, totalMonths) - 1) / monthlyYield);
+      } else {
+        total += monthly * totalMonths;
+      }
+      return Math.round(total);
+    },
+    [monthlyYield]
+  );
 
   const projections = useMemo(() => {
     return horizons.map(yrs => {
@@ -51,7 +54,13 @@ export const ProjectionsScreen: React.FC = () => {
         passiveIncomeMonth,
       };
     });
-  }, [horizons, totalMonthlySavings, totalSavedInPiggyBanks, annualYield]);
+  }, [
+    horizons,
+    totalMonthlySavings,
+    totalSavedInPiggyBanks,
+    annualYield,
+    calculateFutureValue,
+  ]);
 
   const activeProj = projections.find(p => p.years === selectedHorizon) || projections[1];
 

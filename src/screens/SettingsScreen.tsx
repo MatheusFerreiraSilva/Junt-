@@ -527,14 +527,14 @@ export const SettingsScreen: React.FC = () => {
       return;
     }
 
-    let targetMoradiaPct = Math.max(pctMoradia, (minMoradiaAmt / currentIncome) * 100);
-    let targetComidaPct = Math.max(pctComida, (minComidaAmt / currentIncome) * 100);
+    const targetMoradiaPct = Math.max(pctMoradia, (minMoradiaAmt / currentIncome) * 100);
+    const targetComidaPct = Math.max(pctComida, (minComidaAmt / currentIncome) * 100);
     let targetProtecaoPct = Math.max(pctProtecao, (minProtecaoAmt / currentIncome) * 100);
     let targetProfissionalPct = Math.max(pctProfissional, (minProfissionalAmt / currentIncome) * 100);
     let targetInvestimentosPct = Math.max(pctInvestimentos, pisoInvestimentosPct);
     let targetLazerPct = pctLazer;
 
-    let currentSum =
+    const currentSum =
       targetMoradiaPct +
       targetComidaPct +
       targetProtecaoPct +
