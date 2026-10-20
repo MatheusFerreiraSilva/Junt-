@@ -1,68 +1,48 @@
 # Segurança
 
-## Regras do Firestore
+## Regras do Firestore (aplicadas)
 
-As regras atuais em `firestore.rules` são permissivas:
+As regras em `firestore.rules` foram endurecidas:
 
-```rules
-match /couples/{coupleId} {
-  allow read, write: if isAuthenticated();
-  match /{allChildren=**} {
-    allow read, write: if isAuthenticated();
-  }
-}
-```
+- **`users/{uid}`**: cada usuário só lê/escreve o próprio perfil.
+- **`couples/{coupleId}`**:
+  - leitura/escrita apenas para membros do casal;
+  - criação exige que `partner1Uid` seja o UID de quem está criando;
+  - o vínculo é reconhecido por `users/{uid}.coupleId` **ou** pelos campos `partner1Uid` / `partner2Uid` no documento do casal;
+  - subcoleções herdam a mesma verificação;
+  - **não existe `list`**: um cliente não consegue enumerar casais.
+- **`coupleInvites/{code}`**:
+  - guarda apenas `coupleId`, `createdAt` e `createdBy`;
+  - qualquer usuário autenticado com o código pode fazer `get` (é o mecanismo do convite);
+  - criar/atualizar/apagar exige ser membro do casal;
+  - **não existe `list`**: códigos não podem ser enumerados.
 
-Isso significa que **qualquer usuário autenticado** consegue ler e escrever qualquer documento de casal se souber o `coupleId`. Para produção, recomenda-se:
+### Como funciona o vínculo
 
-1. Armazenar os UIDs dos membros no documento do casal:
+1. No cadastro, o documento do casal nasce com `partner1Uid` e o app cria `coupleInvites/{code}`.
+2. Ao entrar com código de convite, o app:
+   - faz `get` em `coupleInvites/{code}` para descobrir o `coupleId`;
+   - atualiza `users/{uid}.coupleId`;
+   - lê o documento do casal (agora permitido);
+   - grava `partner2Uid` e `partner2Name`;
+   - se o casal já tiver outro `partner2Uid`, desfaz o vínculo e mostra erro.
+3. Ao gerar um novo código, o app cria o novo `coupleInvites/{code}`, atualiza o casal e apaga o convite antigo.
+4. Casais antigos recebem backfill automático:
+   - `partner1Uid`/`partner2Uid` no primeiro carregamento do membro correspondente;
+   - `coupleInvites/{code}` quando o parceiro 1 abre o app.
 
-```json
-{
-  "partner1Uid": "uid-do-parceiro-1",
-  "partner2Uid": "uid-do-parceiro-2",
-  "inviteCode": "ABC123"
-}
-```
+### Migração de casais antigos
 
-2. Atualizar `partner2Uid` no fluxo `joinCoupleWithInviteCode`.
-3. Aplicar regras como:
+Se o parceiro 2 tentar entrar com um código de um casal criado antes desta versão e o convite ainda não existir, o app mostra “código inválido ou expirado”. Peça ao parceiro 1 para abrir o app (isso cria o convite) ou gerar um novo código em Ajustes.
 
-```rules
-rules_version = '2';
-service cloud.firestore {
-  match /databases/{database}/documents {
-    function isAuthenticated() {
-      return request.auth != null;
-    }
+### Limitação conhecida
 
-    function isCoupleMember(coupleId) {
-      let couple = get(/databases/$(database)/documents/couples/$(coupleId)).data;
-      return isAuthenticated() &&
-        (request.auth.uid == couple.partner1Uid ||
-         request.auth.uid == couple.partner2Uid);
-    }
+A busca por convite é um `get` direto pelo código. Um atacante ainda pode tentar adivinhar códigos de 6 caracteres (espaço de ~1 bilhão) sujeito a quotas/rate limits do Firestore. Para produção em escala, recomenda-se:
 
-    match /users/{userId} {
-      allow read, write: if isAuthenticated() && request.auth.uid == userId;
-    }
-
-    match /couples/{coupleId} {
-      allow read: if isCoupleMember(coupleId);
-      allow create: if isAuthenticated() &&
-        request.resource.data.partner1Uid == request.auth.uid;
-      allow update: if isCoupleMember(coupleId);
-      allow delete: if false;
-
-      match /{allChildren=**} {
-        allow read, write: if isCoupleMember(coupleId);
-      }
-    }
-  }
-}
-```
-
-> Atenção: documentos antigos sem `partner1Uid`/`partner2Uid` precisam de migração antes de ativar regras estritas. Faça um backfill ou uma janela de transição.
+- códigos de uso único com expiração;
+- resolução por **Cloud Function**;
+- rate limiting por IP/UID;
+- notificação ao parceiro 1 quando um novo dispositivo entrar.
 
 ## Outras recomendações
 
@@ -72,3 +52,4 @@ service cloud.firestore {
 - Adicione rate limiting nas rotas `/api/*` antes de expor publicamente (ex.: `express-rate-limit`).
 - Configure cabeçalhos de segurança (CSP, HSTS) no proxy/CDN de produção.
 - Faça rotação de credenciais do Pluggy e use o ambiente sandbox em desenvolvimento.
+- Revise periodicamente as regras com o simulador do Firebase e mantenha um teste de integração para o fluxo de convite.

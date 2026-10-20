@@ -50,7 +50,7 @@ Este documento registra o conjunto de melhorias aplicadas ao JUNTÔ.
 
 - `README.md` com visão geral, stack, setup, scripts, estrutura, PWA, AI Studio e segurança.
 - `docs/ARCHITECTURE.md` com diagrama e fluxo de dados.
-- `docs/SECURITY.md` com recomendações para Firestore.
+- `docs/SECURITY.md` com as regras aplicadas e limitações conhecidas.
 - `docs/UPGRADE.md` (este arquivo).
 
 ## 7. Pequenos ajustes
@@ -59,11 +59,20 @@ Este documento registra o conjunto de melhorias aplicadas ao JUNTÔ.
 - Tema do manifest padronizado em `#F43F5E`.
 - `.gitignore` atualizado (`.npm-cache`, `.vite`, `server.js`, `coverage`).
 
+## 8. Firestore hardening
+
+- Novos casais gravam `partner1Uid`; ao entrar com convite, o app grava `partner2Uid`.
+- Casais antigos são migrados automaticamente no primeiro carregamento do membro correspondente.
+- `firestore.rules` agora exige vínculo (`users/{uid}.coupleId` ou campos `partner1Uid`/`partner2Uid`) para ler/escrever o casal e suas subcoleções.
+- A busca por convite foi movida para `coupleInvites/{code}` (apenas `coupleId`), com `get` por código e **sem `list`** — não é possível enumerar casais.
+- Ao gerar um novo código, o convite antigo é apagado.
+- Detalhes, migração e limitação conhecida (força bruta de código) em `docs/SECURITY.md`.
+
 ## O que ainda vale a pena fazer
 
 1. **Dividir o `FinanceContext`** em contextos de domínio. É a maior dívida técnica restante.
-2. **Endurecer o Firestore** com `partnerUids` e regras por membro.
-3. **Testes de integração** para os fluxos de despesa, onboarding e sincronização.
-4. **Monitoramento** (Sentry/GlitchTip + Web Vitals).
-5. **i18n** e acessibilidade (auditoria com axe).
-6. **Storybook** para os componentes de UI.
+2. **Testes de integração** para os fluxos de despesa, onboarding, convite e sincronização.
+3. **Monitoramento** (Sentry/GlitchTip + Web Vitals).
+4. **i18n** e acessibilidade (auditoria com axe).
+5. **Storybook** para os componentes de UI.
+6. **Cloud Function** para resolução de convite (elimina a limitação de força bruta).
