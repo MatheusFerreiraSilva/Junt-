@@ -122,6 +122,8 @@ Este projeto foi pensado para rodar no AI Studio:
   ```
   O `firebase.json` já aponta para `firestore.rules`.
 - O app usa a API key pública do Firebase no cliente — isso é esperado; a proteção real vem das regras do Firestore e dos domínios autorizados no console do Firebase.
+- As APIs do assistente e do Open Finance têm **rate limiting por IP**, limite de payload (`256kb`) e sanitização do contexto enviado ao Gemini (proteção contra *prompt injection*). Sem `GEMINI_API_KEY` em produção, os endpoints respondem `503` em vez de simular uma resposta.
+- Auditoria de experiência do cliente e correções aplicadas: [`docs/UX_AUDIT.md`](docs/UX_AUDIT.md).
 
 ## 🗺️ Próximos passos recomendados
 

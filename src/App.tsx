@@ -110,6 +110,21 @@ function ScreenFallback() {
   );
 }
 
+// Títulos por tela: melhora a orientação no PWA, no histórico e em leitores de tela
+const SCREEN_TITLES: Record<ScreenId, string> = {
+  home: 'Início',
+  calendar: 'Calendário',
+  categories: 'Categorias',
+  transactions: 'Transações',
+  installments: 'Parcelamentos',
+  goals: 'Objetivos',
+  trends: 'Tendências',
+  projections: 'Projeções',
+  settings: 'Ajustes',
+};
+
+const APP_TITLE = 'JUNTÔ — Finanças Inteligentes de Casal';
+
 function MainApp() {
   const {
     state,
@@ -178,6 +193,20 @@ function MainApp() {
     }
   }, []);
 
+  // Ao trocar de tela: título correto, topo da página e foco no conteúdo.
+  // Isso evita a sensação de "tela travada" no mobile e orienta leitores de tela.
+  useEffect(() => {
+    document.title = `${SCREEN_TITLES[currentScreen]} · ${APP_TITLE}`;
+
+    // Troca de tela deve ser instantânea (a rolagem suave atrapalha no mobile)
+    window.scrollTo({ top: 0, behavior: 'auto' });
+
+    const main = document.getElementById('conteudo-principal');
+    if (main && document.activeElement !== main) {
+      main.focus({ preventScroll: true });
+    }
+  }, [currentScreen]);
+
   if (!currentUser) {
     return <LandingScreen />;
   }
@@ -187,7 +216,6 @@ function MainApp() {
     if (categoryKey) {
       setSelectedCategoryKey(categoryKey);
     }
-    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   const handleOpenExpenseModal = (categoryKey?: CategoryKey, date?: string) => {
@@ -206,6 +234,14 @@ function MainApp() {
 
   return (
     <div className="min-h-screen bg-[#F8F7F4] dark:bg-[#111317] text-slate-900 dark:text-slate-100 flex flex-col lg:flex-row font-sans transition-colors">
+      {/* Atalho de teclado: pula a navegação e vai direto ao conteúdo */}
+      <a
+        href="#conteudo-principal"
+        className="sr-only focus:not-sr-only focus:absolute focus:z-[100] focus:top-2 focus:left-2 focus:rounded-lg focus:bg-white focus:px-4 focus:py-2 focus:text-sm focus:font-semibold focus:text-slate-900 focus:shadow-lg dark:focus:bg-slate-800 dark:focus:text-white"
+      >
+        Ir para o conteúdo principal
+      </a>
+
       {/* Sidebar on Desktop (lg+) and Top/Bottom Navigation on Mobile (<lg) */}
       <Navigation
         currentScreen={currentScreen}
@@ -230,7 +266,11 @@ function MainApp() {
               'radial-gradient(ellipse 80% 60% at 50% -20%, var(--app-tier-glow, rgba(16,185,129,0.25)), transparent 75%)',
           }}
         />
-        <main className="flex-1 max-w-7xl w-full mx-auto px-3 sm:px-6 lg:px-8 pt-4 sm:pt-6 pb-12">
+        <main
+          id="conteudo-principal"
+          tabIndex={-1}
+          className="flex-1 max-w-7xl w-full mx-auto px-3 sm:px-6 lg:px-8 pt-4 sm:pt-6 pb-12 focus:outline-none"
+        >
           <Suspense fallback={<ScreenFallback />}>
             {currentScreen === 'home' && (
               <HomeScreen

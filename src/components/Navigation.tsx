@@ -562,7 +562,7 @@ export const Navigation: React.FC<NavigationProps> = ({
         return (
           <nav
             aria-label="Navegação inferior mobile"
-            className="lg:hidden fixed bottom-3 inset-x-3 sm:inset-x-6 sm:max-w-md sm:mx-auto z-40 rounded-3xl bg-white/95 dark:bg-slate-900/95 backdrop-blur-xl border-2 border-slate-200/90 dark:border-slate-800/90 shadow-[0_12px_36px_-6px_rgba(0,0,0,0.2)] dark:shadow-[0_12px_36px_-6px_rgba(0,0,0,0.65)] p-1.5 transition-all"
+            className="lg:hidden fixed bottom-[calc(0.75rem+env(safe-area-inset-bottom,0px))] inset-x-3 sm:inset-x-6 sm:max-w-md sm:mx-auto z-40 rounded-3xl bg-white/95 dark:bg-slate-900/95 backdrop-blur-xl border-2 border-slate-200/90 dark:border-slate-800/90 shadow-[0_12px_36px_-6px_rgba(0,0,0,0.2)] dark:shadow-[0_12px_36px_-6px_rgba(0,0,0,0.65)] p-1.5 transition-all"
           >
             <div className="relative grid grid-cols-6 items-center h-14">
               {/* Sliding Active Pill Indicator */}
