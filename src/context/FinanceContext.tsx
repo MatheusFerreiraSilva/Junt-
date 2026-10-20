@@ -1294,7 +1294,7 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
     document.documentElement.style.setProperty('--app-tier-gradient-to', tier.colors.gradientTo);
   }, [activeModeThemeKey, currentAccent, activeLifeTier, state.profile.themeMode]);
 
-  const triggerCelebration = () => {
+  const triggerCelebration = useCallback(() => {
     try {
       confetti({
         particleCount: 80,
@@ -1305,7 +1305,7 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
     } catch {
       // safe fallback
     }
-  };
+  }, []);
 
   const setCurrentMonth = (month: string) => {
     setState(prev => ({ ...prev, currentMonth: month }));
@@ -1465,7 +1465,7 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
     };
   }, [state.profile.investmentsPercentage, activeLifeTier, totalIncome, categoriesSpending]);
 
-  const getExpenseSplit = (
+  const getExpenseSplit = useCallback((
     amount: number,
     paidBy: PaidBy,
     p1Pct?: number,
@@ -1520,21 +1520,21 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
       label: '50% / 50% (Casal)',
       isSplit: true,
     };
-  };
+  }, [state.profile.partner1Name, state.profile.partner2Name]);
 
   const partner1ShareSpent = useMemo(() => {
     return currentMonthExpenses.reduce((sum, exp) => {
       const split = getExpenseSplit(exp.amount, exp.paidBy, exp.splitPartner1Pct, exp.splitPartner2Pct);
       return sum + split.partner1Amount;
     }, 0);
-  }, [currentMonthExpenses, state.profile]);
+  }, [currentMonthExpenses, getExpenseSplit]);
 
   const partner2ShareSpent = useMemo(() => {
     return currentMonthExpenses.reduce((sum, exp) => {
       const split = getExpenseSplit(exp.amount, exp.paidBy, exp.splitPartner1Pct, exp.splitPartner2Pct);
       return sum + split.partner2Amount;
     }, 0);
-  }, [currentMonthExpenses, state.profile]);
+  }, [currentMonthExpenses, getExpenseSplit]);
 
   const jointExpensesTotal = useMemo(() => {
     return currentMonthExpenses

@@ -26,4 +26,8 @@ async function testConnection() {
     }
   }
 }
-testConnection();
+// Only probe the Firestore emulator/backend during local development.
+// In production this would add an unnecessary network round-trip on boot.
+if (import.meta.env.DEV) {
+  testConnection();
+}

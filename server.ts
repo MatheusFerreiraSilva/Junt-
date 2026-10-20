@@ -454,7 +454,8 @@ REGRAS:
 
 // Start Server with proper HTML & compression handling
 async function startServer() {
-  const isProd = process.env.NODE_ENV === 'production';
+  const isProd =
+    process.argv.includes('--prod') || process.env.NODE_ENV === 'production';
 
   if (!isProd) {
     const vite = await createViteServer({

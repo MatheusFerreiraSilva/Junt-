@@ -2,6 +2,10 @@ node_modules/
 build/
 dist/
 coverage/
+.npm-cache/
+.vite/
+server.js
+*.tsbuildinfo
 .DS_Store
 *.log
 .env*
