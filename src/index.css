@@ -186,3 +186,54 @@ input::placeholder {
   color: #94a3b8 !important;
   opacity: 0.9 !important;
 }
+
+/* ------------------------------------------------------------------ */
+/* Fluidez e conforto de uso (mobile-first / PWA)                     */
+/* ------------------------------------------------------------------ */
+@layer base {
+  html {
+    /* Evita o "salto" de largura quando a barra de rolagem aparece/some */
+    scrollbar-gutter: stable;
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+  }
+
+  body {
+    /* Evita o efeito elástico que "arrasta" o app inteiro no iOS */
+    overscroll-behavior-y: contain;
+  }
+
+  /* Remove o flash cinza ao tocar em botões no mobile */
+  button,
+  a,
+  [role='button'] {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  /* Respeita quem prefere menos animação (acessibilidade e fluidez) */
+  @media (prefers-reduced-motion: reduce) {
+    html {
+      scroll-behavior: auto !important;
+    }
+
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}
+
+/* Área segura do PWA (notch / barra inferior do iPhone) */
+.pwa-safe-bottom {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+/* Foco visível consistente para navegação por teclado */
+:focus-visible {
+  outline: 2px solid var(--app-accent-primary, #059669);
+  outline-offset: 2px;
+}

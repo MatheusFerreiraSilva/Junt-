@@ -14,6 +14,12 @@ const __dirname = path.dirname(__filename);
 
 const app = express();
 const port = Number(process.env.PORT) || 3000;
+const isProd = process.env.NODE_ENV === 'production' || process.argv.includes('--prod');
+
+// Do not advertise the framework
+app.disable('x-powered-by');
+// Behind AI Studio / Cloud Run proxies, needed for correct client IPs (rate limit)
+app.set('trust proxy', 1);
 
 // Enable gzip/brotli compression for all HTTP responses
 app.use(compression());
@@ -27,10 +33,91 @@ app.get(['/health', '/api/health'], (_req, res) => {
 app.use((_req, res, next) => {
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
   res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
+  res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+  if (isProd) {
+    res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+  }
   next();
 });
 
-app.use(express.json());
+// Request body size guard (avoids DoS through oversized JSON payloads)
+app.use(express.json({ limit: '256kb' }));
+app.use((err: any, _req: express.Request, res: express.Response, next: express.NextFunction) => {
+  if (err?.type === 'entity.too.large') {
+    res.status(413).json({ error: 'Payload muito grande. Reduza o tamanho da requisição.' });
+    return;
+  }
+  next(err);
+});
+
+// -------------------------------------------------------------
+// RATE LIMITING (in-memory, no external dependency)
+// Protects Gemini, Pluggy and bank-sync endpoints from abuse.
+// -------------------------------------------------------------
+interface RateBucket { count: number; resetAt: number }
+const rateBuckets = new Map<string, RateBucket>();
+
+function rateLimit(max: number, windowMs: number) {
+  return (req: express.Request, res: express.Response, next: express.NextFunction) => {
+    const key = `${req.ip || 'unknown'}:${req.path}`;
+    const now = Date.now();
+    const bucket = rateBuckets.get(key);
+
+    if (!bucket || bucket.resetAt <= now) {
+      rateBuckets.set(key, { count: 1, resetAt: now + windowMs });
+      res.setHeader('X-RateLimit-Limit', String(max));
+      res.setHeader('X-RateLimit-Remaining', String(max - 1));
+      next();
+      return;
+    }
+
+    bucket.count += 1;
+    if (bucket.count > max) {
+      const retryAfter = Math.ceil((bucket.resetAt - now) / 1000);
+      res.setHeader('Retry-After', String(retryAfter));
+      res.setHeader('X-RateLimit-Limit', String(max));
+      res.setHeader('X-RateLimit-Remaining', '0');
+      res.status(429).json({ error: 'Muitas requisições. Tente novamente em instantes.', retryAfter });
+      return;
+    }
+
+    res.setHeader('X-RateLimit-Limit', String(max));
+    res.setHeader('X-RateLimit-Remaining', String(max - bucket.count));
+    next();
+  };
+}
+
+// Periodic cleanup so the map does not grow unbounded
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, bucket] of rateBuckets) {
+    if (bucket.resetAt <= now) rateBuckets.delete(key);
+  }
+}, 60_000).unref();
+
+// -------------------------------------------------------------
+// INPUT SANITIZATION (prompt-injection defense for Gemini context)
+// -------------------------------------------------------------
+const MAX_TEXT_LENGTH = 280;
+
+function sanitizeText(value: unknown, maxLength: number = MAX_TEXT_LENGTH): string {
+  if (typeof value !== 'string') return '';
+  return value
+    // remove control chars (keeps accents, emoji and spaces)
+    .replace(/[\u0000-\u001F\u007F]/g, ' ')
+    // neutralize characters commonly used to break out of prompt structure
+    .replace(/[`{}]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, maxLength);
+}
+
+function sanitizeNumber(value: unknown, fallback: number): number {
+  const parsed = typeof value === 'number' ? value : Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
 
 // Serve favicon
 app.get(['/favicon.ico', '/favicon.svg'], (_req, res) => {
@@ -138,9 +225,10 @@ const SAMPLE_PENDING_BANK_FEED: BankTransactionSeed[] = [
 // -------------------------------------------------------------
 // MEU PLUGGY & OPEN FINANCE API PROXY
 // -------------------------------------------------------------
-app.post('/api/pluggy/auth', async (req, res) => {
+app.post('/api/pluggy/auth', rateLimit(10, 60_000), async (req, res) => {
   try {
-    const { clientId, clientSecret } = req.body;
+    const clientId = sanitizeText(req.body?.clientId, 200);
+    const clientSecret = sanitizeText(req.body?.clientSecret, 200);
     if (!clientId || !clientSecret) {
       return res.status(400).json({ error: 'Client ID e Client Secret são obrigatórios' });
     }
@@ -153,31 +241,41 @@ app.post('/api/pluggy/auth', async (req, res) => {
       });
       const data = await authRes.json();
       if (!authRes.ok) {
+        if (isProd) {
+          return res.status(502).json({ error: 'Não foi possível autenticar no Open Finance. Confira as credenciais.' });
+        }
         return res.status(authRes.status).json(data);
       }
       return res.json({ apiKey: data.apiKey });
-    } catch (e: any) {
-      // In sandbox/demo or if external fetch fails, return simulated apiKey
+    } catch {
+      // Sandbox/demo: no network access to Pluggy. Never pretend this is a real connection.
+      if (isProd) {
+        return res.status(502).json({ error: 'Open Finance indisponível no momento. Tente novamente.' });
+      }
       return res.json({
         apiKey: `pluggy_token_${Date.now()}_simulated`,
         simulated: true,
         message: 'Conectado ao ambiente Open Finance (Meu Pluggy Sandbox)',
       });
     }
-  } catch (error: any) {
-    res.status(500).json({ error: error.message || 'Erro ao autenticar com Meu Pluggy' });
+  } catch {
+    res.status(500).json({ error: 'Erro ao autenticar com Meu Pluggy' });
   }
 });
 
 // Endpoint: Fetch accounts & balances via Pluggy
-app.post('/api/pluggy/accounts', async (req, res) => {
+app.post('/api/pluggy/accounts', rateLimit(20, 60_000), async (req, res) => {
   try {
-    const { apiKey, itemId } = req.body;
+    const apiKey = sanitizeText(req.body?.apiKey, 300);
+    const itemId = sanitizeText(req.body?.itemId, 120);
     if (!apiKey) {
       return res.status(400).json({ error: 'API Key do Pluggy é obrigatória' });
     }
 
-    const url = itemId ? `https://api.pluggy.ai/accounts?itemId=${itemId}` : 'https://api.pluggy.ai/accounts';
+    const url = itemId
+      ? `https://api.pluggy.ai/accounts?itemId=${encodeURIComponent(itemId)}`
+      : 'https://api.pluggy.ai/accounts';
+
     try {
       const accountsRes = await fetch(url, {
         headers: { 'X-API-KEY': apiKey },
@@ -188,6 +286,10 @@ app.post('/api/pluggy/accounts', async (req, res) => {
       }
     } catch {
       // Fallback below
+    }
+
+    if (isProd) {
+      return res.status(502).json({ error: 'Não conseguimos consultar suas contas agora. Tente novamente.' });
     }
 
     // Realistic Open Finance Mock Accounts with CPF (taxNumber) and accountId
@@ -228,13 +330,13 @@ app.post('/api/pluggy/accounts', async (req, res) => {
         },
       ],
     });
-  } catch (error: any) {
-    res.status(500).json({ error: error.message || 'Erro ao buscar contas no Pluggy' });
+  } catch {
+    res.status(500).json({ error: 'Erro ao buscar contas no Pluggy' });
   }
 });
 
 // Endpoint: Fetch real-time bank transactions & auto-categorize
-app.post('/api/bank-sync/fetch', async (req, res) => {
+app.post('/api/bank-sync/fetch', rateLimit(30, 60_000), async (_req, res) => {
   try {
     const today = new Date().toISOString().split('T')[0];
     const randomized = [...SAMPLE_PENDING_BANK_FEED]
@@ -259,15 +361,15 @@ app.post('/api/bank-sync/fetch', async (req, res) => {
       transactions: randomized,
       totalAmount: randomized.reduce((acc, curr) => acc + curr.amount, 0),
     });
-  } catch (error: any) {
-    res.status(500).json({ error: error.message || 'Erro ao sincronizar com bancos' });
+  } catch {
+    res.status(500).json({ error: 'Erro ao sincronizar com bancos' });
   }
 });
 
 // -------------------------------------------------------------
 // GEMINI CHATBOT API (Assistente Financeiro do Casal Médico)
 // -------------------------------------------------------------
-app.post('/api/gemini/chat', async (req, res) => {
+app.post('/api/gemini/chat', rateLimit(20, 60_000), async (req, res) => {
   try {
     const { messages, context, model = 'gemini-3.5-flash' } = req.body;
 
@@ -275,18 +377,50 @@ app.post('/api/gemini/chat', async (req, res) => {
       return res.status(400).json({ error: 'Mensagens são obrigatórias' });
     }
 
+    if (messages.length === 0 || messages.length > 40) {
+      return res.status(400).json({ error: 'Envie entre 1 e 40 mensagens por conversa.' });
+    }
+
+    const hasInvalidMessage = messages.some(
+      (msg: any) => !msg || typeof msg.text !== 'string' || msg.text.trim().length === 0 || msg.text.length > 4000
+    );
+    if (hasInvalidMessage) {
+      return res.status(400).json({ error: 'Cada mensagem precisa ter texto entre 1 e 4000 caracteres.' });
+    }
+
+    // Sanitized context: prevents prompt injection through user-controlled fields
+    const safeContext = {
+      partner1Name: sanitizeText(context?.partner1Name, 60) || 'Bia',
+      partner1Specialty: sanitizeText(context?.partner1Specialty, 60) || 'Médica',
+      partner2Name: sanitizeText(context?.partner2Name, 60) || 'Lucas',
+      partner2Specialty: sanitizeText(context?.partner2Specialty, 60) || 'Médico',
+      city: sanitizeText(context?.city, 60) || 'sua cidade',
+      highestBlownName: sanitizeText(context?.highestBlownName, 60) || 'Moradia',
+      totalIncomeFormatted: sanitizeText(context?.totalIncomeFormatted, 30),
+      totalSpentFormatted: sanitizeText(context?.totalSpentFormatted, 30),
+      remainingFormatted: sanitizeText(context?.remainingFormatted, 30),
+      savedTotalFormatted: sanitizeText(context?.savedTotalFormatted, 30),
+      installmentCommitmentPct: sanitizeNumber(context?.installmentCommitmentPct, 7),
+      isOver: Boolean(context?.isOver),
+    };
+
     if (!ai) {
+      if (isProd) {
+        return res.status(503).json({
+          error: 'Assistente indisponível: GEMINI_API_KEY não configurada neste ambiente.',
+        });
+      }
       return res.json({
         reply: `Oi, gente! Aqui é o Junto, o parceiro de vocês. Olhei como estão as coisas por aqui:
-• Vocês ainda podem gastar **${context?.remainingFormatted || 'R$ 4.287'}** neste mês sem aperto.
-• A categoria que mais pediu atenção recentemente foi **${context?.highestBlownName || 'Moradia'}**.
+• Vocês ainda podem gastar **${safeContext.remainingFormatted || 'R$ 4.287'}** neste mês sem aperto.
+• A categoria que mais pediu atenção recentemente foi **${safeContext.highestBlownName}**.
 • Sabemos bem como a rotina de plantões e consultas é corrida e puxada! Se passamos um pouquinho do combinado em algo, fiquem tranquilos: a gente ajusta juntos para vocês terem descanso, paz e viagens sem culpa.
 
 Como podemos descomplicar o dia de vocês hoje?`,
       });
     }
 
-    const systemInstruction = `Você é a inteligência artificial do app "Junto", o parceiro financeiro acolhedor, humano e cúmplice do jovem casal de médicos ${context?.partner1Name || 'Bia'} (${context?.partner1Specialty || 'Médica'}) e ${context?.partner2Name || 'Lucas'} (${context?.partner2Specialty || 'Médico'}) em ${context?.city || 'sua cidade'}.
+    const systemInstruction = `Você é a inteligência artificial do app "Junto", o parceiro financeiro acolhedor, humano e cúmplice do jovem casal de médicos ${safeContext.partner1Name} (${safeContext.partner1Specialty}) e ${safeContext.partner2Name} (${safeContext.partner2Specialty}) em ${safeContext.city}.
 
 DIRETRIZES DE TOM DE VOZ, LINGUAGEM HUMANA POPULAR E EXPERIÊNCIA DE ACOLHIMENTO:
 1. LINGUAGEM TOTALMENTE HUMANA, POPULAR E NATURAL:
@@ -308,16 +442,16 @@ DIRETRIZES DE TOM DE VOZ, LINGUAGEM HUMANA POPULAR E EXPERIÊNCIA DE ACOLHIMENTO
    - Parcela no cartão não deve virar bola de neve: o ideal é manter abaixo de 15% do que entra no mês.
 
 SITUAÇÃO ATUAL DO CASAL:
-- Entradas do mês: ${context?.totalIncomeFormatted || 'R$ 30.000'}
-- Quanto já saiu este mês: ${context?.totalSpentFormatted || 'R$ 13.000'}
-- Quanto ainda podemos gastar: ${context?.remainingFormatted || 'R$ 17.000'}
-- Situação do mês: ${context?.isOver ? 'Passamos um pouco do combinado (vamos ajustar com carinho!)' : 'Dentro do que combinamos com tranquilidade'}
-- Comprometimento com parcelas: ${context?.installmentCommitmentPct || '7'}% da renda
-- Dinheiro guardado nos cofrinhos: ${context?.savedTotalFormatted || 'R$ 380.000'}`;
+- Entradas do mês: ${safeContext.totalIncomeFormatted || 'R$ 30.000'}
+- Quanto já saiu este mês: ${safeContext.totalSpentFormatted || 'R$ 13.000'}
+- Quanto ainda podemos gastar: ${safeContext.remainingFormatted || 'R$ 17.000'}
+- Situação do mês: ${safeContext.isOver ? 'Passamos um pouco do combinado (vamos ajustar com carinho!)' : 'Dentro do que combinamos com tranquilidade'}
+- Comprometimento com parcelas: ${safeContext.installmentCommitmentPct}% da renda
+- Dinheiro guardado nos cofrinhos: ${safeContext.savedTotalFormatted || 'R$ 380.000'}`;
 
-    const contents = messages.map(msg => ({
+    const contents = messages.map((msg: any) => ({
       role: msg.role === 'user' ? 'user' : 'model',
-      parts: [{ text: msg.text }],
+      parts: [{ text: String(msg.text).slice(0, 4000) }],
     }));
 
     const targetModel = model === 'gemini-3.1-pro-preview' ? 'gemini-3.1-pro-preview' : 'gemini-3.5-flash';
@@ -334,31 +468,31 @@ SITUAÇÃO ATUAL DO CASAL:
     const reply = response.text || 'Não consegui formular uma resposta no momento.';
     res.json({ reply });
   } catch (err: any) {
-    console.error('Gemini Chat error:', err);
-    res.status(500).json({ error: err.message || 'Erro ao conversar com o assistente Gemini' });
+    // Log only the failure reason: never the request body (contains financial PII)
+    console.error('Gemini Chat error:', err?.message || 'unknown error');
+    res.status(502).json({ error: 'Não conseguimos falar com o assistente agora. Tente novamente.' });
   }
 });
 
 // -------------------------------------------------------------
 // GEMINI ONBOARDING INTERPRETER API (Questionário Inteligente)
 // -------------------------------------------------------------
-app.post('/api/gemini/onboarding-interpret', async (req, res) => {
+app.post('/api/gemini/onboarding-interpret', rateLimit(10, 60_000), async (req, res) => {
   try {
-    const {
-      partner1Name = 'Pessoa 1',
-      partner2Name = 'Pessoa 2',
-      partner1Income = 14000,
-      partner2Income = 16000,
-      lifeStage = 'Recém-casados montando casa',
-      housingSituation = 'Aluguel com condomínio',
-      diningStyle = 'Equilibrado com pedidos de delivery',
-      mainGoal = 'Construir reserva e investir para o futuro',
-      isInitialHomePhase = false,
-      estimatedRent = 5000,
-      specialNotes = '',
-    } = req.body;
+    const body = req.body || {};
+    const partner1Name = sanitizeText(body.partner1Name, 60) || 'Pessoa 1';
+    const partner2Name = sanitizeText(body.partner2Name, 60) || 'Pessoa 2';
+    const lifeStage = sanitizeText(body.lifeStage, 120) || 'Recém-casados montando casa';
+    const housingSituation = sanitizeText(body.housingSituation, 120) || 'Aluguel com condomínio';
+    const diningStyle = sanitizeText(body.diningStyle, 120) || 'Equilibrado com pedidos de delivery';
+    const mainGoal = sanitizeText(body.mainGoal, 160) || 'Construir reserva e investir para o futuro';
+    const specialNotes = sanitizeText(body.specialNotes, 400);
+    const isInitialHomePhase = Boolean(body.isInitialHomePhase);
+    const partner1Income = Math.min(Math.max(sanitizeNumber(body.partner1Income, 14000), 0), 1_000_000);
+    const partner2Income = Math.min(Math.max(sanitizeNumber(body.partner2Income, 16000), 0), 1_000_000);
+    const estimatedRent = Math.min(Math.max(sanitizeNumber(body.estimatedRent, 5000), 0), 1_000_000);
 
-    const totalIncome = Number(partner1Income) + Number(partner2Income);
+    const totalIncome = partner1Income + partner2Income;
 
     // Fallback logic in case Gemini API is offline or without key
     const fallbackInterpretation = {
@@ -372,7 +506,7 @@ app.post('/api/gemini/onboarding-interpret', async (req, res) => {
         investimentos: isInitialHomePhase ? 15 : 20,
       },
       recommendedFloors: {
-        moradia: Math.max(4000, Math.round(Number(estimatedRent) || totalIncome * 0.25)),
+        moradia: Math.max(4000, Math.round(estimatedRent || totalIncome * 0.25)),
         comida: Math.max(2000, Math.round(totalIncome * 0.10)),
         protecao: 800,
         profissional: 600,
@@ -447,16 +581,13 @@ REGRAS:
       res.json(fallbackInterpretation);
     }
   } catch (err: any) {
-    console.error('Onboarding interpret error:', err);
-    res.status(500).json({ error: err.message || 'Erro ao interpretar questionário' });
+    console.error('Onboarding interpret error:', err?.message || 'unknown error');
+    res.status(502).json({ error: 'Não conseguimos interpretar o questionário agora. Tente novamente.' });
   }
 });
 
 // Start Server with proper HTML & compression handling
 async function startServer() {
-  const isProd =
-    process.argv.includes('--prod') || process.env.NODE_ENV === 'production';
-
   if (!isProd) {
     const vite = await createViteServer({
       server: { middlewareMode: true },

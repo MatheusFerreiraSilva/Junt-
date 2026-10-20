@@ -213,16 +213,19 @@ export const SettingsScreen: React.FC = () => {
   const [showClearDataModal, setShowClearDataModal] = useState(false);
   const [isClearingData, setIsClearingData] = useState(false);
   const [clearSuccessMsg, setClearSuccessMsg] = useState<string | null>(null);
+  const [clearErrorMsg, setClearErrorMsg] = useState<string | null>(null);
 
   const handleConfirmClearData = async () => {
     setIsClearingData(true);
+    setClearErrorMsg(null);
     try {
       await clearAllData();
       setShowClearDataModal(false);
       setClearSuccessMsg('Todo o conteúdo atual da conta foi apagado com sucesso! Suas porcentagens iniciais e categorizações foram preservadas.');
       setTimeout(() => setClearSuccessMsg(null), 6000);
     } catch (e: any) {
-      alert('Erro ao apagar conteúdo: ' + (e?.message || 'Tente novamente'));
+      // Erro inline (com ação de fechar) em vez de alert nativo, que bloqueia a interface
+      setClearErrorMsg(e?.message || 'Não conseguimos apagar o conteúdo agora. Tente novamente.');
     } finally {
       setIsClearingData(false);
     }
@@ -920,6 +923,24 @@ export const SettingsScreen: React.FC = () => {
         <div className="p-4 rounded-2xl bg-rose-600 text-white text-xs sm:text-sm font-bold flex items-center gap-2 shadow-lg animate-in fade-in">
           <Check className="w-5 h-5 stroke-[3]" />
           <span>{clearSuccessMsg}</span>
+        </div>
+      )}
+
+      {clearErrorMsg && (
+        <div
+          role="alert"
+          className="p-4 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border-2 border-amber-300 dark:border-amber-700 text-amber-900 dark:text-amber-100 text-xs sm:text-sm font-bold flex items-start gap-2 shadow-sm animate-in fade-in"
+        >
+          <AlertTriangle className="w-5 h-5 shrink-0" />
+          <span className="flex-1">{clearErrorMsg}</span>
+          <button
+            type="button"
+            onClick={() => setClearErrorMsg(null)}
+            aria-label="Fechar aviso de erro"
+            className="shrink-0 rounded-full p-1 hover:bg-amber-200/60 dark:hover:bg-amber-900/60"
+          >
+            <X className="w-4 h-4" />
+          </button>
         </div>
       )}
 
