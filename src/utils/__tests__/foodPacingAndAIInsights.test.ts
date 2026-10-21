@@ -20,7 +20,6 @@ describe('foodPacingEngine', () => {
         category: 'comida',
         paidBy: 'both',
         date: '2026-10-03',
-        month: '2026-10',
         foodPillar: 'estrutural',
       },
       {
@@ -30,7 +29,6 @@ describe('foodPacingEngine', () => {
         category: 'comida',
         paidBy: 'partner1',
         date: '2026-10-04',
-        month: '2026-10',
         foodPillar: 'rotina',
       },
     ];
@@ -53,11 +51,17 @@ describe('aiPredictiveInsightsEngine', () => {
     const mockState: Partial<AppState> = {
       profile: {
         partner1Name: 'Dra. Bia',
+        partner1Specialty: 'Dermatologia',
         partner2Name: 'Dr. Lucas',
-        combinedMonthlyIncome: 15000,
+        partner2Specialty: 'Cardiologia',
+        city: 'São Paulo - SP',
         partner1Income: 8000,
         partner2Income: 7000,
+        emergencyReserveMonthsTarget: 6,
+        expectedYieldAnnual: 6.5,
         streakMonths: 4,
+        themeMode: 'light',
+        accentTheme: 'emerald',
       },
       piggyBanks: [
         {
@@ -71,7 +75,7 @@ describe('aiPredictiveInsightsEngine', () => {
           completed: false,
         },
       ],
-      appliedAIInsights: [],
+      appliedAIInsights: {},
       expenses: [],
     };
 
@@ -83,7 +87,6 @@ describe('aiPredictiveInsightsEngine', () => {
         category: 'comida',
         paidBy: 'both',
         date: '2026-10-18',
-        month: '2026-10',
         foodPillar: 'conveniencia',
       },
       {
@@ -93,7 +96,6 @@ describe('aiPredictiveInsightsEngine', () => {
         category: 'comida',
         paidBy: 'both',
         date: '2026-10-19',
-        month: '2026-10',
         foodPillar: 'conveniencia',
       },
       {
@@ -103,7 +105,6 @@ describe('aiPredictiveInsightsEngine', () => {
         category: 'comida',
         paidBy: 'both',
         date: '2026-10-20',
-        month: '2026-10',
         foodPillar: 'conveniencia',
       },
     ];

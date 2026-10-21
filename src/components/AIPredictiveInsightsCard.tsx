@@ -14,17 +14,21 @@ import {
   Zap,
 } from 'lucide-react';
 import { useFinance, CATEGORIES_BASE } from '../context/FinanceContext';
-import { AIPredictiveInsight } from '../types/finance';
+import { AIPredictiveInsight, CategoryKey } from '../types/finance';
 import { formatCurrency } from '../utils/formatters';
 
 interface AIPredictiveInsightsCardProps {
   className?: string;
   onOpenGoalModal?: () => void;
+  onNavigateToGoals?: () => void;
+  onOpenExpenseModal?: (categoryKey?: CategoryKey) => void;
 }
 
 export const AIPredictiveInsightsCard: React.FC<AIPredictiveInsightsCardProps> = ({
   className = '',
   onOpenGoalModal,
+  onNavigateToGoals,
+  onOpenExpenseModal,
 }) => {
   const {
     aiPredictiveInsights,
