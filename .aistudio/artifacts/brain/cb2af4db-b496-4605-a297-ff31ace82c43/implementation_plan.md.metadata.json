@@ -1,6 +1,6 @@
 {
-  "summary": "Plano de implementação detalhado para as novas regras do Juntô: inclusão da categoria Transporte & Mobilidade (10%), ajuste do teto de parcelas do cartão para 20% com distinção de financiamentos, gestão da reserva com piso intocável de 3 meses e realocação de excesso, e modal inteligente de adiantamento customizado de parcelas.",
-  "updatedAt": "2026-10-19T20:16:33.235487121Z",
-  "requestFeedback": true,
-  "userFacing": true
+  "summary":  "Plano de implementação para criação da Área Dedicada de Sobras e Excessos Semanais no Dashboard do Junto, organizando de forma otimizada o Pacing Semanal de Comida, as Sugestões Contextuais da IA e o Radar Empático de Recalibragem em uma nova aba dedicada.",
+  "updatedAt":  "2026-10-21T21:00:49.465908374Z",
+  "requestFeedback":  true,
+  "userFacing":  true
 }

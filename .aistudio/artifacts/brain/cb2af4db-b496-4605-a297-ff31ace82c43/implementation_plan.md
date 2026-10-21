@@ -1,107 +1,119 @@
-# Atualização de Regras Financeiras: Transporte, Teto de 20%, Reserva Inteligente & Adiantamento de Parcelas
+# Área Dedicada de Sobras & Excessos Semanais no Dashboard
 
-Implementação da nova especificação de regras do Juntô: adição da 6ª categoria oficial (**Transporte & Mobilidade** a 10%), ajuste do **Teto de Parcelamento no Cartão para 20%** com desoneração de financiamentos estruturais (imobiliário e veicular), **Gestão da Reserva de Emergência** com piso blindado de 3 meses e liberação voluntária de excesso (meta de 10 meses), e **Recurso Customizado de Adiantamento de Parcelas** com múltiplas fontes de débito (reserva excedente, cofrinhos específicos, sobras de categorias ou misto).
+Reorganização inteligente e otimizada da nova mecânica de acompanhamento semanal, unificando o Pacing de Comida & Conveniência, as sugestões da IA e o radar de recalibragem de excessos em uma aba dedicada no menu do Dashboard do Junto.
 
-## Decisões Confirmadas & Respostas do Usuário
+---
+
+### User Review & Critical Decisions
 
 > [!IMPORTANT]
-> - **Transporte & Mobilidade (10%)**: Inclusão como categoria oficial com 10% da renda combinada, recalibrando proporcionalmente Moradia e Lazer nas 4 faixas de renda (`incomeTiersEngine.ts`).
-> - **Reserva de Emergência**: Meta de acúmulo de **10 meses** de despesas fixas, com **piso intocável de segurança de 3 meses** blindado contra compras. O saldo acumulado acima do piso pode ser transferido voluntariamente para Caixinhas/Objetivos ou compras à vista.
-> - **Adiantamento Customizado de Parcelas**: Recurso inteligente na aba de parcelas com seleção de fontes customizadas (debita da reserva excedente, de um cofrinho escolhido, do saldo livre de lazer/sobra do mês ou composição mista), recalculando instantaneamente o teto de 20%.
+> **Decisões confirmadas com o casal:**
+> - **Posicionamento**: Criação de uma aba dedicada no seletor de abas do Dashboard (`Sobras & Excessos`), aliviando a poluição visual do topo e da aba de ações gerais.
+> - **Escopo Unificado**: A nova aba reúne (1) Pacing Semanal de Comida & Abastecimento, (2) Sugestões Contextuais da IA de 1 toque e (3) Radar Empático de Excessos e Recalibragem.
+> - **Tratamento de Excessos Semanais**: Abordagem acolhedora e empática para semanas com plantões pesados, oferecendo ações rápidas de recalibragem de ritmo diário e compensação sem julgamento financeiro frio.
 
-- **Decisão Confirmada 1**: Categoria oficial `transporte` adicionada a `CategoryKey` com escopo completo (combustível, IPVA, licenciamento, seguro auto, manutenção preventiva/corretiva, Uber/99, pedágios e estacionamentos).
-- **Decisão Confirmada 2**: Teto de compras parceladas no cartão de crédito ajustado para **20% da renda líquida combinada**. Financiamentos habitacionais e veiculares são classificados como compromissos estruturais (PF) das categorias Moradia e Transporte e **não** consomem o teto do cartão.
-- **Decisão Confirmada 3**: Piso sagrado de 3 meses na Reserva com calculadora de excesso liberado e transferência facilitada para caixinhas.
-- **Decisão Confirmada 4**: Modal interativo de adiantamento de parcelas com cálculo em tempo real e débitos customizados.
+---
 
-## 1. Visão Geral & Proposta de Valor
+### 1. Overview & Core Concept
 
-- **O que faz**:
-  1. Dá visibilidade autônoma a todos os gastos de locomoção e manutenção veicular do casal através da categoria **Transporte & Mobilidade**, sem misturar com Moradia ou Lazer.
-  2. Ajusta a régua de endividamento no cartão para um teto realista de **20%**, diferenciando o que é compra de consumo de parcelamento longo do que é financiamento de patrimônio.
-  3. Protege a integridade psicológica do casal com um piso intocável de 3 meses na Reserva, ao mesmo tempo em que destrava o excesso para acelerar sonhos e objetivos.
-  4. Permite ao casal "matar" parcelas futuras usando sobras inteligentes do mês, liberando a margem de cartão no mesmo instante.
-- **Público-Alvo**: O casal que deseja clareza orçamentária cirúrgica, mobilidade sem surpresas no IPVA/seguro e alavancagem inteligente para quitar compras parceladas mais rápido.
+- **O que faz**: Cria um centro de inteligência financeira semanal no Dashboard do Junto (`🌿 Sobras & Excessos`), isolando a análise de ritmo semanal em um espaço focado e harmonioso.
+- **Público-alvo**: O casal (Dra. Bia & Dr. Lucas), que precisa verificar rapidamente a saúde da semana atual, gerenciar o saldo de comida/delivery e decidir o destino de sobras orçamentárias sem sobrecarga de informação.
+- **Valor Principal**: Elimina a fragmentação visual, permitindo que a aba principal continue limpa para lançamentos rápidos e rituais, enquanto a nova aba oferece profundidade analítica, acolhimento e celebração das vitórias semanais.
 
-## 2. Experiência do Usuário & Design Visual
+---
 
-- **1. Categoria Transporte & Mobilidade (`🚗`)**:
-  - Nova categoria nos gráficos de rosca, raio-x das áreas da vida, extrato e modais de lançamento.
-  - Paleta: Azul Petróleo / Ciano Profundo (`#0284C7`), com badge própria e ícones de combustível, carro e aplicativo de transporte.
-  - Regras de categorização automática atualizadas para mapear postos de gasolina, Uber, 99, Sem Parar, IPVA e oficinas para `transporte`.
-- **2. Financiamentos vs. Parcelas de Consumo (Teto de 20%)**:
-  - Na tela de parcelamento (`InstallmentsScreen.tsx`), cada item exibe sua natureza:
-    - 💳 *Parcela de Consumo*: Consome a margem de 20% do cartão.
-    - 🏛️ *Financiamento Estrutural*: Vinculado a Moradia ou Transporte como custo fixo base.
-  - Termômetro de comprometimento atualizado para a régua de 20%, com indicador de margem livre (`"Margem livre no cartão: R$ X"`).
-- **3. Reserva de Emergência com Piso de 3 Meses & Liberação de Excesso**:
-  - Na tela de Investimentos & Metas (`GoalsScreen.tsx`):
-    - Barra de proteção dividida em dois segmentos: **Piso Blindado (3 meses)** + **Excesso Alavancável (até 10 meses)**.
-    - Botão *"Realocar Excesso da Reserva"*: abre gaveta para transferir valores excedentes para qualquer Cofrinho (ex: Casamento, Viagem, Reforma) sem tocar no piso mínimo de sobrevivência.
-- **4. Modal Interativo de Adiantamento de Parcelas (`AdvanceInstallmentModal`)**:
-  - Botão *"⚡ Adiantar Parcelas"* em cada card de parcelamento e no topo da aba.
-  - Interface em 3 etapas:
-    - *Etapa 1*: Selecionar quantidade de parcelas a adiantar (ex: 2x de R$ 450 = R$ 900).
-    - *Etapa 2*: Escolher a fonte de débito customizada com sliders ou inputs:
-      - 🛡️ Excesso da Reserva (disponível: R$ ...)
-      - 🎯 Cofrinho X (ex: Viagem - disponível: R$ ...)
-      - 🎮 Saldo Livre de Lazer / Sobra do Mês
-      - 💡 Composição Mista (ex: R$ 500 do Lazer + R$ 400 do Cofrinho)
-    - *Etapa 3*: Confirmação com animação comemorativa e liberação imediata do teto de 20%.
-
-## 3. Decisões de Produto & Arquitetura de Componentes
-
-- **Decisão 1**: Inclusão retrocompatível de `transporte` em `CategoryKey`.
-  - *Abordagem*: Adicionar `'transporte'` à união `CategoryKey` em `src/types/finance.ts` e registrar em `CATEGORIES_BASE`. Todas as telas e gráficos lerão automaticamente a 6ª categoria sem quebrar lançamentos antigos.
-  - *Distribuição padrão nas faixas*: Decolagem (Moradia 30%, Transporte 10%, Comida 18%, Lazer 10%, Proteção 12%, Profissional 10%, Investimentos 10%).
-- **Decisão 2**: Campo `type` em `InstallmentPurchase`.
-  - *Abordagem*: `type?: 'card_consumption' | 'financing'` (default: `'card_consumption'`). Apenas `'card_consumption'` entra no cálculo do `installmentCommitmentPercentage`.
-- **Decisão 3**: Adiantamento como operação financeira atômica.
-  - *Abordagem*: Ao adiantar parcelas, o sistema atualiza `paidInstallmentsCount`, recalcula a fatura do próximo mês e deduz com exatidão dos saldos escolhidos (reserva ou cofrinho), registrando um log de histórico transparente.
-
-## 4. Arquitetura Técnica & Diagrama de Fluxo
+### 2. User Experience & Visual Design
 
 ```
 ┌────────────────────────────────────────────────────────────────────────┐
-│                          FinanceContext State                          │
-│  - CategoryKey: moradia | comida | lazer | protecao |                  │
-│                 profissional | transporte (NOVO)                       │
-│  - InstallmentPurchase.type: 'card_consumption' | 'financing'          │
-│  - emergencyReserveMonthsTarget: 10 meses                             │
-│  - emergencyReserveFloorMonths: 3 meses                                │
-│  - installmentLimitPercentage: 20%                                     │
-└───────────────────────────────────┬────────────────────────────────────┘
-                                    │
-         ┌──────────────────────────┴──────────────────────────┐
-         ▼                                                     ▼
-┌─────────────────────────────────┐   ┌──────────────────────────────────┐
-│ Gestão de Parcelas              │   │ Gestão de Reserva & Metas        │
-│ - Teto de 20% (Apenas Consumo)  │   │ - Piso Intocável (3 meses fixos) │
-│ - Financiamentos em Moradia /   │   │ - Excesso Liberável (até 10 m)   │
-│   Transporte                    │   │ - Ação: reallocateReserveExcess  │
-│ - Modal: Adiantar Parcelas      │   │                                  │
-│   (Fontes customizadas)         │   │                                  │
-└─────────────────────────────────┘   └──────────────────────────────────┘
+│                        DASHBOARD - SELETOR DE ABAS                     │
+├──────────────────┬─────────────────┬─────────────────┬─────────────────┤
+│ ✨ Ações Rápidas │ 🌿 Sobras & Ex. │ ⚖️ Divisão 50/50│ 📅 Cofrinhos/Par│
+└──────────────────┴────────┬────────┴─────────────────┴─────────────────┘
+                            │
+                            ▼
+┌────────────────────────────────────────────────────────────────────────┐
+│ 🌿 HUB SEMANAL: SOBRAS, RITMO & INTELIGÊNCIA DA IA                     │
+│                                                                        │
+│ 1. HERO DO RITMO SEMANAL                                               │
+│    • Semana 3 de 4 (Dias 15 a 21) · Ritmo Seguro: R$ 85,00/dia         │
+│    • Saldo Líquido Operacional em Aberto                               │
+│                                                                        │
+│ 2. SUGESTÕES CONTEXTUAIS DA IA (3 OPÇÕES RÁPIDAS DE 1 TOQUE)           │
+│    • Proposta de Recompensa / Sobras Identificadas                     │
+│      [ ✨ Gostei, vamos usar! ] [ 🎯 Mandar p/ Cofrinho ] [ 🛡️ Guardar]│
+│                                                                        │
+│ 3. RADAR EMPÁTICO DE RECALIBRAGEM (QUANDO HOUVER EXCESSO)              │
+│    • Leitura de cansaço nos plantões sem culpa                         │
+│    • Botão de recalibragem inteligente do ritmo diário restante        │
+│                                                                        │
+│ 4. INTELIGÊNCIA DE ABASTECIMENTO & PACING (COMIDA & CONVENIÊNCIA)      │
+│    • Detalhamento dos 3 Pilares (Estrutural, Rotina, Conveniência)     │
+│    • Blocos das 4 semanas com status em tempo real                     │
+└────────────────────────────────────────────────────────────────────────┘
 ```
 
-- **Plano de Execução**:
-  1. **Atualizar `src/types/finance.ts`**:
-     - Adicionar `'transporte'` a `CategoryKey`.
-     - Adicionar `type?: 'card_consumption' | 'financing'` em `InstallmentPurchase`.
-     - Adicionar tipos de adiantamento e realocação de reserva.
-  2. **Atualizar `src/utils/incomeTiersEngine.ts`**:
-     - Recalibrar porcentagens das 4 faixas de vida incorporando Transporte a 10%.
-  3. **Atualizar `src/context/FinanceContext.tsx`**:
-     - Adicionar `transporte` em `CATEGORIES_BASE`.
-     - Ajustar cálculo do teto de parcelas para 20% filtrando apenas `card_consumption`.
-     - Implementar lógica de piso de 3 meses e realocação de excesso da reserva.
-     - Implementar ação `advanceInstallmentPayment`.
-  4. **Criar `AdvanceInstallmentModal.tsx`**:
-     - Modal com seleção de parcelas e fontes customizadas (reserva, cofrinho, sobra, misto).
-  5. **Atualizar `InstallmentsScreen.tsx` e `GoalsScreen.tsx`**:
-     - Integrar o botão e fluxo de adiantamento na tela de parcelamentos.
-     - Integrar a visualização de piso intocável e botão de realocação na tela de metas.
-  6. **Atualizar telas com filtros e gráficos (`HomeScreen.tsx`, `TrendsScreen.tsx`, etc.)**:
-     - Garantir que Transporte & Mobilidade apareça com sua paleta nos gráficos de rosca e extratos.
-  7. **Compilação e Verificação**:
-     - `compile_applet` e `lint_applet` para garantir zero regressões.
+#### Fluxo do Usuário:
+1. **Entrada Natural**: Na tela inicial, abaixo das 3 Perguntas Essenciais, o casal encontra a barra de navegação de contexto. Um indicador discreto na aba `🌿 Sobras & Excessos` sinaliza quando houver sobras ativas para direcionamento.
+2. **Visão da Semana**: Ao tocar na aba, o casal visualiza imediatamente o saldo seguro dos próximos dias, sem misturar com formulários de entrada de dados.
+3. **Decisão em 1 Toque**: As sugestões da IA aparecem organizadas em cards acolhedores com as 3 opções diretas ("Gostei, vamos usar!", "Mandar para o Cofrinho", "Manter guardado na conta").
+4. **Recalibragem Serena**: Se uma semana tiver excesso de delivery devido a plantões, o radar acolhe o cansaço e oferece recalibrar a média diária dos dias restantes em 1 clique.
+
+---
+
+### 3. Key Product Decisions & Trade-Offs
+
+- **Aba Dedicada vs. Card no Topo**:
+  - *Decisão*: Criar a aba `surplus` no menu de seções do Dashboard.
+  - *Por que*: O topo do dashboard já possui o Termômetro do Mês e a Faixa de Vida, que são o "raio-x" instantâneo. Inserir múltiplos cards de sobras no topo alongava desnecessariamente a rolagem vertical.
+- **Componente Unificado `WeeklySurplusHub`**:
+  - *Decisão*: Criar uma área modular que engloba as sugestões da IA, o Pacing de Comida e o Radar de Excessos de forma integrada.
+  - *Por que*: Evita renderização duplicada ou cards órfãos espalhados pelo código.
+- **Tratamento de Excessos com Recalibragem**:
+  - *Decisão*: Em vez de mero aviso vermelho de estouro, oferecer cálculo de novo ritmo seguro diário para o restante do mês.
+  - *Por que*: Reduz ansiedade e mantém a cumplicidade do relacionamento.
+
+---
+
+### 4. Technical Architecture & Data Strategy
+
+```
+┌────────────────────────────────────────────────────────────────────────┐
+│                        FinanceContext                                  │
+│  - foodPacingMetrics (semanas, saldo operacional, pilares)             │
+│  - aiPredictiveInsights (sugestões com 3 ações)                        │
+│  - applyAISuggestionAction / dismissAISuggestion                       │
+│  - recalculateSafeDailyPacing                                          │
+└───────────────────────────────────┬────────────────────────────────────┘
+                                    │
+                                    ▼
+┌────────────────────────────────────────────────────────────────────────┐
+│                   src/screens/HomeScreen.tsx                           │
+│  - activeDashboardTab: 'actions' | 'surplus' | 'split' | 'future' ...  │
+│  - renderiza WeeklySurplusHub quando activeDashboardTab === 'surplus'  │
+└───────────────────────────────────┬────────────────────────────────────┘
+                                    │
+                                    ▼
+┌────────────────────────────────────────────────────────────────────────┐
+│           src/components/WeeklySurplusHub.tsx (NOVO)                   │
+│  ├── Header com Status da Semana e Ritmo Seguro Diário                 │
+│  ├── Radar Empático de Excessos e Recalibragem de Ritmo               │
+│  ├── AIPredictiveInsightsCard (Sugestões de 1 toque da IA)             │
+│  └── FoodPacingWeeklyCard (Pacing Semanal dos 3 Pilares de Comida)     │
+└────────────────────────────────────────────────────────────────────────┘
+```
+
+#### Passos de Implementação:
+1. **Criar componente `WeeklySurplusHub.tsx`**:
+   - Reúne métricas da semana em andamento, ritmo diário, card de excessos com recalibragem suave, `AIPredictiveInsightsCard` e `FoodPacingWeeklyCard`.
+2. **Atualizar `DashboardTab` em `HomeScreen.tsx`**:
+   - Adicionar `'surplus'` ao tipo `DashboardTab` (`actions | surplus | split | future | fusion`).
+   - Atualizar a barra de abas com label `🌿 Sobras & Excessos` e contador de insights pendentes.
+   - Mover a visualização densa de `AIPredictiveInsightsCard` e `FoodPacingWeeklyCard` para dentro da aba `surplus`.
+   - Adicionar banner sutil ou badge na aba indicando quando há sobras semanais para direcionar.
+3. **Garantir Integração com Ações**:
+   - Manter as ações de 1 toque funcionando perfeitamente (recompensas, cofrinhos, amortecedor de caixa).
+   - Manter compatibilidade com tela de detalhes de categoria (`CategoryDetailsScreen.tsx`).
+4. **Verificação & Testes**:
+   - Executar `lint_applet` e `compile_applet`.
+   - Executar `vitest` em `src/utils/__tests__` garantindo 100% de sucesso.

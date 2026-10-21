@@ -15,6 +15,7 @@ import { useFinance, CATEGORIES_BASE } from '../context/FinanceContext';
 import { CategoryKey, ExpenseItem, PaidBy } from '../types/finance';
 import { formatCurrency } from '../utils/formatters';
 import { MonthSelector } from '../components/MonthSelector';
+import { FoodPacingWeeklyCard } from '../components/FoodPacingWeeklyCard';
 
 interface CategoryDetailsScreenProps {
   initialCategory?: CategoryKey;
@@ -258,6 +259,11 @@ export const CategoryDetailsScreen: React.FC<CategoryDetailsScreenProps> = ({
             </div>
           </div>
         </div>
+      )}
+
+      {/* Se a categoria selecionada for Comida & Conveniência, exibir o Pacing Semanal e Inteligência de Abastecimento */}
+      {selectedCategory === 'comida' && (
+        <FoodPacingWeeklyCard onOpenExpenseModal={() => onOpenExpenseModal('comida')} />
       )}
 
       {/* Filter by Who Paid (Todos, Em Conjunto, Só Dra. Bia, Só Dr. Lucas) */}

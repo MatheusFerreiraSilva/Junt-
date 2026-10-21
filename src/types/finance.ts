@@ -43,6 +43,7 @@ export interface ExpenseItem {
   installmentTotal?: number;
   notes?: string;
   tags?: string[];
+  foodPillar?: 'estrutural' | 'rotina' | 'conveniencia';
 }
 
 export interface IncomeItem {
@@ -400,6 +401,8 @@ export interface AppState {
   dismissedSurplusMonths?: string[];
   monthlyDepositGuides?: Record<string, MonthlyDepositGuide>;
   completedMonthDeposits?: Record<string, MonthDepositCompletionRecord>;
+  appliedAIInsights?: Record<string, 'use_reward' | 'send_to_goal' | 'keep_buffer'>;
+  temporaryBudgetAdjustments?: Record<string, { category: CategoryKey; amount: number; expiresAt: string }>;
 }
 
 export interface UserAuthProfile {
@@ -418,5 +421,93 @@ export interface CoupleAccountData {
   partner1Income: number;
   partner2Income: number;
   createdAt: string;
+}
+
+// ==========================================
+// MOTOR DE INSIGHTS PREDITIVOS & INTELIGÊNCIA DE ABASTECIMENTO (COMIDA)
+// ==========================================
+export type FoodPillarType = 'estrutural' | 'rotina' | 'conveniencia';
+
+export interface FoodPillarSummary {
+  pillar: FoodPillarType;
+  title: string;
+  emoji: string;
+  description: string;
+  spent: number;
+  percentageOfFoodSpent: number;
+  itemCount: number;
+}
+
+export interface FoodWeeklyPacingBlock {
+  weekNumber: 1 | 2 | 3 | 4;
+  label: string; // e.g. "Semana 1 (Dias 1 a 7)"
+  dayRange: string; // "1-7", "8-14", "15-21", "22-fim"
+  allocatedBudget: number; // quota per week from saldo operacional líquido
+  spent: number;
+  remaining: number;
+  status: 'safe' | 'warning' | 'over' | 'future';
+  isCurrentWeek: boolean;
+}
+
+export interface FoodPacingMetrics {
+  totalFoodBudget: number;
+  totalFoodSpent: number;
+  structuralSpent: number; // Abastecimento da casa (grandes compras de mercado/açougue/limpeza)
+  routineSpent: number; // Alimentação de rotina e trabalho (almoços dia a dia, plantões, hospital)
+  convenienceSpent: number; // Delivery e conveniência (iFood, Rappi, lanches)
+  operationalBudgetRemaining: number; // Orçamento líquido após deduzir abastecimento estrutural
+  weeklyQuota: number; // Quota operacional por semana (saldo operacional / 4)
+  weeks: FoodWeeklyPacingBlock[];
+  currentWeekNumber: 1 | 2 | 3 | 4;
+  currentWeekRemaining: number;
+  dailySafePacing: number;
+  hasInitialStockup: boolean; // Reconheceu o abastecimento inicial
+  pillars: Record<FoodPillarType, FoodPillarSummary>;
+}
+
+export type AISuggestionCategory = 'comida_delivery' | 'lazer' | 'moradia' | 'transporte' | 'profissional' | 'geral';
+
+export interface AISuggestionOption {
+  label: string;
+  description: string;
+  amount?: number;
+}
+
+export interface AIPredictiveInsight {
+  id: string;
+  type: 'fatigue_pattern' | 'reward_proposal' | 'efficiency_proposal';
+  category: AISuggestionCategory;
+  title: string;
+  message: string;
+  badgeText: string;
+  emoji: string;
+  surplusAmount?: number;
+  sourceCategory?: CategoryKey;
+  suggestedActionName?: string;
+  targetGoalId?: string;
+  targetGoalName?: string;
+  options: {
+    useReward?: {
+      label: string;
+      description: string;
+      appliedAmount: number;
+      targetCategory: CategoryKey;
+    };
+    sendToGoal?: {
+      label: string;
+      description: string;
+      amount: number;
+      defaultGoalId?: string;
+      defaultGoalName?: string;
+    };
+    keepBuffer?: {
+      label: string;
+      description: string;
+      amount: number;
+    };
+  };
+  createdAt: string;
+  status: 'active' | 'applied' | 'dismissed';
+  appliedOption?: 'use_reward' | 'send_to_goal' | 'keep_buffer';
 }
 

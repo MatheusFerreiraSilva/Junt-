@@ -288,16 +288,26 @@ export const SettingsScreen: React.FC = () => {
   // Synchronization with Context changes
   useEffect(() => {
     if (state.categoryPercentages) {
-      setPctMoradia(state.categoryPercentages.moradia ?? 35);
+      setPctMoradia(state.categoryPercentages.moradia ?? 30);
+      setPctTransporte(state.categoryPercentages.transporte ?? 10);
       setPctComida(state.categoryPercentages.comida ?? 15);
       setPctLazer(state.categoryPercentages.lazer ?? 15);
       setPctProtecao(state.categoryPercentages.protecao ?? 10);
       setPctProfissional(state.categoryPercentages.profissional ?? 10);
     }
+    if (state.categoryFloors) {
+      setPisoMoradia(state.categoryFloors.moradia ?? 0);
+      setPisoTransporte(state.categoryFloors.transporte ?? 0);
+      setPisoComida(state.categoryFloors.comida ?? 0);
+      setPisoLazer(state.categoryFloors.lazer ?? 0);
+      setPisoProtecao(state.categoryFloors.protecao ?? 0);
+      setPisoProfissional(state.categoryFloors.profissional ?? 0);
+      setPisoInvestimentosPct(state.categoryFloors.investimentos ?? 0);
+    }
     if (state.profile.investmentsPercentage !== undefined) {
       setPctInvestimentos(state.profile.investmentsPercentage);
     }
-  }, [state.categoryPercentages, state.profile.investmentsPercentage]);
+  }, [state.categoryPercentages, state.categoryFloors, state.profile.investmentsPercentage]);
 
   // Calculated Values & Life Tier for Bloco 1 & 2
   const currentIncome = totalRendaCalculada > 0 ? totalRendaCalculada : totalIncome;
@@ -305,13 +315,14 @@ export const SettingsScreen: React.FC = () => {
   const tierDefaults = currentPreviewTier.percentages;
 
   const valMoradia = (pctMoradia / 100) * currentIncome;
+  const valTransporte = (pctTransporte / 100) * currentIncome;
   const valComida = (pctComida / 100) * currentIncome;
   const valLazer = (pctLazer / 100) * currentIncome;
   const valProtecao = (pctProtecao / 100) * currentIncome;
   const valProfissional = (pctProfissional / 100) * currentIncome;
   const valInvestimentos = (pctInvestimentos / 100) * currentIncome;
 
-  const totalPercentagesSum = pctMoradia + pctComida + pctLazer + pctProtecao + pctProfissional + pctInvestimentos;
+  const totalPercentagesSum = pctMoradia + pctTransporte + pctComida + pctLazer + pctProtecao + pctProfissional + pctInvestimentos;
 
   // Customization checks for each category against current tier algorithm defaults
   const customStatus = useMemo(() => {
@@ -328,6 +339,19 @@ export const SettingsScreen: React.FC = () => {
         valCalculated: (pctMoradia / 100) * currentIncome,
         floor: pisoMoradia,
         isFloorOk: valMoradia >= pisoMoradia,
+      },
+      transporte: {
+        key: 'transporte' as CategoryKey,
+        name: 'Transporte & Mobilidade',
+        emoji: '🚗',
+        desc: 'Combustível, IPVA, seguro auto, manutenção, Uber/99, pedágios e estacionamentos',
+        isCustom: pctTransporte !== tierDefaults.transporte,
+        recommended: tierDefaults.transporte,
+        current: pctTransporte,
+        diff: pctTransporte - tierDefaults.transporte,
+        valCalculated: (pctTransporte / 100) * currentIncome,
+        floor: pisoTransporte,
+        isFloorOk: valTransporte >= pisoTransporte,
       },
       comida: {
         key: 'comida' as CategoryKey,
@@ -395,7 +419,7 @@ export const SettingsScreen: React.FC = () => {
         isFloorOk: pctInvestimentos >= pisoInvestimentosPct,
       },
     };
-  }, [pctMoradia, pctComida, pctLazer, pctProtecao, pctProfissional, pctInvestimentos, tierDefaults, currentIncome, pisoMoradia, pisoComida, pisoLazer, pisoProtecao, pisoProfissional, pisoInvestimentosPct, valMoradia, valComida, valLazer, valProtecao, valProfissional]);
+  }, [pctMoradia, pctTransporte, pctComida, pctLazer, pctProtecao, pctProfissional, pctInvestimentos, tierDefaults, currentIncome, pisoMoradia, pisoTransporte, pisoComida, pisoLazer, pisoProtecao, pisoProfissional, pisoInvestimentosPct, valMoradia, valTransporte, valComida, valLazer, valProtecao, valProfissional]);
 
   const customizedCategoriesList = useMemo(() => {
     return Object.values(customStatus).filter(c => c.isCustom);
@@ -406,6 +430,7 @@ export const SettingsScreen: React.FC = () => {
   // Restore Junto Algorithm defaults for current preview tier
   const handleRestoreJuntoDefaults = () => {
     setPctMoradia(tierDefaults.moradia);
+    setPctTransporte(tierDefaults.transporte);
     setPctComida(tierDefaults.comida);
     setPctLazer(tierDefaults.lazer);
     setPctProtecao(tierDefaults.protecao);
@@ -420,6 +445,7 @@ export const SettingsScreen: React.FC = () => {
 
   const handleApplyTierChangeDefaults = () => {
     setPctMoradia(tierDefaults.moradia);
+    setPctTransporte(tierDefaults.transporte);
     setPctComida(tierDefaults.comida);
     setPctLazer(tierDefaults.lazer);
     setPctProtecao(tierDefaults.protecao);
@@ -439,6 +465,7 @@ export const SettingsScreen: React.FC = () => {
   };
 
   const isMoradiaOk = valMoradia >= pisoMoradia;
+  const isTransporteOk = valTransporte >= pisoTransporte;
   const isComidaOk = valComida >= pisoComida;
   const isLazerOk = valLazer >= pisoLazer;
   const isProtecaoOk = valProtecao >= pisoProtecao;
@@ -447,6 +474,7 @@ export const SettingsScreen: React.FC = () => {
 
   const allFloorsCovered =
     isMoradiaOk &&
+    isTransporteOk &&
     isComidaOk &&
     isLazerOk &&
     isProtecaoOk &&
@@ -511,6 +539,7 @@ export const SettingsScreen: React.FC = () => {
     }
 
     const minMoradiaAmt = pisoMoradia;
+    const minTransporteAmt = pisoTransporte;
     const minComidaAmt = pisoComida;
     const minProtecaoAmt = pisoProtecao;
     const minProfissionalAmt = pisoProfissional;
@@ -518,6 +547,7 @@ export const SettingsScreen: React.FC = () => {
 
     const minEssentialSum =
       minMoradiaAmt +
+      minTransporteAmt +
       minComidaAmt +
       minProtecaoAmt +
       minProfissionalAmt +
@@ -531,6 +561,7 @@ export const SettingsScreen: React.FC = () => {
     }
 
     const targetMoradiaPct = Math.max(pctMoradia, (minMoradiaAmt / currentIncome) * 100);
+    const targetTransportePct = Math.max(pctTransporte, (minTransporteAmt / currentIncome) * 100);
     const targetComidaPct = Math.max(pctComida, (minComidaAmt / currentIncome) * 100);
     let targetProtecaoPct = Math.max(pctProtecao, (minProtecaoAmt / currentIncome) * 100);
     let targetProfissionalPct = Math.max(pctProfissional, (minProfissionalAmt / currentIncome) * 100);
@@ -539,6 +570,7 @@ export const SettingsScreen: React.FC = () => {
 
     const currentSum =
       targetMoradiaPct +
+      targetTransportePct +
       targetComidaPct +
       targetProtecaoPct +
       targetProfissionalPct +
@@ -581,6 +613,7 @@ export const SettingsScreen: React.FC = () => {
     const proposed: ProposedRebalance = {
       percentages: {
         moradia: round(targetMoradiaPct),
+        transporte: round(targetTransportePct),
         comida: round(targetComidaPct),
         lazer: round(targetLazerPct),
         protecao: round(targetProtecaoPct),
@@ -589,6 +622,7 @@ export const SettingsScreen: React.FC = () => {
       },
       amounts: {
         moradia: (targetMoradiaPct / 100) * currentIncome,
+        transporte: (targetTransportePct / 100) * currentIncome,
         comida: (targetComidaPct / 100) * currentIncome,
         lazer: (targetLazerPct / 100) * currentIncome,
         protecao: (targetProtecaoPct / 100) * currentIncome,
@@ -597,6 +631,7 @@ export const SettingsScreen: React.FC = () => {
       },
       oldPercentages: {
         moradia: pctMoradia,
+        transporte: pctTransporte,
         comida: pctComida,
         lazer: pctLazer,
         protecao: pctProtecao,
@@ -605,6 +640,7 @@ export const SettingsScreen: React.FC = () => {
       },
       oldAmounts: {
         moradia: valMoradia,
+        transporte: valTransporte,
         comida: valComida,
         lazer: valLazer,
         protecao: valProtecao,
@@ -1111,14 +1147,19 @@ export const SettingsScreen: React.FC = () => {
               <span className="text-[11px] font-black uppercase tracking-wider text-slate-700 dark:text-slate-300 block">
                 Porcentagens Padrão Calculadas para a {currentPreviewTier.name}:
               </span>
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2">
+              <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-7 gap-2">
                 <div className="p-2.5 rounded-xl bg-teal-50 dark:bg-teal-950/40 border border-teal-200 dark:border-teal-800 text-center">
                   <span className="text-[10px] font-bold text-teal-800 dark:text-teal-300 block">🏠 Moradia</span>
                   <span className="text-sm font-black text-slate-950 dark:text-white">{tierDefaults.moradia}%</span>
                   <span className="text-[10px] font-bold text-slate-600 dark:text-slate-400 block mt-0.5">R$ {formatCurrency((tierDefaults.moradia / 100) * currentIncome)}</span>
                 </div>
                 <div className="p-2.5 rounded-xl bg-sky-50 dark:bg-sky-950/40 border border-sky-200 dark:border-sky-800 text-center">
-                  <span className="text-[10px] font-bold text-sky-800 dark:text-sky-300 block">🍽️ Comida</span>
+                  <span className="text-[10px] font-bold text-sky-800 dark:text-sky-300 block">🚗 Transporte</span>
+                  <span className="text-sm font-black text-slate-950 dark:text-white">{tierDefaults.transporte}%</span>
+                  <span className="text-[10px] font-bold text-slate-600 dark:text-slate-400 block mt-0.5">R$ {formatCurrency((tierDefaults.transporte / 100) * currentIncome)}</span>
+                </div>
+                <div className="p-2.5 rounded-xl bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800 text-center">
+                  <span className="text-[10px] font-bold text-blue-800 dark:text-blue-300 block">🍽️ Comida</span>
                   <span className="text-sm font-black text-slate-950 dark:text-white">{tierDefaults.comida}%</span>
                   <span className="text-[10px] font-bold text-slate-600 dark:text-slate-400 block mt-0.5">R$ {formatCurrency((tierDefaults.comida / 100) * currentIncome)}</span>
                 </div>
@@ -1401,6 +1442,76 @@ export const SettingsScreen: React.FC = () => {
                         <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-100 dark:bg-emerald-950 text-emerald-950 dark:text-emerald-200 font-black text-[11px] border border-emerald-300 dark:border-emerald-800">
                           <Check className="w-3 h-3 text-emerald-600" />
                           <span>Padrão Junto ({tierDefaults.moradia}%)</span>
+                        </span>
+                      )}
+                    </td>
+                  </tr>
+
+                  {/* Transporte & Mobilidade */}
+                  <tr className={customStatus.transporte.isCustom ? 'bg-amber-50/40 dark:bg-amber-950/20' : ''}>
+                    <td className="py-3.5 px-4 font-black">
+                      <div className="flex items-center gap-2 text-slate-950 dark:text-white">
+                        <span className="text-base">🚗</span>
+                        <div>
+                          <span className="block font-black text-sm">Transporte & Mobilidade</span>
+                          <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400 block max-w-[200px] truncate">
+                            {customStatus.transporte.desc}
+                          </span>
+                        </div>
+                      </div>
+                    </td>
+                    <td className="py-3.5 px-3 text-center">
+                      <span className="px-2.5 py-1 rounded-lg bg-sky-100 dark:bg-sky-950 text-sky-950 dark:text-sky-200 font-black text-xs border border-sky-300 dark:border-sky-700">
+                        {tierDefaults.transporte}%
+                      </span>
+                    </td>
+                    <td className="py-3.5 px-3 text-center">
+                      <div className="inline-flex items-center gap-1.5">
+                        <input
+                          type="number"
+                          min="0"
+                          max="100"
+                          value={pctTransporte}
+                          onChange={e => setPctTransporte(Number(e.target.value))}
+                          className={`w-16 px-2 py-1.5 rounded-xl border-2 font-black text-sm text-center tabular-nums ${
+                            customStatus.transporte.isCustom
+                              ? 'border-amber-400 bg-amber-50 dark:bg-amber-950/50 text-amber-950 dark:text-amber-100'
+                              : 'border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-950 dark:text-white'
+                          }`}
+                        />
+                        <span className="font-black text-slate-700 dark:text-slate-300">%</span>
+                      </div>
+                    </td>
+                    <td className="py-3.5 px-3 font-black text-slate-950 dark:text-white text-xs">
+                      R$ {formatCurrency(valTransporte)}
+                    </td>
+                    <td className="py-3.5 px-3">
+                      <div className="flex items-center gap-1">
+                        <span className="text-slate-500 font-bold">R$</span>
+                        <input
+                          type="number"
+                          step="100"
+                          value={pisoTransporte}
+                          onChange={e => setPisoTransporte(Number(e.target.value))}
+                          className="w-20 px-2 py-1 rounded-lg border-2 border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 font-bold text-xs"
+                        />
+                      </div>
+                    </td>
+                    <td className="py-3.5 px-4">
+                      {customStatus.transporte.isCustom ? (
+                        <div className="space-y-1">
+                          <div className="flex items-center gap-1.5 text-amber-900 dark:text-amber-300 font-black text-xs">
+                            <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
+                            <span>Personalizado ({pctTransporte}% vs {tierDefaults.transporte}% Junto)</span>
+                          </div>
+                          <p className="text-[10px] font-bold text-amber-800 dark:text-amber-400 leading-tight">
+                            Personalizado manualmente. Alteração realizada fora dos cálculos e recomendações do Junto (por sua conta e risco).
+                          </p>
+                        </div>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-100 dark:bg-emerald-950 text-emerald-950 dark:text-emerald-200 font-black text-[11px] border border-emerald-300 dark:border-emerald-800">
+                          <Check className="w-3 h-3 text-emerald-600" />
+                          <span>Padrão Junto ({tierDefaults.transporte}%)</span>
                         </span>
                       )}
                     </td>

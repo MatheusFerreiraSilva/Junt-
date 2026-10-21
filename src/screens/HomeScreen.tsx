@@ -50,6 +50,8 @@ import { MonthlyDepositGuideModal } from '../components/MonthlyDepositGuideModal
 import { DonutChart, DonutSlice } from '../components/DonutChart';
 import { CoupleSettlementCard } from '../components/CoupleSettlementCard';
 import { LIFE_TIERS } from '../utils/incomeTiersEngine';
+import { FoodPacingWeeklyCard } from '../components/FoodPacingWeeklyCard';
+import { WeeklySurplusHub } from '../components/WeeklySurplusHub';
 
 interface HomeScreenProps {
   onNavigate: (screen: ScreenId, categoryKey?: CategoryKey) => void;
@@ -63,7 +65,7 @@ interface HomeScreenProps {
 }
 
 type DashboardModalType = 'thermometer' | 'tier' | 'wealth' | 'spent' | 'rhythm' | 'category' | null;
-type DashboardTab = 'actions' | 'split' | 'future' | 'fusion';
+type DashboardTab = 'actions' | 'surplus' | 'split' | 'future' | 'fusion';
 
 export const HomeScreen: React.FC<HomeScreenProps> = ({
   onNavigate,
@@ -126,6 +128,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
     getMonthlyDepositGuide,
     executeMonthlyDeposit,
     predictiveBurnAlerts,
+    aiPredictiveInsights,
   } = useFinance();
 
   const [inviteCodeInput, setInviteCodeInput] = useState('');
@@ -650,6 +653,36 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
         </div>
       </div>
 
+      {/* Atalho Inteligente para o Hub de Sobras & Excessos Semanais */}
+      {aiPredictiveInsights.length > 0 && (
+        <button
+          type="button"
+          onClick={() => {
+            setActiveDashboardTab('surplus');
+            document.getElementById('dashboard-tabs-section')?.scrollIntoView({ behavior: 'smooth' });
+          }}
+          className="w-full p-3.5 sm:p-4 rounded-3xl bg-emerald-50 dark:bg-emerald-950/40 border-2 border-emerald-300 dark:border-emerald-700/60 text-emerald-950 dark:text-emerald-100 flex items-center justify-between text-xs font-bold hover:bg-emerald-100 dark:hover:bg-emerald-900/40 transition-all cursor-pointer shadow-sm group"
+        >
+          <div className="flex items-center gap-2.5">
+            <span className="w-8 h-8 rounded-2xl bg-emerald-200 dark:bg-emerald-800 text-emerald-900 dark:text-emerald-200 flex items-center justify-center text-sm font-black shrink-0">
+              🌿
+            </span>
+            <div className="text-left">
+              <span className="text-slate-900 dark:text-white font-black block sm:inline">
+                {aiPredictiveInsights.length} oportunidade{aiPredictiveInsights.length === 1 ? '' : 's'} de sobra ou recompensa identificada{aiPredictiveInsights.length === 1 ? '' : 's'}
+              </span>
+              <span className="text-[11px] text-emerald-800 dark:text-emerald-300 block sm:inline sm:ml-1.5 font-medium">
+                · Toque para ver no Hub de Sobras &amp; Excessos
+              </span>
+            </div>
+          </div>
+          <span className="flex items-center gap-1 text-emerald-700 dark:text-emerald-300 font-black group-hover:translate-x-1 transition-transform text-xs shrink-0 ml-2">
+            <span>Abrir Hub</span>
+            <ChevronRight className="w-4 h-4" />
+          </span>
+        </button>
+      )}
+
       {/* ========================================================================= */}
       {/* PRIORIDADE 2: FAIXA DE VIDA ATUAL (CLICÁVEL - JORNADA DAS 4 FAIXAS)       */}
       {/* ========================================================================= */}
@@ -1035,7 +1068,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
       {/* PRIORIDADE 5: SEÇÕES COMPLEMENTARES ORGANIZADAS EM ABAS SEGMENTADAS       */}
       {/* (Evita poluição visual no dashboard e organiza por tópicos)               */}
       {/* ========================================================================= */}
-      <div className="space-y-4 pt-2">
+      <div id="dashboard-tabs-section" className="space-y-4 pt-2">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Layers className="w-4 h-4 text-accent-themed" />
@@ -1047,7 +1080,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
         </div>
 
         {/* Sleek Segmented Switcher for Dashboard Tabs */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 p-1.5 rounded-2xl bg-slate-200/80 dark:bg-slate-800/80 border border-slate-300 dark:border-slate-700">
+        <div className="grid grid-cols-2 sm:grid-cols-5 gap-1.5 p-1.5 rounded-2xl bg-slate-200/80 dark:bg-slate-800/80 border border-slate-300 dark:border-slate-700">
           <button
             onClick={() => setActiveDashboardTab('actions')}
             className={`py-2 px-3 rounded-xl text-xs font-black transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
@@ -1057,7 +1090,24 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
             }`}
           >
             <span>✨</span>
-            <span>Ações &amp; Rituais</span>
+            <span>Ações</span>
+          </button>
+
+          <button
+            onClick={() => setActiveDashboardTab('surplus')}
+            className={`py-2 px-2.5 rounded-xl text-xs font-black transition-all flex items-center justify-center gap-1.5 cursor-pointer relative ${
+              activeDashboardTab === 'surplus'
+                ? 'bg-white dark:bg-slate-900 text-emerald-950 dark:text-emerald-300 shadow-sm border border-emerald-300 dark:border-emerald-700 font-black'
+                : 'text-slate-700 dark:text-slate-300 hover:text-slate-950 dark:hover:text-white'
+            }`}
+          >
+            <span>🌿</span>
+            <span className="truncate">Sobras &amp; Excessos</span>
+            {aiPredictiveInsights.length > 0 && (
+              <span className="w-4 h-4 rounded-full bg-emerald-600 text-white text-[9px] font-black flex items-center justify-center shrink-0">
+                {aiPredictiveInsights.length}
+              </span>
+            )}
           </button>
 
           <button
@@ -1081,7 +1131,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
             }`}
           >
             <span>📅</span>
-            <span>Parcelas &amp; Cofrinhos</span>
+            <span>Cofrinhos</span>
           </button>
 
           <button
@@ -1230,6 +1280,14 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
               </div>
             )}
           </div>
+        )}
+
+        {/* TAB 2: HUB DEDICADO DE SOBRAS, RITMO & EXCESSOS SEMANAIS */}
+        {activeDashboardTab === 'surplus' && (
+          <WeeklySurplusHub
+            onOpenExpenseModal={onOpenExpenseModal}
+            onNavigateToGoals={() => onNavigate('goals')}
+          />
         )}
 
         {/* TAB 2: DIVISÃO DO CASAL (50/50) */}
@@ -2156,6 +2214,16 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                     </span>
                   </div>
                 </div>
+
+                {/* Se for Comida & Conveniência, exibir inteligência de abastecimento e pacing semanal */}
+                {selectedCategoryModalKey === 'comida' && (
+                  <FoodPacingWeeklyCard
+                    onOpenExpenseModal={() => {
+                      setActiveModal(null);
+                      onOpenExpenseModal('comida');
+                    }}
+                  />
+                )}
 
                 {/* Recent expenses in this category */}
                 <div className="space-y-2">

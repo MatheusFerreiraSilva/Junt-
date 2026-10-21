@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { X, ArrowRight, ArrowLeft, Check, Sparkles, Users, User, Percent } from 'lucide-react';
 import { useFinance, CATEGORIES_BASE } from '../../context/FinanceContext';
-import { CategoryKey, PaidBy } from '../../types/finance';
+import { CategoryKey, PaidBy, FoodPillarType } from '../../types/finance';
 import { formatCurrency } from '../../utils/formatters';
 
 interface ExpenseModalProps {
@@ -22,6 +22,7 @@ export const ExpenseModal: React.FC<ExpenseModalProps> = ({
   const [amount, setAmount] = useState<string>('');
   const [category, setCategory] = useState<CategoryKey>(defaultCategory || 'comida');
   const [description, setDescription] = useState<string>('');
+  const [foodPillar, setFoodPillar] = useState<FoodPillarType>('estrutural');
   const [paidBy, setPaidBy] = useState<PaidBy>('both');
   const [splitPartner1Pct, setSplitPartner1Pct] = useState<number>(50);
   const [isInstallment, setIsInstallment] = useState<boolean>(false);
@@ -38,7 +39,15 @@ export const ExpenseModal: React.FC<ExpenseModalProps> = ({
   const quickDescriptions: Record<CategoryKey, string[]> = {
     moradia: ['Conta de Luz', 'Internet', 'Condomínio', 'Gás', 'Mercado Casa', 'Reparo'],
     transporte: ['Combustível / Posto', 'Uber / 99', 'IPVA & Licenciamento', 'Seguro Auto', 'Sem Parar / Pedágio', 'Oficina / Revisão', 'Estacionamento'],
-    comida: ['Supermercado', 'Almoço', 'Jantar Fora', 'Feira', 'Cafeteria', 'Delivery / iFood'],
+    comida: [
+      'Grande Mercado (Abastecimento)',
+      'Hortifruti & Feira',
+      'Açougue & Carnes',
+      'Almoço Dia a Dia / Quilo',
+      'Refeição de Plantão',
+      'Delivery / iFood',
+      'Cafeteria & Padaria',
+    ],
     lazer: ['Cinema & Pipoca', 'Passeio', 'Streaming', 'Jogos', 'Roupas', 'Viagem'],
     protecao: ['Farmácia', 'Consulta Médica', 'Plano de Saúde', 'Seguro de Vida', 'Dentista'],
     profissional: ['Livro Técnico', 'Curso / Workshop', 'Software / Ferramenta', 'Equipamento'],
@@ -47,6 +56,20 @@ export const ExpenseModal: React.FC<ExpenseModalProps> = ({
   const handleQuickAddAmount = (add: number) => {
     const current = parseFloat(amount.replace(',', '.')) || 0;
     setAmount((current + add).toString());
+  };
+
+  const handleSelectQuickTag = (tag: string) => {
+    setDescription(tag);
+    if (category === 'comida') {
+      const u = tag.toUpperCase();
+      if (u.includes('MERCADO') || u.includes('FEIRA') || u.includes('AÇOUGUE') || u.includes('ABASTECIMENTO')) {
+        setFoodPillar('estrutural');
+      } else if (u.includes('DELIVERY') || u.includes('IFOOD')) {
+        setFoodPillar('conveniencia');
+      } else {
+        setFoodPillar('rotina');
+      }
+    }
   };
 
   const handleNext = () => {
@@ -111,6 +134,7 @@ export const ExpenseModal: React.FC<ExpenseModalProps> = ({
         paidBy,
         splitPartner1Pct: p1Pct,
         splitPartner2Pct: p2Pct,
+        foodPillar: category === 'comida' ? foodPillar : undefined,
       });
     }
 
@@ -291,6 +315,53 @@ export const ExpenseModal: React.FC<ExpenseModalProps> = ({
                       className="w-full px-4 py-3 text-base text-slate-900 dark:text-white bg-slate-50 dark:bg-slate-800 border-2 border-slate-200 dark:border-slate-700 rounded-2xl focus:border-accent-primary focus:outline-none"
                     />
 
+                    {/* Seletor dos 3 Pilares de Comida & Conveniência */}
+                    {category === 'comida' && (
+                      <div className="p-3.5 rounded-2xl bg-sky-50 dark:bg-sky-950/40 border border-sky-200 dark:border-sky-800 space-y-2">
+                        <span className="text-[11px] font-black uppercase tracking-wider text-sky-950 dark:text-sky-300 block text-center">
+                          Pilar da Alimentação do Casal:
+                        </span>
+                        <div className="grid grid-cols-3 gap-1.5 text-center">
+                          <button
+                            type="button"
+                            onClick={() => setFoodPillar('estrutural')}
+                            className={`p-2 rounded-xl text-xs font-bold transition-all border cursor-pointer ${
+                              foodPillar === 'estrutural'
+                                ? 'bg-sky-600 text-white border-sky-700 shadow-xs'
+                                : 'bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-800 hover:bg-slate-50'
+                            }`}
+                          >
+                            <span className="block text-base">🛒</span>
+                            <span className="text-[10px] block mt-0.5 leading-tight font-black">Abastecimento</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setFoodPillar('rotina')}
+                            className={`p-2 rounded-xl text-xs font-bold transition-all border cursor-pointer ${
+                              foodPillar === 'rotina'
+                                ? 'bg-sky-600 text-white border-sky-700 shadow-xs'
+                                : 'bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-800 hover:bg-slate-50'
+                            }`}
+                          >
+                            <span className="block text-base">🍲</span>
+                            <span className="text-[10px] block mt-0.5 leading-tight font-black">Rotina & Plantão</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setFoodPillar('conveniencia')}
+                            className={`p-2 rounded-xl text-xs font-bold transition-all border cursor-pointer ${
+                              foodPillar === 'conveniencia'
+                                ? 'bg-sky-600 text-white border-sky-700 shadow-xs'
+                                : 'bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-800 hover:bg-slate-50'
+                            }`}
+                          >
+                            <span className="block text-base">🛵</span>
+                            <span className="text-[10px] block mt-0.5 leading-tight font-black">Delivery & Lanche</span>
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
                     <div>
                       <span className="text-[11px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider block mb-2 text-center">
                         Sugestões rápidas
@@ -300,8 +371,8 @@ export const ExpenseModal: React.FC<ExpenseModalProps> = ({
                           <button
                             key={tag}
                             type="button"
-                            onClick={() => setDescription(tag)}
-                            className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition-colors ${
+                            onClick={() => handleSelectQuickTag(tag)}
+                            className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition-colors cursor-pointer ${
                               description === tag
                                 ? 'btn-primary-accent text-white'
                                 : 'bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300'

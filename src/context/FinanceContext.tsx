@@ -51,6 +51,9 @@ import {
   MonthlyDepositGuide,
   MonthDepositCompletionRecord,
   AdvanceInstallmentPayload,
+  FoodPacingMetrics,
+  AIPredictiveInsight,
+  FoodPillarType,
 } from '../types/finance';
 import {
   LIFE_TIERS,
@@ -81,6 +84,8 @@ import {
   CoupleSettlementSummary,
   PredictiveBurnAlert,
 } from '../utils/coupleReconciliation';
+import { calculateFoodPacingMetrics } from '../utils/foodPacingEngine';
+import { generateAIPredictiveInsights } from '../utils/aiPredictiveInsightsEngine';
 
 export const CATEGORIES_BASE: Record<CategoryKey, { name: string; emoji: string; description: string; colorHex: string; bgLight: string; borderHex: string }> = {
   moradia: {
@@ -92,9 +97,9 @@ export const CATEGORIES_BASE: Record<CategoryKey, { name: string; emoji: string;
     borderHex: '#99F6E4',
   },
   comida: {
-    name: 'Comida',
+    name: 'Comida & Conveniência',
     emoji: '🍽️',
-    description: 'Supermercado, restaurantes, feira e delivery',
+    description: 'Compras estruturais de mercado, alimentação de rotina/plantão e delivery',
     colorHex: '#0284C7', // Sky blue
     bgLight: '#F0F9FF',
     borderHex: '#BAE6FD',
@@ -590,6 +595,16 @@ export interface FinanceContextType {
   emergencyReserveExcessAmount: number;
   reallocateReserveExcess: (amount: number, targetType: 'goal' | 'freedom', targetGoalId?: string, targetGoalName?: string) => void;
   advanceInstallmentPayment: (payload: import('../types/finance').AdvanceInstallmentPayload) => void;
+
+  // Motor de Insights Preditivos & Inteligência de Abastecimento (Comida)
+  foodPacingMetrics: FoodPacingMetrics;
+  aiPredictiveInsights: AIPredictiveInsight[];
+  applyAISuggestionAction: (
+    insightId: string,
+    actionType: 'use_reward' | 'send_to_goal' | 'keep_buffer',
+    targetGoalId?: string
+  ) => void;
+  dismissAISuggestion: (insightId: string) => void;
 }
 
 const FinanceContext = createContext<FinanceContextType | undefined>(undefined);
@@ -1566,6 +1581,35 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
   const unreadNotificationsCount = useMemo(() => {
     return state.notifications.filter(n => !n.isRead).length;
   }, [state.notifications]);
+
+  // Motor de Inteligência de Abastecimento e Pacing Semanal de Comida
+  const foodPacingMetrics = useMemo(() => {
+    const foodBudget = categoriesSpending.comida?.budget || 0;
+    return calculateFoodPacingMetrics(state.expenses, state.currentMonth, foodBudget);
+  }, [state.expenses, state.currentMonth, categoriesSpending.comida?.budget]);
+
+  // Motor de Insights Preditivos e Proposição de Recompensas / Eficiência
+  const aiPredictiveInsights = useMemo(() => {
+    return generateAIPredictiveInsights({
+      categoriesSpending,
+      foodPacing: foodPacingMetrics,
+      expenses: state.expenses,
+      currentMonthKey: state.currentMonth,
+      piggyBanks: state.piggyBanks,
+      partner1Name: state.profile.partner1Name,
+      partner2Name: state.profile.partner2Name,
+      appliedInsights: state.appliedAIInsights || {},
+    });
+  }, [
+    categoriesSpending,
+    foodPacingMetrics,
+    state.expenses,
+    state.currentMonth,
+    state.piggyBanks,
+    state.profile.partner1Name,
+    state.profile.partner2Name,
+    state.appliedAIInsights,
+  ]);
 
   // ==========================================
   // REFINAMENTO DO TETO MÁXIMO DE APORTE PARA INVESTIMENTOS:
@@ -3642,6 +3686,100 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
     triggerCelebration();
   };
 
+  const applyAISuggestionAction = (
+    insightId: string,
+    actionType: 'use_reward' | 'send_to_goal' | 'keep_buffer',
+    targetGoalId?: string
+  ) => {
+    const targetInsight = aiPredictiveInsights.find(i => i.id === insightId);
+    if (!targetInsight) return;
+
+    if (actionType === 'use_reward') {
+      const rewardConfig = targetInsight.options.useReward;
+      const amount = rewardConfig?.appliedAmount || targetInsight.surplusAmount || 150;
+      const targetCat = rewardConfig?.targetCategory || 'lazer';
+
+      const celebrationNotif: AppNotification = {
+        id: `notif-ai-reward-${Date.now()}`,
+        title: '🎉 Momento a Dois Confirmado!',
+        message: `Liberamos R$ ${amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} extras em ${CATEGORIES_BASE[targetCat].name} para vocês curtirem juntos sem nenhuma culpa!`,
+        timestamp: 'Agora mesmo',
+        type: 'success',
+        isRead: false,
+        amount,
+        category: targetCat,
+      };
+
+      setState(prev => ({
+        ...prev,
+        appliedAIInsights: {
+          ...(prev.appliedAIInsights || {}),
+          [insightId]: 'use_reward',
+        },
+        notifications: [celebrationNotif, ...prev.notifications],
+      }));
+
+      triggerCelebration();
+    } else if (actionType === 'send_to_goal') {
+      const goalConfig = targetInsight.options.sendToGoal;
+      const goalId = targetGoalId || goalConfig?.defaultGoalId || state.piggyBanks[0]?.id;
+      const amount = goalConfig?.amount || targetInsight.surplusAmount || 100;
+
+      if (goalId) {
+        depositToGoal(goalId, amount);
+      }
+
+      const notif: AppNotification = {
+        id: `notif-ai-goal-${Date.now()}`,
+        title: '🎯 Sobra Enviada para o Cofrinho!',
+        message: `R$ ${amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} foram direcionados com sucesso para acelerar seu objetivo a dois!`,
+        timestamp: 'Agora mesmo',
+        type: 'success',
+        isRead: false,
+        amount,
+      };
+
+      setState(prev => ({
+        ...prev,
+        appliedAIInsights: {
+          ...(prev.appliedAIInsights || {}),
+          [insightId]: 'send_to_goal',
+        },
+        notifications: [notif, ...prev.notifications],
+      }));
+
+      triggerCelebration();
+    } else if (actionType === 'keep_buffer') {
+      const bufferNotif: AppNotification = {
+        id: `notif-ai-buffer-${Date.now()}`,
+        title: '🛡️ Amortecedor de Caixa Preservado',
+        message: `O valor de R$ ${(targetInsight.surplusAmount || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })} permanece guardado na conta corrente como segurança para o mês.`,
+        timestamp: 'Agora mesmo',
+        type: 'info',
+        isRead: false,
+      };
+
+      setState(prev => ({
+        ...prev,
+        appliedAIInsights: {
+          ...(prev.appliedAIInsights || {}),
+          [insightId]: 'keep_buffer',
+        },
+        notifications: [bufferNotif, ...prev.notifications],
+      }));
+    }
+  };
+
+  const dismissAISuggestion = (insightId: string) => {
+    setState(prev => ({
+      ...prev,
+      appliedAIInsights: {
+        ...(prev.appliedAIInsights || {}),
+        [insightId]: 'keep_buffer',
+      },
+    }));
+  };
+
   return (
     <FinanceContext.Provider
       value={{
@@ -3825,6 +3963,11 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
         emergencyReserveExcessAmount,
         reallocateReserveExcess,
         advanceInstallmentPayment,
+        // Motor de Insights Preditivos & Inteligência de Abastecimento (Comida)
+        foodPacingMetrics,
+        aiPredictiveInsights,
+        applyAISuggestionAction,
+        dismissAISuggestion,
       }}
     >
       {children}
