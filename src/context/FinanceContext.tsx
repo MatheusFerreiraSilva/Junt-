@@ -92,49 +92,49 @@ export const CATEGORIES_BASE: Record<CategoryKey, { name: string; emoji: string;
     name: 'Moradia',
     emoji: '🏠',
     description: 'Aluguel, condomínio, luz, água, internet e casa',
-    colorHex: '#0D9488', // Teal
-    bgLight: '#F0FDFA',
-    borderHex: '#99F6E4',
+    colorHex: '#2C5227',
+    bgLight: '#CDE8C6',
+    borderHex: '#E9E2D7',
   },
   comida: {
     name: 'Comida & Conveniência',
     emoji: '🍽️',
     description: 'Compras estruturais de mercado, alimentação de rotina/plantão e delivery',
-    colorHex: '#0284C7', // Sky blue
-    bgLight: '#F0F9FF',
-    borderHex: '#BAE6FD',
+    colorHex: '#5F3D06',
+    bgLight: '#FBD48F',
+    borderHex: '#E9E2D7',
   },
   lazer: {
     name: 'Lazer',
     emoji: '🎮',
     description: 'Cinema, viagens, saídas, videogame e passeios',
-    colorHex: '#8B5CF6', // Purple/Violet
-    bgLight: '#F5F3FF',
-    borderHex: '#DDD6FE',
+    colorHex: '#402C74',
+    bgLight: '#DCCEF9',
+    borderHex: '#E9E2D7',
   },
   protecao: {
     name: 'Proteção',
     emoji: '🛡️',
     description: 'Seguros, saúde, farmácia e imprevistos',
-    colorHex: '#E11D48', // Rose
-    bgLight: '#FFF1F2',
-    borderHex: '#FECDD3',
+    colorHex: '#74243F',
+    bgLight: '#F8C6DA',
+    borderHex: '#E9E2D7',
   },
   profissional: {
     name: 'Profissional',
     emoji: '📚',
     description: 'Cursos, congressos, CRM, plantões e equipamentos',
-    colorHex: '#D97706', // Amber
-    bgLight: '#FFFBEB',
-    borderHex: '#FDE68A',
+    colorHex: '#653313',
+    bgLight: '#F9CDA9',
+    borderHex: '#E9E2D7',
   },
   transporte: {
     name: 'Transporte & Mobilidade',
     emoji: '🚗',
     description: 'Combustível, IPVA, licenciamento, seguro auto, manutenção, Uber/99, pedágios e estacionamentos',
-    colorHex: '#0284C7', // Sky Blue / Ciano
-    bgLight: '#F0F9FF',
-    borderHex: '#BAE6FD',
+    colorHex: '#1D4468',
+    bgLight: '#C3DAF6',
+    borderHex: '#E9E2D7',
   },
 };
 
