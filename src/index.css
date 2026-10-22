@@ -92,7 +92,7 @@
 }
 
 .card-hero-accent {
-  background: linear-gradient(135deg, var(--app-accent-gradient-from, #065f46), var(--app-accent-gradient-to, #115e59)) !important;
+  background: var(--app-accent-primary, #059669) !important;
   color: #ffffff !important;
 }
 
@@ -120,7 +120,7 @@
 }
 
 .gradient-accent-text {
-  background: linear-gradient(135deg, var(--app-accent-primary, #059669), var(--app-accent-hover, #047857)) !important;
+  background: var(--app-accent-primary, #059669) !important;
   -webkit-background-clip: text !important;
   -webkit-text-fill-color: transparent !important;
 }
@@ -237,3 +237,162 @@ input::placeholder {
   outline: 2px solid var(--app-accent-primary, #059669);
   outline-offset: 2px;
 }
+
+/* ------------------------------------------------------------------ */
+/* DESIGN SYSTEM — base do redesign minimalista                        */
+/* Tokens neutros + utilitários usados pelos componentes novos.      */
+/* ------------------------------------------------------------------ */
+:root {
+  /* Superfícies neutras (o app não deve depender de gradientes) */
+  --app-surface: #ffffff;
+  --app-surface-muted: #f8fafc;
+  --app-surface-sunken: #f1f5f9;
+  --app-border-soft: #e2e8f0;
+  --app-border-strong: #cbd5e1;
+  --app-text: #0f172a;
+  --app-text-muted: #475569;
+
+  /* Raios: consistência de forma */
+  --app-radius-card: 1rem;
+  --app-radius-control: 0.75rem;
+  --app-radius-pill: 9999px;
+
+  /* Elevação: profundidade leve, sem sombras "pesadas" */
+  --app-shadow-card: 0 1px 2px rgba(15, 23, 42, 0.04), 0 1px 3px rgba(15, 23, 42, 0.06);
+  --app-shadow-raised: 0 8px 24px -10px rgba(15, 23, 42, 0.18);
+  --app-shadow-overlay: 0 20px 48px -16px rgba(15, 23, 42, 0.28);
+
+  /* Movimento */
+  --app-motion-fast: 120ms;
+  --app-motion-base: 200ms;
+  --app-ease: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.dark {
+  --app-surface: #0f172a;
+  --app-surface-muted: #111c33;
+  --app-surface-sunken: #1e293b;
+  --app-border-soft: #1e293b;
+  --app-border-strong: #334155;
+  --app-text: #f8fafc;
+  --app-text-muted: #cbd5e1;
+}
+
+/* Cartão neutro padrão: substitui gradientes decorativos */
+.surface-card {
+  background-color: var(--app-surface);
+  border: 1px solid var(--app-border-soft);
+  border-radius: var(--app-radius-card);
+  box-shadow: var(--app-shadow-card);
+}
+
+.surface-panel {
+  background-color: var(--app-surface-muted);
+  border: 1px solid var(--app-border-soft);
+  border-radius: var(--app-radius-control);
+}
+
+/* Suaviza as sombras mais profundas: mantém hierarquia sem peso visual */
+.shadow-xl,
+.shadow-2xl {
+  box-shadow: var(--app-shadow-raised) !important;
+}
+
+/* Título de seção: sem CAIXA ALTA forçada, hierarquia por peso */
+.section-title {
+  font-size: 0.9375rem;
+  font-weight: 600;
+  line-height: 1.35;
+  letter-spacing: -0.01em;
+  color: var(--app-text);
+}
+
+.dark .section-title {
+  color: #f8fafc;
+}
+
+.section-subtitle {
+  font-size: 0.8125rem;
+  font-weight: 500;
+  line-height: 1.45;
+  color: var(--app-text-muted);
+}
+
+/* Botões: três variantes, uso consistente em todo o app */
+.btn-accent {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  min-height: 2.75rem;
+  padding: 0.625rem 1rem;
+  border-radius: var(--app-radius-control);
+  background-color: var(--app-accent-primary);
+  color: #fff;
+  font-size: 0.875rem;
+  font-weight: 600;
+  transition: background-color var(--app-motion-fast) var(--app-ease);
+}
+
+.btn-accent:hover {
+  background-color: var(--app-accent-hover);
+}
+
+.btn-outline {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  min-height: 2.75rem;
+  padding: 0.625rem 1rem;
+  border-radius: var(--app-radius-control);
+  border: 1px solid var(--app-border-strong);
+  background-color: var(--app-surface);
+  color: var(--app-text);
+  font-size: 0.875rem;
+  font-weight: 600;
+  transition: background-color var(--app-motion-fast) var(--app-ease),
+    border-color var(--app-motion-fast) var(--app-ease);
+}
+
+.btn-outline:hover {
+  background-color: var(--app-surface-muted);
+}
+
+.btn-ghost {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  min-height: 2.75rem;
+  padding: 0.625rem 0.875rem;
+  border-radius: var(--app-radius-control);
+  color: var(--app-text-muted);
+  font-size: 0.875rem;
+  font-weight: 500;
+  transition: background-color var(--app-motion-fast) var(--app-ease),
+    color var(--app-motion-fast) var(--app-ease);
+}
+
+.btn-ghost:hover {
+  background-color: var(--app-surface-sunken);
+  color: var(--app-text);
+}
+
+/* Cartão clicável: alvo de toque confortável + foco visível */
+.interactive-card {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border-radius: var(--app-radius-card);
+  border: 1px solid var(--app-border-soft);
+  background-color: var(--app-surface);
+  transition: border-color var(--app-motion-fast) var(--app-ease),
+    background-color var(--app-motion-fast) var(--app-ease);
+}
+
+.interactive-card:hover {
+  border-color: var(--app-border-strong);
+  background-color: var(--app-surface-muted);
+}
+
