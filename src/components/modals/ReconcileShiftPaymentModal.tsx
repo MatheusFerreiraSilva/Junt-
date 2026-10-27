@@ -26,11 +26,18 @@ export const ReconcileShiftPaymentModal: React.FC<ReconcileShiftPaymentModalProp
   shift,
 }) => {
   const {
+    state,
     incomes = [],
     hospitalMappingRules = [],
     reconcileShiftWithIncome,
     markShiftAsReceivedDirectly,
   } = useFinance();
+
+  const p1Name = state?.profile?.partner1Name || 'Parceiro 1';
+  const p2Name =
+    !state?.profile?.partner2Name || state.profile.partner2Name === 'Aguardando Par...'
+      ? 'Parceiro 2'
+      : state.profile.partner2Name;
 
   const [selectedIncomeId, setSelectedIncomeId] = useState<string>('');
   const [actualReceivedDate, setActualReceivedDate] = useState<string>(
@@ -93,7 +100,7 @@ export const ReconcileShiftPaymentModal: React.FC<ReconcileShiftPaymentModalProp
           <div className="flex justify-between items-start">
             <div>
               <span className="text-[11px] font-semibold uppercase text-teal-600 dark:text-teal-400">
-                {shift.partner === 'partner1' ? '👨‍⚕️ Dr. Rafael' : '👩‍⚕️ Dra. Amanda'}
+                {shift.partner === 'partner1' ? `👨‍⚕️ ${p1Name}` : `👩‍⚕️ ${p2Name}`}
               </span>
               <h3 className="font-bold text-base text-stone-800 dark:text-stone-100">
                 {shift.hospitalName}

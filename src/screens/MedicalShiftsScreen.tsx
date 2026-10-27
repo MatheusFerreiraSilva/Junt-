@@ -50,6 +50,13 @@ export const MedicalShiftsScreen: React.FC = () => {
   const [editingShift, setEditingShift] = useState<MedicalShift | null>(null);
   const [reconcilingShift, setReconcilingShift] = useState<MedicalShift | null>(null);
 
+  // Partner names
+  const p1Name = state?.profile?.partner1Name || 'Parceiro 1';
+  const p2Name =
+    !state?.profile?.partner2Name || state.profile.partner2Name === 'Aguardando Par...'
+      ? 'Parceiro 2'
+      : state.profile.partner2Name;
+
   // Filtered shifts by partner
   const partnerShifts = useMemo(() => {
     const list = medicalShifts || [];
@@ -205,7 +212,7 @@ export const MedicalShiftsScreen: React.FC = () => {
                 : 'text-stone-500 hover:text-stone-900 dark:hover:text-stone-200'
             }`}
           >
-            <span>👨‍⚕️</span> Dr. Rafael
+            <span>👨‍⚕️</span> {p1Name}
           </button>
           <button
             type="button"
@@ -216,7 +223,7 @@ export const MedicalShiftsScreen: React.FC = () => {
                 : 'text-stone-500 hover:text-stone-900 dark:hover:text-stone-200'
             }`}
           >
-            <span>👩‍⚕️</span> Dra. Amanda
+            <span>👩‍⚕️</span> {p2Name}
           </button>
         </div>
 
@@ -632,7 +639,7 @@ export const MedicalShiftsScreen: React.FC = () => {
                       <div>
                         <div className="flex items-center gap-2">
                           <span className="text-[11px] font-bold text-stone-500">
-                            {shift.partner === 'partner1' ? '👨‍⚕️ Dr. Rafael' : '👩‍⚕️ Dra. Amanda'}
+                            {shift.partner === 'partner1' ? `👨‍⚕️ ${p1Name}` : `👩‍⚕️ ${p2Name}`}
                           </span>
                           <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-stone-200 dark:bg-stone-700 text-stone-700 dark:text-stone-300 font-semibold">
                             {shift.durationHours}h

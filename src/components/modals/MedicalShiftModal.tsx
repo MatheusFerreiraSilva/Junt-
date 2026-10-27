@@ -35,12 +35,19 @@ export const MedicalShiftModal: React.FC<MedicalShiftModalProps> = ({
   shiftToEdit,
 }) => {
   const {
+    state,
     medicalShiftPresets,
     addMedicalShift,
     updateMedicalShift,
     addShiftPreset,
     deleteShiftPreset,
   } = useFinance();
+
+  const p1Name = state?.profile?.partner1Name || 'Parceiro 1';
+  const p2Name =
+    !state?.profile?.partner2Name || state.profile.partner2Name === 'Aguardando Par...'
+      ? 'Parceiro 2'
+      : state.profile.partner2Name;
 
   const [partner, setPartner] = useState<'partner1' | 'partner2'>(
     shiftToEdit ? shiftToEdit.partner : 'partner1'
@@ -264,7 +271,7 @@ export const MedicalShiftModal: React.FC<MedicalShiftModalProps> = ({
                     : 'bg-white dark:bg-stone-900 text-stone-700 dark:text-stone-300 border-stone-200 dark:border-stone-800'
                 }`}
               >
-                <span>👨‍⚕️</span> Dr. Rafael
+                <span>👨‍⚕️</span> {p1Name}
               </button>
               <button
                 type="button"
@@ -275,7 +282,7 @@ export const MedicalShiftModal: React.FC<MedicalShiftModalProps> = ({
                     : 'bg-white dark:bg-stone-900 text-stone-700 dark:text-stone-300 border-stone-200 dark:border-stone-800'
                 }`}
               >
-                <span>👩‍⚕️</span> Dra. Amanda
+                <span>👩‍⚕️</span> {p2Name}
               </button>
             </div>
           </div>
