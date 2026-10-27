@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
-import { X, ArrowRight, ArrowLeft, Check, Sparkles, Users, User, Percent } from 'lucide-react';
+import { X, ArrowRight, ArrowLeft, Check, Sparkles, Users, User, Percent, Shield, Target } from 'lucide-react';
 import { useFinance, CATEGORIES_BASE } from '../../context/FinanceContext';
-import { CategoryKey, PaidBy, FoodPillarType } from '../../types/finance';
+import { CategoryKey, PaidBy, FoodPillarType, FundingSourceType } from '../../types/finance';
 import { formatCurrency } from '../../utils/formatters';
 
 interface ExpenseModalProps {
@@ -17,7 +17,13 @@ export const ExpenseModal: React.FC<ExpenseModalProps> = ({
   defaultCategory,
   defaultDate,
 }) => {
-  const { state, addExpense, addInstallment, triggerCelebration } = useFinance();
+  const {
+    state,
+    emergencyReserveExcessAmount,
+    addExpense,
+    addInstallment,
+    triggerCelebration,
+  } = useFinance();
   const [step, setStep] = useState<number>(1);
   const [amount, setAmount] = useState<string>('');
   const [category, setCategory] = useState<CategoryKey>(defaultCategory || 'comida');
@@ -27,6 +33,8 @@ export const ExpenseModal: React.FC<ExpenseModalProps> = ({
   const [splitPartner1Pct, setSplitPartner1Pct] = useState<number>(50);
   const [isInstallment, setIsInstallment] = useState<boolean>(false);
   const [installmentsCount, setInstallmentsCount] = useState<number>(3);
+  const [fundingSource, setFundingSource] = useState<FundingSourceType>('month_budget');
+  const [selectedGoalId, setSelectedGoalId] = useState<string>(() => state.piggyBanks[0]?.id || '');
   const [successCelebration, setSuccessCelebration] = useState(false);
 
   if (!isOpen) return null;
@@ -125,7 +133,7 @@ export const ExpenseModal: React.FC<ExpenseModalProps> = ({
         splitPartner1Pct: p1Pct,
         splitPartner2Pct: p2Pct,
       });
-    } else {
+      const targetGoal = state.piggyBanks.find(g => g.id === selectedGoalId);
       addExpense({
         description: finalDesc,
         amount: numAmount,
@@ -135,6 +143,10 @@ export const ExpenseModal: React.FC<ExpenseModalProps> = ({
         splitPartner1Pct: p1Pct,
         splitPartner2Pct: p2Pct,
         foodPillar: category === 'comida' ? foodPillar : undefined,
+        fundingSource,
+        fundingGoalId: fundingSource === 'piggy_bank' ? selectedGoalId : undefined,
+        fundingGoalName: fundingSource === 'piggy_bank' ? targetGoal?.name : undefined,
+        isExcludedFromMonthlyBudget: fundingSource !== 'month_budget',
       });
     }
 
@@ -583,6 +595,121 @@ export const ExpenseModal: React.FC<ExpenseModalProps> = ({
                       <div className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">Dividido no cartão</div>
                     </button>
                   </div>
+
+                  {/* Se for à vista: SELETOR DE FONTE (TRIAGEM PROATIVA) */}
+                  {!isInstallment && (
+                    <div className="pt-3 border-t border-slate-200 dark:border-slate-800 space-y-3 animate-in fade-in">
+                      <div className="flex items-center justify-between">
+                        <label className="text-xs font-black uppercase tracking-wider text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
+                          <span>De onde sai o dinheiro deste gasto?</span>
+                        </label>
+                        <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-bold">
+                          Autonomia Total
+                        </span>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-2">
+                        {/* Opção 1: Orçamento do Mês */}
+                        <button
+                          type="button"
+                          onClick={() => setFundingSource('month_budget')}
+                          className={`p-3 rounded-2xl border text-left transition-all cursor-pointer ${
+                            fundingSource === 'month_budget'
+                              ? 'border-[#111318] dark:border-white bg-[#FFF9ED] dark:bg-amber-950/40 font-bold shadow-xs'
+                              : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900/60'
+                          }`}
+                        >
+                          <span className="text-sm block">📅 Orçamento do Mês</span>
+                          <span className="text-[10px] text-slate-500 dark:text-slate-400 block mt-0.5">
+                            Rotina normal da casa
+                          </span>
+                        </button>
+
+                        {/* Opção 2: Excesso da Reserva */}
+                        <button
+                          type="button"
+                          onClick={() => setFundingSource('reserve_excess')}
+                          className={`p-3 rounded-2xl border text-left transition-all cursor-pointer ${
+                            fundingSource === 'reserve_excess'
+                              ? 'border-[#111318] dark:border-white bg-[#F0F8FF] dark:bg-sky-950/40 font-bold shadow-xs'
+                              : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900/60'
+                          }`}
+                        >
+                          <span className="text-sm block">🛡️ Excesso da Reserva</span>
+                          <span className="text-[10px] text-sky-700 dark:text-sky-300 block mt-0.5 tabular-nums">
+                            {formatCurrency(emergencyReserveExcessAmount)} livres
+                          </span>
+                        </button>
+
+                        {/* Opção 3: Caixinha / Cofrinho */}
+                        <button
+                          type="button"
+                          onClick={() => setFundingSource('piggy_bank')}
+                          className={`p-3 rounded-2xl border text-left transition-all cursor-pointer ${
+                            fundingSource === 'piggy_bank'
+                              ? 'border-[#111318] dark:border-white bg-[#FFF0F7] dark:bg-pink-950/40 font-bold shadow-xs'
+                              : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900/60'
+                          }`}
+                        >
+                          <span className="text-sm block">🎯 Caixinha de Sonhos</span>
+                          <span className="text-[10px] text-pink-700 dark:text-pink-300 block mt-0.5">
+                            Saldo guardado prévio
+                          </span>
+                        </button>
+
+                        {/* Opção 4: Mesada Individual */}
+                        <button
+                          type="button"
+                          onClick={() => setFundingSource('personal_allowance')}
+                          className={`p-3 rounded-2xl border text-left transition-all cursor-pointer ${
+                            fundingSource === 'personal_allowance'
+                              ? 'border-[#111318] dark:border-white bg-[#F6F2FF] dark:bg-purple-950/40 font-bold shadow-xs'
+                              : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900/60'
+                          }`}
+                        >
+                          <span className="text-sm block">💼 Mesada Pessoal</span>
+                          <span className="text-[10px] text-purple-700 dark:text-purple-300 block mt-0.5">
+                            Não afeta o teto do casal
+                          </span>
+                        </button>
+                      </div>
+
+                      {/* Seletor de caixinha se piggy_bank selecionado */}
+                      {fundingSource === 'piggy_bank' && state.piggyBanks.length > 0 && (
+                        <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 space-y-1.5 animate-in fade-in">
+                          <label className="text-[11px] font-bold text-slate-600 dark:text-slate-300 block">
+                            Qual caixinha pagará este valor?
+                          </label>
+                          <div className="grid grid-cols-2 gap-1.5">
+                            {state.piggyBanks.map(g => (
+                              <button
+                                key={g.id}
+                                type="button"
+                                onClick={() => setSelectedGoalId(g.id)}
+                                className={`p-2 rounded-lg text-left text-xs border transition-all cursor-pointer ${
+                                  selectedGoalId === g.id
+                                    ? 'border-[#111318] dark:border-white bg-white dark:bg-slate-700 font-bold'
+                                    : 'border-transparent bg-white/50 dark:bg-slate-800/40'
+                                }`}
+                              >
+                                {g.emoji} {g.name}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Aviso de blindagem suave */}
+                      {fundingSource !== 'month_budget' && (
+                        <div className="p-3 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 text-emerald-900 dark:text-emerald-200 text-xs flex items-center gap-2">
+                          <Shield className="w-4 h-4 text-emerald-600 shrink-0" />
+                          <span>
+                            <strong>Blindagem Ativa:</strong> A margem de {CATEGORIES_BASE[category].name} do mês continua 100% livre para a rotina diária!
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               )}
 

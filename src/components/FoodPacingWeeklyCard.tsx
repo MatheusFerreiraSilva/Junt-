@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   ShoppingBag,
   UtensilsCrossed,
@@ -9,6 +9,7 @@ import {
   AlertCircle,
   TrendingDown,
   Info,
+  ChevronRight,
 } from 'lucide-react';
 import { useFinance } from '../context/FinanceContext';
 import { formatCurrency } from '../utils/formatters';
@@ -39,30 +40,34 @@ export const FoodPacingWeeklyCard: React.FC<FoodPacingWeeklyCardProps> = ({
     pillars,
   } = foodPacingMetrics;
 
+  const [selectedWeekNumber, setSelectedWeekNumber] = useState<number>(currentWeekNumber);
+
   const foodRemaining = categoriesSpending.comida?.remaining ?? (totalFoodBudget - totalFoodSpent);
   const isOverFoodBudget = foodRemaining < 0;
 
+  const activeWeekData = weeks.find((w) => w.weekNumber === selectedWeekNumber) || weeks[0];
+
   return (
     <div
-      className={`bg-white dark:bg-slate-900 rounded-3xl p-5 sm:p-7 border-2 border-slate-200/90 dark:border-slate-800 shadow-md space-y-6 transition-all ${className}`}
+      className={`clay-card p-6 sm:p-8 space-y-6 transition-all bento-card-skyblue ${className}`}
     >
       {/* Header */}
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="flex items-center gap-3.5">
-          <span className="w-12 h-12 rounded-2xl bg-sky-100 dark:bg-sky-950 text-sky-700 dark:text-sky-300 flex items-center justify-center text-2xl font-bold shadow-xs shrink-0">
+          <span className="w-12 h-12 rounded-2xl bg-[#111318] text-white flex items-center justify-center text-2xl font-bold shadow-xs shrink-0">
             🍽️
           </span>
           <div>
             <div className="flex flex-wrap items-center gap-2">
-              <h3 className="text-base sm:text-lg font-black text-slate-950 dark:text-white font-display">
-                Inteligência de Comida, Abastecimento & Pacing
+              <h3 className="text-base sm:text-lg font-black text-[#111318] dark:text-white font-display">
+                Comida, Abastecimento &amp; Pacing
               </h3>
-              <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-sky-100 dark:bg-sky-950/80 text-sky-800 dark:text-sky-300 border border-sky-300 dark:border-sky-800">
+              <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-white dark:bg-slate-800 text-[#111318] dark:text-white border border-[#A6D8FF]">
                 100% da Alimentação
               </span>
             </div>
             <p className="text-xs text-slate-600 dark:text-slate-400 font-medium mt-0.5">
-              Gestão em 3 pilares: grande abastecimento inicial isolado e pacing semanal seguro para delivery e rotina.
+              Gestão em 3 pilares: grande abastecimento inicial isolado e pacing semanal seguro para delivery.
             </p>
           </div>
         </div>
@@ -72,7 +77,7 @@ export const FoodPacingWeeklyCard: React.FC<FoodPacingWeeklyCardProps> = ({
           <span className="text-[10px] uppercase font-bold text-slate-500 dark:text-slate-400 block tracking-wider">
             Orçamento de Comida
           </span>
-          <span className="text-lg sm:text-xl font-black text-slate-950 dark:text-white tabular-nums font-display">
+          <span className="text-lg sm:text-xl font-black text-[#111318] dark:text-white tabular-nums font-display">
             {formatCurrency(totalFoodSpent)}{' '}
             <span className="text-xs font-bold text-slate-500">/ {formatCurrency(totalFoodBudget)}</span>
           </span>
@@ -88,8 +93,8 @@ export const FoodPacingWeeklyCard: React.FC<FoodPacingWeeklyCardProps> = ({
         </div>
       </div>
 
-      {/* RECONHECIMENTO DO ABASTECIMENTO INICIAL (CALLOUT DA IA) */}
-      <div className="p-4 rounded-2xl bg-gradient-to-r from-sky-500/10 via-teal-500/10 to-indigo-500/10 border-2 border-sky-400/40 dark:border-sky-600/40 space-y-2">
+      {/* RECONHECIMENTO DO ABASTECIMENTO ESTRUTURAL */}
+      <div className="p-4 rounded-2xl bg-white/80 dark:bg-slate-900/80 border border-[#A6D8FF] dark:border-sky-800/60 space-y-2 shadow-xs">
         <div className="flex items-center justify-between flex-wrap gap-2">
           <div className="flex items-center gap-2 text-xs font-black text-sky-950 dark:text-sky-200">
             <ShieldCheck className="w-4 h-4 text-sky-600 dark:text-sky-400 shrink-0" />
@@ -99,14 +104,14 @@ export const FoodPacingWeeklyCard: React.FC<FoodPacingWeeklyCardProps> = ({
                 : 'Pacing Inteligente Pronto para o Mês'}
             </span>
           </div>
-          <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-md bg-white/80 dark:bg-slate-900/80 text-sky-800 dark:text-sky-300 border border-sky-300 dark:border-sky-800">
-            Zero Alarme Falso de Estouro
+          <span className="text-[10px] font-extrabold px-2.5 py-0.5 rounded-full bg-[#111318] text-white">
+            Zero Alarme Falso
           </span>
         </div>
         <p className="text-xs text-slate-700 dark:text-slate-300 font-medium leading-relaxed">
           {hasInitialStockup ? (
             <>
-              A IA reconheceu <strong>{formatCurrency(structuralSpent)}</strong> em compras estruturais de mercado, açougue e feira. Esse investimento inicial <strong>não é tratado como descontrole</strong>. O saldo operacional líquido de{' '}
+              A IA reconheceu <strong>{formatCurrency(structuralSpent)}</strong> em compras estruturais de mercado e açougue. Esse investimento inicial <strong>não é tratado como descontrole</strong>. O saldo operacional líquido de{' '}
               <strong className="text-sky-900 dark:text-sky-200">{formatCurrency(operationalBudgetRemaining)}</strong> foi fracionado em 4 semanas para delivery e lanches!
             </>
           ) : (
@@ -117,24 +122,160 @@ export const FoodPacingWeeklyCard: React.FC<FoodPacingWeeklyCardProps> = ({
         </p>
       </div>
 
+      {/* SELETOR DE PACING SEMANAL EM PÍLULAS (CARROSSEL COM FUNDO PRETO SÓLIDO #111318 NA SEMANA ATIVA) */}
+      <div className="space-y-3 pt-1">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <span className="text-xs font-black text-[#111318] dark:text-white flex items-center gap-1.5 font-display">
+              <Calendar className="w-4 h-4 text-sky-600" />
+              <span>Acompanhamento Semanal em Pílulas</span>
+            </span>
+            <span className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">
+              Cota semanal calculada: <strong>{formatCurrency(weeklyQuota)}/semana</strong> para almoços e delivery.
+            </span>
+          </div>
+
+          {currentWeekRemaining > 0 && dailySafePacing > 0 && (
+            <div className="px-3 py-1 rounded-full bg-[#111318] text-white text-xs font-black flex items-center gap-1.5 shadow-xs">
+              <Sparkles className="w-3.5 h-3.5 text-amber-300" />
+              <span>Semana {currentWeekNumber}: {formatCurrency(dailySafePacing)}/dia</span>
+            </div>
+          )}
+        </div>
+
+        {/* Carousel / Strip of Rounded Pills */}
+        <div className="flex items-center gap-2 overflow-x-auto pb-1 pt-0.5 no-scrollbar">
+          {weeks.map((w) => {
+            const isSelected = selectedWeekNumber === w.weekNumber;
+            const isCur = w.isCurrentWeek;
+
+            return (
+              <button
+                key={w.weekNumber}
+                type="button"
+                onClick={() => setSelectedWeekNumber(w.weekNumber)}
+                className={`px-4 py-2 rounded-full text-xs font-black transition-all cursor-pointer whitespace-nowrap shrink-0 flex items-center gap-1.5 ${
+                  isSelected
+                    ? 'bg-[#111318] text-white shadow-md scale-102 ring-2 ring-[#111318]/20'
+                    : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700'
+                }`}
+              >
+                <span>{w.label}</span>
+                {isCur && (
+                  <span
+                    className={`w-2 h-2 rounded-full ${
+                      isSelected ? 'bg-amber-300' : 'bg-sky-500'
+                    }`}
+                  />
+                )}
+                <span
+                  className={`text-[10px] tabular-nums font-bold ${
+                    isSelected ? 'text-slate-300' : 'text-slate-500'
+                  }`}
+                >
+                  {formatCurrency(w.spent)}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Active Selected Week Spotlight Bento Card */}
+        {activeWeekData && (
+          <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs space-y-2.5">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-black text-[#111318] dark:text-white">
+                  {activeWeekData.label} {activeWeekData.isCurrentWeek ? '(Semana em Andamento 📍)' : ''}
+                </span>
+                <span
+                  className={`text-[10px] font-black px-2.5 py-0.5 rounded-full ${
+                    activeWeekData.status === 'future'
+                      ? 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300'
+                      : activeWeekData.status === 'over'
+                      ? 'bg-rose-100 text-rose-700 dark:bg-rose-950 dark:text-rose-300'
+                      : activeWeekData.status === 'warning'
+                      ? 'bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300'
+                      : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-200'
+                  }`}
+                >
+                  {activeWeekData.status === 'future'
+                    ? 'Aguardando'
+                    : activeWeekData.status === 'over'
+                    ? 'Passou do Limite'
+                    : activeWeekData.status === 'warning'
+                    ? 'Atenção'
+                    : 'Equilibrado ✓'}
+                </span>
+              </div>
+
+              <div className="text-right">
+                <span className="text-xs font-black text-[#111318] dark:text-white tabular-nums">
+                  {formatCurrency(activeWeekData.spent)}
+                </span>
+                <span className="text-[10px] text-slate-500 ml-1">
+                  / cota {formatCurrency(activeWeekData.allocatedBudget)}
+                </span>
+              </div>
+            </div>
+
+            {/* Progress Bar */}
+            <div className="w-full h-2.5 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden border border-slate-200 dark:border-slate-700">
+              <div
+                className={`h-full rounded-full transition-all duration-500 ${
+                  activeWeekData.status === 'over'
+                    ? 'bg-rose-500'
+                    : activeWeekData.status === 'warning'
+                    ? 'bg-amber-500'
+                    : 'bg-[#111318]'
+                }`}
+                style={{
+                  width: `${Math.min(
+                    100,
+                    activeWeekData.allocatedBudget > 0
+                      ? Math.round((activeWeekData.spent / activeWeekData.allocatedBudget) * 100)
+                      : 0
+                  )}%`,
+                }}
+              />
+            </div>
+
+            <div className="flex items-center justify-between text-xs pt-1">
+              <span className="text-slate-500 dark:text-slate-400">Saldo da semana:</span>
+              <span
+                className={`font-black tabular-nums ${
+                  activeWeekData.remaining < 0
+                    ? 'text-rose-600 dark:text-rose-400'
+                    : 'text-emerald-700 dark:text-emerald-400'
+                }`}
+              >
+                {activeWeekData.remaining < 0
+                  ? `- ${formatCurrency(Math.abs(activeWeekData.remaining))}`
+                  : `+ ${formatCurrency(activeWeekData.remaining)} livres`}
+              </span>
+            </div>
+          </div>
+        )}
+      </div>
+
       {/* OS 3 PILARES FUNCIONAIS: GRID */}
-      <div className="space-y-2">
+      <div className="space-y-2 pt-1">
         <span className="text-[11px] font-black uppercase tracking-wider text-slate-700 dark:text-slate-300 block">
           Distribuição nos 3 Pilares de Alimentação do Casal:
         </span>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           {/* Pilar 1: Estrutural */}
-          <div className="p-4 rounded-2xl bg-teal-50/60 dark:bg-teal-950/30 border border-teal-200 dark:border-teal-800/80 space-y-2">
+          <div className="p-4 rounded-2xl bg-white/90 dark:bg-slate-900/90 border border-[#A6D8FF] dark:border-slate-800 space-y-2 shadow-xs">
             <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2 font-black text-xs text-teal-950 dark:text-teal-200">
+              <div className="flex items-center gap-2 font-black text-xs text-sky-950 dark:text-sky-200">
                 <span className="text-lg">🛒</span>
                 <span>{pillars.estrutural.title}</span>
               </div>
-              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-teal-200/60 dark:bg-teal-900/60 text-teal-950 dark:text-teal-200">
+              <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-sky-100 dark:bg-sky-950 text-sky-900 dark:text-sky-200">
                 {pillars.estrutural.percentageOfFoodSpent}%
               </span>
             </div>
-            <div className="text-xl font-black text-slate-950 dark:text-white tabular-nums font-display">
+            <div className="text-xl font-black text-[#111318] dark:text-white tabular-nums font-display">
               {formatCurrency(structuralSpent)}
             </div>
             <p className="text-[11px] text-slate-600 dark:text-slate-400 font-medium leading-snug">
@@ -143,17 +284,17 @@ export const FoodPacingWeeklyCard: React.FC<FoodPacingWeeklyCardProps> = ({
           </div>
 
           {/* Pilar 2: Rotina */}
-          <div className="p-4 rounded-2xl bg-amber-50/60 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800/80 space-y-2">
+          <div className="p-4 rounded-2xl bg-white/90 dark:bg-slate-900/90 border border-[#FFC875] dark:border-slate-800 space-y-2 shadow-xs">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2 font-black text-xs text-amber-950 dark:text-amber-200">
                 <span className="text-lg">🍲</span>
                 <span>{pillars.rotina.title}</span>
               </div>
-              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-200/60 dark:bg-amber-900/60 text-amber-950 dark:text-amber-200">
+              <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-amber-100 dark:bg-amber-950 text-amber-950 dark:text-amber-200">
                 {pillars.rotina.percentageOfFoodSpent}%
               </span>
             </div>
-            <div className="text-xl font-black text-slate-950 dark:text-white tabular-nums font-display">
+            <div className="text-xl font-black text-[#111318] dark:text-white tabular-nums font-display">
               {formatCurrency(routineSpent)}
             </div>
             <p className="text-[11px] text-slate-600 dark:text-slate-400 font-medium leading-snug">
@@ -162,133 +303,23 @@ export const FoodPacingWeeklyCard: React.FC<FoodPacingWeeklyCardProps> = ({
           </div>
 
           {/* Pilar 3: Conveniência */}
-          <div className="p-4 rounded-2xl bg-purple-50/60 dark:bg-purple-950/30 border border-purple-200 dark:border-purple-800/80 space-y-2">
+          <div className="p-4 rounded-2xl bg-white/90 dark:bg-slate-900/90 border border-[#D8C7FF] dark:border-slate-800 space-y-2 shadow-xs">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2 font-black text-xs text-purple-950 dark:text-purple-200">
                 <span className="text-lg">🛵</span>
                 <span>{pillars.conveniencia.title}</span>
               </div>
-              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-purple-200/60 dark:bg-purple-900/60 text-purple-950 dark:text-purple-200">
+              <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-purple-100 dark:bg-purple-950 text-purple-950 dark:text-purple-200">
                 {pillars.conveniencia.percentageOfFoodSpent}%
               </span>
             </div>
-            <div className="text-xl font-black text-slate-950 dark:text-white tabular-nums font-display">
+            <div className="text-xl font-black text-[#111318] dark:text-white tabular-nums font-display">
               {formatCurrency(convenienceSpent)}
             </div>
             <p className="text-[11px] text-slate-600 dark:text-slate-400 font-medium leading-snug">
               {pillars.conveniencia.description}
             </p>
           </div>
-        </div>
-      </div>
-
-      {/* PACING SEMANAL DE CONVENIÊNCIA & ROTINA: AS 4 SEMANAS */}
-      <div className="space-y-3 pt-1">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div>
-            <span className="text-xs font-black text-slate-950 dark:text-white flex items-center gap-1.5 font-display">
-              <Calendar className="w-4 h-4 text-sky-600" />
-              <span>Pacing Semanal de Conveniência & Rotina (4 Blocos)</span>
-            </span>
-            <span className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">
-              Cota semanal calculada: <strong>{formatCurrency(weeklyQuota)}/semana</strong> para almoços e delivery.
-            </span>
-          </div>
-
-          {currentWeekRemaining > 0 && dailySafePacing > 0 && (
-            <div className="px-3 py-1.5 rounded-xl bg-emerald-100 dark:bg-emerald-950 text-emerald-950 dark:text-emerald-200 text-xs font-black border border-emerald-300 dark:border-emerald-800 flex items-center gap-1.5 shadow-xs">
-              <Sparkles className="w-3.5 h-3.5 text-emerald-600" />
-              <span>Semana {currentWeekNumber}: Média segura de {formatCurrency(dailySafePacing)}/dia</span>
-            </div>
-          )}
-        </div>
-
-        {/* 4 Cards Grid */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-          {weeks.map(w => {
-            const pct = w.allocatedBudget > 0 ? Math.min(100, Math.round((w.spent / w.allocatedBudget) * 100)) : 0;
-            const isCur = w.isCurrentWeek;
-
-            return (
-              <div
-                key={w.weekNumber}
-                className={`p-3.5 rounded-2xl border-2 transition-all space-y-2 relative ${
-                  isCur
-                    ? 'border-sky-500 bg-sky-50/40 dark:bg-sky-950/40 shadow-sm'
-                    : 'border-slate-200 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-800/40'
-                }`}
-              >
-                {isCur && (
-                  <span className="absolute -top-2.5 right-3 px-2 py-0.5 rounded-full bg-sky-600 text-white text-[9px] font-black uppercase tracking-wider shadow-xs">
-                    Semana Atual 📍
-                  </span>
-                )}
-
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-black text-slate-900 dark:text-white">
-                    {w.label}
-                  </span>
-                  <span
-                    className={`text-[10px] font-black px-2 py-0.5 rounded-md ${
-                      w.status === 'future'
-                        ? 'bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300'
-                        : w.status === 'over'
-                        ? 'bg-rose-100 dark:bg-rose-950 text-rose-700 dark:text-rose-300'
-                        : w.status === 'warning'
-                        ? 'bg-amber-100 dark:bg-amber-950 text-amber-700 dark:text-amber-300'
-                        : 'bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300'
-                    }`}
-                  >
-                    {w.status === 'future'
-                      ? 'Aguardando'
-                      : w.status === 'over'
-                      ? 'Passou'
-                      : w.status === 'warning'
-                      ? 'Atenção'
-                      : 'Equilibrado ✓'}
-                  </span>
-                </div>
-
-                <div className="flex items-baseline justify-between text-xs">
-                  <span className="font-extrabold text-slate-900 dark:text-white tabular-nums">
-                    {formatCurrency(w.spent)}
-                  </span>
-                  <span className="text-slate-500 text-[10px] font-bold">
-                    cota {formatCurrency(w.allocatedBudget)}
-                  </span>
-                </div>
-
-                {/* Progress bar */}
-                <div className="w-full h-2 rounded-full bg-slate-200 dark:bg-slate-700 overflow-hidden">
-                  <div
-                    className={`h-full rounded-full transition-all duration-500 ${
-                      w.status === 'over'
-                        ? 'bg-rose-500'
-                        : w.status === 'warning'
-                        ? 'bg-amber-500'
-                        : 'bg-sky-500'
-                    }`}
-                    style={{ width: `${w.status === 'future' ? 0 : pct}%` }}
-                  />
-                </div>
-
-                <div className="text-[11px] font-extrabold flex justify-between pt-0.5">
-                  <span className="text-slate-500">Saldo restante:</span>
-                  <span
-                    className={
-                      w.remaining < 0
-                        ? 'text-rose-600 dark:text-rose-400'
-                        : 'text-emerald-700 dark:text-emerald-400'
-                    }
-                  >
-                    {w.remaining < 0
-                      ? `- ${formatCurrency(Math.abs(w.remaining))}`
-                      : formatCurrency(w.remaining)}
-                  </span>
-                </div>
-              </div>
-            );
-          })}
         </div>
       </div>
     </div>

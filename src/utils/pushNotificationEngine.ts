@@ -1,0 +1,208 @@
+import { AppState, PushNotificationSettings, CategoryKey } from '../types/finance';
+
+export const DEFAULT_PUSH_SETTINGS: PushNotificationSettings = {
+  enabled: true,
+  permissionStatus: 'default',
+  dailyTriageEnabled: true,
+  weeklySummaryEnabled: true,
+  monthlySummaryEnabled: true,
+  categoryAlertsEnabled: true,
+  goalCelebrationsEnabled: true,
+};
+
+/**
+ * Gets the current Web Notification API permission status
+ */
+export function getBrowserPermissionStatus(): 'granted' | 'denied' | 'default' {
+  if (typeof window !== 'undefined' && 'Notification' in window) {
+    return Notification.permission as 'granted' | 'denied' | 'default';
+  }
+  return 'default';
+}
+
+/**
+ * Checks if Push Notifications are supported by the browser / PWA
+ */
+export function isPushSupported(): boolean {
+  return typeof window !== 'undefined' && 'Notification' in window;
+}
+
+/**
+ * Requests native browser Push Notification permission
+ */
+export async function requestPushPermission(): Promise<'granted' | 'denied' | 'default'> {
+  if (!isPushSupported()) {
+    return 'denied';
+  }
+
+  try {
+    const permission = await Notification.requestPermission();
+    return permission as 'granted' | 'denied' | 'default';
+  } catch (err) {
+    console.warn('Notification permission error:', err);
+    return 'denied';
+  }
+}
+
+/**
+ * Sends a native PWA local Push Notification using Service Worker or Notification API
+ */
+export async function sendLocalPushNotification(
+  title: string,
+  options?: NotificationOptions & { url?: string }
+): Promise<boolean> {
+  if (!isPushSupported() || Notification.permission !== 'granted') {
+    return false;
+  }
+
+  const defaultOptions: NotificationOptions = {
+    icon: '/icon.svg',
+    badge: '/icon.svg',
+    vibrate: [200, 100, 200],
+    requireInteraction: false,
+    ...options,
+  };
+
+  try {
+    // Attempt Service Worker registration notification first
+    if ('serviceWorker' in navigator) {
+      const registration = await navigator.serviceWorker.ready;
+      if (registration && registration.showNotification) {
+        await registration.showNotification(title, defaultOptions);
+        return true;
+      }
+    }
+
+    // Fallback to direct Notification constructor
+    new Notification(title, defaultOptions);
+    return true;
+  } catch (err) {
+    console.warn('Could not display local push notification:', err);
+    return false;
+  }
+}
+
+/**
+ * Dispatches an instant test notification
+ */
+export async function sendTestNotification(): Promise<boolean> {
+  const perm = await requestPushPermission();
+  if (perm !== 'granted') {
+    return false;
+  }
+
+  return sendLocalPushNotification('🏦 JUNTÔ — Notificações Ativas!', {
+    body: 'Tudo pronto! Vocês receberão lembretes sutis de triagem diária, resumo semanal e fechamento do mês.',
+    tag: 'junto-test-push',
+  });
+}
+
+/**
+ * Checks scheduled notification rules and triggers push & in-app alerts if criteria are met
+ */
+export function checkAndTriggerScheduledPushNotifications(
+  state: AppState,
+  updatePushSettings: (updates: Partial<PushNotificationSettings>) => void,
+  addNotification: (notif: { title: string; message: string; type: 'alert' | 'success' | 'info' }) => void
+): void {
+  const settings = state.pushSettings || DEFAULT_PUSH_SETTINGS;
+  if (!settings.enabled) return;
+
+  const currentPermission = getBrowserPermissionStatus();
+  if (settings.permissionStatus !== currentPermission) {
+    updatePushSettings({ permissionStatus: currentPermission });
+  }
+
+  const todayStr = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+  const now = new Date();
+  const currentMonthKey = state.currentMonth || todayStr.slice(0, 7);
+
+  // 1. TRIAGEM DIÁRIA (Ex: Final da Tarde)
+  if (settings.dailyTriageEnabled && settings.lastDailyTriageNotifiedAt !== todayStr) {
+    const pendingExpenses = state.expenses.filter(
+      e => e.triageDone === false || e.isExcludedFromMonthlyBudget === undefined
+    ).length;
+    const pendingConfirmations = (state.pendingConfirmations || []).length;
+    const totalPending = pendingExpenses + pendingConfirmations;
+
+    if (totalPending > 0) {
+      const notifTitle = '🏦 JUNTÔ — Lançamentos Pendentes de Triagem';
+      const notifBody = `Vocês têm ${totalPending} lançamento(s) aguardando definição de fonte ou categoria hoje!`;
+
+      addNotification({
+        title: 'Triagem Diária Pendente 📋',
+        message: notifBody,
+        type: 'info',
+      });
+
+      if (currentPermission === 'granted') {
+        sendLocalPushNotification(notifTitle, {
+          body: notifBody,
+          tag: 'daily-triage',
+        });
+      }
+
+      updatePushSettings({ lastDailyTriageNotifiedAt: todayStr });
+    }
+  }
+
+  // 2. RESUMO SEMANAL (Domingos a partir das 18:00)
+  const isSunday = now.getDay() === 0;
+  const hour = now.getHours();
+  const currentWeekNumber = Math.ceil(now.getDate() / 7);
+  const weekKey = `${currentMonthKey}-W${currentWeekNumber}`;
+
+  if (
+    settings.weeklySummaryEnabled &&
+    isSunday &&
+    hour >= 18 &&
+    settings.lastWeeklySummaryNotifiedAt !== weekKey
+  ) {
+    const notifTitle = '📊 JUNTÔ — Resumo Semanal do Casal';
+    const notifBody = 'Domingo é dia de alinhamento! Confiram o balanço da semana e o ritmo do orçamento do casal.';
+
+    addNotification({
+      title: 'Resumo Semanal Disponível 📊',
+      message: notifBody,
+      type: 'info',
+    });
+
+    if (currentPermission === 'granted') {
+      sendLocalPushNotification(notifTitle, {
+        body: notifBody,
+        tag: 'weekly-summary',
+      });
+    }
+
+    updatePushSettings({ lastWeeklySummaryNotifiedAt: weekKey });
+  }
+
+  // 3. FECHAMENTO DO MÊS (Último dia do mês a partir das 19:00)
+  const lastDayOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+  const isLastDayOfMonth = now.getDate() === lastDayOfMonth;
+
+  if (
+    settings.monthlySummaryEnabled &&
+    isLastDayOfMonth &&
+    hour >= 19 &&
+    settings.lastMonthlySummaryNotifiedAt !== currentMonthKey
+  ) {
+    const notifTitle = '🏆 JUNTÔ — Fechamento do Mês';
+    const notifBody = 'Último dia do mês! Hora de revisar as sobras orçamentárias e aprovar o Guia de Aportes a dois.';
+
+    addNotification({
+      title: 'Fechamento do Mês Pronto 🏆',
+      message: notifBody,
+      type: 'success',
+    });
+
+    if (currentPermission === 'granted') {
+      sendLocalPushNotification(notifTitle, {
+        body: notifBody,
+        tag: 'monthly-summary',
+      });
+    }
+
+    updatePushSettings({ lastMonthlySummaryNotifiedAt: currentMonthKey });
+  }
+}

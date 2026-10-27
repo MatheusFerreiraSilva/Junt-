@@ -108,16 +108,10 @@ export const AIPredictiveInsightsCard: React.FC<AIPredictiveInsightsCardProps> =
         const isFatigue = insight.type === 'fatigue_pattern';
         const isEfficiency = insight.type === 'efficiency_proposal';
 
-        const borderTheme = isReward
-          ? 'border-amber-400/80 dark:border-amber-600/80 bg-gradient-to-br from-amber-500/10 via-orange-500/5 to-pink-500/10'
-          : isFatigue
-          ? 'border-sky-400/80 dark:border-sky-600/80 bg-gradient-to-br from-sky-500/10 via-indigo-500/5 to-teal-500/10'
-          : 'border-emerald-400/80 dark:border-emerald-600/80 bg-gradient-to-br from-emerald-500/10 via-teal-500/5 to-indigo-500/10';
-
         return (
           <div
             key={insight.id}
-            className={`rounded-3xl p-5 sm:p-7 border-2 shadow-md space-y-4 transition-all duration-300 ${borderTheme}`}
+            className="clay-card bento-card-lavender p-5 sm:p-7 space-y-4 transition-all duration-300"
           >
             {/* Top Bar with Badge & Dismiss */}
             <div className="flex items-start justify-between gap-3">

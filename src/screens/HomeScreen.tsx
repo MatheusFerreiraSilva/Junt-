@@ -52,6 +52,7 @@ import { CoupleSettlementCard } from '../components/CoupleSettlementCard';
 import { LIFE_TIERS } from '../utils/incomeTiersEngine';
 import { FoodPacingWeeklyCard } from '../components/FoodPacingWeeklyCard';
 import { WeeklySurplusHub } from '../components/WeeklySurplusHub';
+import { MonthThermometerGauge } from '../components/MonthThermometerGauge';
 
 interface HomeScreenProps {
   onNavigate: (screen: ScreenId, categoryKey?: CategoryKey) => void;
@@ -533,125 +534,20 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
       })()}
 
       {/* ========================================================================= */}
-      {/* PRIORIDADE 1: O TERMÔMETRO DO MÊS (CLICÁVEL - RAIO-X DO MÊS)              */}
+      {/* PRIORIDADE 1: O TERMÔMETRO DO MÊS (ANEL SEGMENTADO CIRCULAR EM ARCOS)      */}
       {/* ========================================================================= */}
-      <div
-        role="button"
-        tabIndex={0}
-        onClick={() => setActiveModal('thermometer')}
-        onKeyDown={e => e.key === 'Enter' && setActiveModal('thermometer')}
-        className="group relative overflow-hidden bg-white dark:bg-slate-900 rounded-3xl p-6 sm:p-8 border-2 shadow-lg text-center transition-all duration-300 cursor-pointer hover:border-slate-400 dark:hover:border-slate-600 hover:shadow-xl focus:outline-none focus:ring-2 focus:ring-accent-primary"
-        style={{
-          borderColor: 'var(--app-accent-border)',
-          boxShadow: '0 12px 30px -6px var(--app-accent-glow)',
-        }}
-        aria-label="Abrir raio-x do orçamento do mês"
-      >
-        {/* Glow ambient background */}
-        <div
-          className={`absolute inset-0 opacity-10 pointer-events-none transition-colors duration-700 ${
-            thermometerStatus === 'danger'
-              ? 'bg-rose-500'
-              : thermometerStatus === 'warning'
-              ? 'bg-amber-500'
-              : 'bg-accent-primary'
-          }`}
-        />
-
-        {/* Clickable Badge Indicator */}
-        <div className="absolute top-4 right-4 flex items-center gap-1.5 px-3 py-1 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-300 dark:border-slate-700 text-[10px] font-black group-hover:bg-slate-200 dark:group-hover:bg-slate-700 transition-colors">
-          <Eye className="w-3 h-3 text-accent-themed" />
-          <span>Raio-X do Mês</span>
-          <ChevronRight className="w-3 h-3 group-hover:translate-x-0.5 transition-transform" />
-        </div>
-
-        <div className="relative z-10 max-w-xl mx-auto">
-          <span className="text-xs font-black tracking-wider uppercase text-slate-700 dark:text-slate-300">
-            {isOverBudget ? 'Passamos do combinado' : 'Quanto ainda podemos gastar'}
-          </span>
-
-          {/* O NÚMERO GIGANTE NO MEIO DA TELA */}
-          <div
-            className={`text-4xl sm:text-6xl font-black tracking-tight tabular-nums my-3 font-display transition-colors ${
-              isOverBudget
-                ? 'text-rose-600 dark:text-rose-400'
-                : thermometerStatus === 'warning'
-                ? 'text-amber-600 dark:text-amber-400'
-                : ''
-            }`}
-            style={
-              !isOverBudget && thermometerStatus === 'safe'
-                ? { color: 'var(--app-accent-text)' }
-                : {}
-            }
-          >
-            {isOverBudget
-              ? `Passamos ${formatCurrency(Math.abs(remainingToSpendThisMonth))} do combinado`
-              : formatCurrency(remainingToSpendThisMonth)}
-          </div>
-
-          <p className="text-xs sm:text-sm text-slate-800 dark:text-slate-200 font-bold">
-            {isOverBudget
-              ? 'A rotina e os plantões puxaram mais este mês! Fiquem tranquilos: a gente recalibra juntos sem neura e com muito carinho.'
-              : `De um total de ${formatCurrency(totalIncome)} planejado com carinho para ${state.profile.partner1Name} & ${state.profile.partner2Name}.`}
-          </p>
-
-          {/* Ritmo Diário Seguro */}
-          {!isOverBudget && safeDailyLimit > 0 && (
-            <div className="mt-2 inline-flex items-center gap-2 px-3.5 py-1.5 rounded-xl bg-emerald-100 dark:bg-emerald-950/70 border border-emerald-300 dark:border-emerald-700 text-emerald-950 dark:text-emerald-200 text-xs font-black">
-              <span>💡 Média segura:</span>
-              <span className="text-emerald-800 dark:text-emerald-300 underline font-black">
-                {formatCurrency(safeDailyLimit)} por dia
-              </span>
-              <span>nos próximos {progress.daysRemaining} dias</span>
-            </div>
-          )}
-
-          {/* O TERMÔMETRO: BARRINHA DE COMPARAÇÃO */}
-          <div className="mt-5 pt-4 border-t-2 border-slate-200 dark:border-slate-800">
-            <div className="flex items-center justify-between text-xs font-extrabold mb-2">
-              <span className="text-slate-800 dark:text-slate-200">
-                Gasto do mês: {budgetConsumedPercent.toFixed(0)}%
-              </span>
-              <span className="text-slate-700 dark:text-slate-300">
-                Mês decorrido: {progress.percentPassed}%
-              </span>
-            </div>
-
-            {/* Visual Thermometer Bar */}
-            <div className="relative h-4.5 bg-slate-200 dark:bg-slate-800 rounded-full overflow-hidden p-0.5 border-2 border-slate-300 dark:border-slate-600 shadow-inner">
-              <div
-                className="absolute top-0 bottom-0 w-1 bg-slate-700 dark:bg-slate-200 z-20 shadow-xs"
-                style={{ left: `${progress.percentPassed}%` }}
-                title={`Dia ${progress.daysPassed} de ${progress.totalDays}`}
-              />
-
-              <div
-                className={`h-full rounded-full transition-all duration-700 ${
-                  thermometerStatus === 'danger'
-                    ? 'bg-rose-500'
-                    : thermometerStatus === 'warning'
-                    ? 'bg-amber-500'
-                    : 'bg-accent-primary'
-                }`}
-                style={{ width: `${Math.min(100, budgetConsumedPercent)}%` }}
-              />
-            </div>
-
-            <div className="flex items-center justify-between text-xs text-slate-700 dark:text-slate-300 font-bold mt-2.5">
-              <span className="flex items-center gap-1.5">
-                <Clock className="w-4 h-4 text-slate-600 dark:text-slate-400 stroke-[2.5]" />
-                {progress.daysRemaining === 0
-                  ? 'Hoje é o último dia do mês'
-                  : `Faltam ${progress.daysRemaining} dias para o próximo mês`}
-              </span>
-              <span className="font-black text-slate-950 dark:text-white">
-                {formatCurrency(totalSpentThisMonth)} / {formatCurrency(totalIncome)}
-              </span>
-            </div>
-          </div>
-        </div>
-      </div>
+      <MonthThermometerGauge
+        totalIncome={totalIncome}
+        totalSpent={displayedTotalSpent}
+        remainingToSpend={displayedRemaining}
+        budgetConsumedPercent={budgetConsumedPercent}
+        daysRemaining={progress.daysRemaining}
+        safeDailyLimit={safeDailyLimit}
+        isOverBudget={isOverBudget}
+        activeLifeTier={activeLifeTier}
+        streakMonths={state.profile.streakMonths}
+        onOpenRaioX={() => setActiveModal('thermometer')}
+      />
 
       {/* Atalho Inteligente para o Hub de Sobras & Excessos Semanais */}
       {aiPredictiveInsights.length > 0 && (
@@ -773,66 +669,59 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
       </div>
 
       {/* ========================================================================= */}
-      {/* PRIORIDADE 3: AS 3 PERGUNTAS ESSENCIAIS (3 CARDS CLICÁVEIS)               */}
+      {/* PRIORIDADE 3: AS 3 PERGUNTAS ESSENCIAIS (3 CARDS BENTO CLAYMORPHIC)       */}
       {/* ========================================================================= */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5">
-        {/* Question 1: Quanto tem? -> CLICÁVEL: PATRIMÔNIO & COFRINHOS */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        {/* Question 1: Quanto tem? -> CLICÁVEL: PATRIMÔNIO & COFRINHOS (Fresh Sage #B8E0B0) */}
         <div
           role="button"
           tabIndex={0}
           onClick={() => setActiveModal('wealth')}
-          onKeyDown={e => e.key === 'Enter' && setActiveModal('wealth')}
-          className="group bg-white dark:bg-slate-900 rounded-2xl p-5 border-2 shadow-sm flex flex-col justify-between transition-all cursor-pointer hover:border-slate-400 dark:hover:border-slate-600 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-accent-primary"
-          style={{ borderColor: 'var(--app-accent-border)' }}
+          onKeyDown={e => (e.key === 'Enter' || e.key === ' ') && setActiveModal('wealth')}
+          className="group clay-card bento-card-sage p-5 flex flex-col justify-between transition-all cursor-pointer hover:scale-[1.01] focus:outline-none"
           aria-label="Abrir detalhamento de quanto a gente tem"
         >
-          <div className="flex items-center justify-between text-xs mb-2">
-            <span className="font-black text-slate-900 dark:text-white text-xs uppercase tracking-wider flex items-center gap-1.5">
+          <div className="flex items-center justify-between text-xs mb-3">
+            <span className="font-black text-[#111318] dark:text-white text-xs uppercase tracking-wider flex items-center gap-1.5">
               <span>1. Quanto {isIndividualView ? activePersonName : 'a gente'} tem?</span>
             </span>
-            <div className="flex items-center gap-1 text-slate-500 group-hover:text-accent-themed transition-colors">
-              <span className="text-xl">💎</span>
-              <ChevronRight className="w-4 h-4 group-hover:translate-x-0.5 transition-transform" />
+            <div className="w-8 h-8 rounded-full bg-white dark:bg-slate-800 flex items-center justify-center text-sm shadow-2xs group-hover:scale-110 transition-transform">
+              <span>💎</span>
             </div>
           </div>
           <div>
-            <div
-              className="text-2xl sm:text-3xl font-black tabular-nums font-display"
-              style={{ color: 'var(--app-accent-text)' }}
-            >
+            <div className="text-2xl sm:text-3xl font-black tabular-nums font-display text-[#111318] dark:text-white">
               {formatCurrency((isIndividualView ? totalSavedInPiggyBanks * 0.5 : totalSavedInPiggyBanks) + Math.max(0, displayedRemaining))}
             </div>
             <div className="text-xs text-slate-700 dark:text-slate-300 font-bold mt-1.5 flex items-center gap-1.5">
               <span>{formatCurrency(isIndividualView ? totalSavedInPiggyBanks * 0.5 : totalSavedInPiggyBanks)} guardados</span>
               <span>·</span>
-              <span className="font-black" style={{ color: 'var(--app-accent-text)' }}>
+              <span className="font-black text-emerald-800 dark:text-emerald-300">
                 {formatCurrency(Math.max(0, displayedRemaining))} livres
               </span>
             </div>
           </div>
         </div>
 
-        {/* Question 2: Quanto gastou? -> CLICÁVEL: EXTRATO DO MÊS */}
+        {/* Question 2: Quanto gastou? -> CLICÁVEL: EXTRATO DO MÊS (Warm Ochre #FFC875) */}
         <div
           role="button"
           tabIndex={0}
           onClick={() => setActiveModal('spent')}
-          onKeyDown={e => e.key === 'Enter' && setActiveModal('spent')}
-          className="group bg-white dark:bg-slate-900 rounded-2xl p-5 border-2 shadow-sm flex flex-col justify-between transition-all cursor-pointer hover:border-slate-400 dark:hover:border-slate-600 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-accent-primary"
-          style={{ borderColor: 'var(--app-accent-border)' }}
+          onKeyDown={e => (e.key === 'Enter' || e.key === ' ') && setActiveModal('spent')}
+          className="group clay-card bento-card-ochre p-5 flex flex-col justify-between transition-all cursor-pointer hover:scale-[1.01] focus:outline-none"
           aria-label="Abrir detalhamento de quanto a gente gastou"
         >
-          <div className="flex items-center justify-between text-xs mb-2">
-            <span className="font-black text-slate-900 dark:text-white text-xs uppercase tracking-wider">
+          <div className="flex items-center justify-between text-xs mb-3">
+            <span className="font-black text-[#111318] dark:text-white text-xs uppercase tracking-wider">
               2. Quanto {isIndividualView ? activePersonName : 'a gente'} gastou?
             </span>
-            <div className="flex items-center gap-1 text-slate-500 group-hover:text-accent-themed transition-colors">
-              <span className="text-xl">💳</span>
-              <ChevronRight className="w-4 h-4 group-hover:translate-x-0.5 transition-transform" />
+            <div className="w-8 h-8 rounded-full bg-white dark:bg-slate-800 flex items-center justify-center text-sm shadow-2xs group-hover:scale-110 transition-transform">
+              <span>💳</span>
             </div>
           </div>
           <div>
-            <div className="text-2xl sm:text-3xl font-black text-slate-950 dark:text-white tabular-nums font-display">
+            <div className="text-2xl sm:text-3xl font-black text-[#111318] dark:text-white tabular-nums font-display">
               {formatCurrency(displayedTotalSpent)}
             </div>
             <div className="text-xs text-slate-700 dark:text-slate-300 font-bold mt-1.5 flex items-center gap-1.5">
@@ -843,28 +732,26 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
           </div>
         </div>
 
-        {/* Question 3: Ritmo -> CLICÁVEL: SAÚDE FINANCEIRA & DICAS */}
+        {/* Question 3: Ritmo -> CLICÁVEL: SAÚDE & CELEBRAÇÃO (Lavender #D8C7FF) */}
         <div
           role="button"
           tabIndex={0}
           onClick={() => setActiveModal('rhythm')}
-          onKeyDown={e => e.key === 'Enter' && setActiveModal('rhythm')}
-          className="group bg-white dark:bg-slate-900 rounded-2xl p-5 border-2 shadow-sm flex flex-col justify-between transition-all cursor-pointer hover:border-slate-400 dark:hover:border-slate-600 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-accent-primary"
-          style={{ borderColor: 'var(--app-accent-border)' }}
+          onKeyDown={e => (e.key === 'Enter' || e.key === ' ') && setActiveModal('rhythm')}
+          className="group clay-card bento-card-lavender p-5 flex flex-col justify-between transition-all cursor-pointer hover:scale-[1.01] focus:outline-none"
           aria-label="Abrir detalhamento do ritmo do casal"
         >
-          <div className="flex items-center justify-between text-xs mb-2">
-            <span className="font-black text-slate-900 dark:text-white text-xs uppercase tracking-wider">
+          <div className="flex items-center justify-between text-xs mb-3">
+            <span className="font-black text-[#111318] dark:text-white text-xs uppercase tracking-wider">
               3. Ritmo {isIndividualView ? `de ${activePersonName}` : 'do casal'}
             </span>
-            <div className="flex items-center gap-1 text-slate-500 group-hover:text-accent-themed transition-colors">
-              <span className="text-xl">🎉</span>
-              <ChevronRight className="w-4 h-4 group-hover:translate-x-0.5 transition-transform" />
+            <div className="w-8 h-8 rounded-full bg-white dark:bg-slate-800 flex items-center justify-center text-sm shadow-2xs group-hover:scale-110 transition-transform">
+              <span>🎉</span>
             </div>
           </div>
           <div>
-            <div className="text-base font-black" style={{ color: 'var(--app-accent-text)' }}>
-              {state.profile.streakMonths} meses dentro do planejado
+            <div className="text-xl sm:text-2xl font-black text-[#111318] dark:text-white font-display">
+              {state.profile.streakMonths} meses no plano
             </div>
             <div className="text-xs text-slate-700 dark:text-slate-300 font-bold mt-1.5">
               Faltam {progress.daysRemaining} dias para o próximo mês
@@ -876,11 +763,11 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
       {/* ========================================================================= */}
       {/* PRIORIDADE 4: AS 5 ÁREAS DA VIDA (CARDS INTERATIVOS CLICÁVEIS)            */}
       {/* ========================================================================= */}
-      <div className="bg-white dark:bg-slate-900 rounded-3xl p-5 sm:p-6 border-2 border-slate-300 dark:border-slate-800 shadow-md space-y-4 transition-colors">
+      <div className="clay-card p-6 sm:p-7 space-y-4">
         <div className="flex items-center justify-between">
           <div>
             <h3 className="text-base sm:text-lg font-black text-slate-950 dark:text-white font-display">
-              As 5 Áreas da Vida de Vocês
+              As 6 Áreas da Vida do Casal
             </h3>
             <p className="text-xs text-slate-700 dark:text-slate-300 font-medium">
               Ordenadas por maior gasto. Toque em qualquer categoria para abrir o raio-x e despesas.

@@ -39,9 +39,19 @@ const TrendsScreen = lazy(() =>
 const SettingsScreen = lazy(() =>
   import('./screens/SettingsScreen').then((m) => ({ default: m.SettingsScreen }))
 );
+const MedicalShiftsScreen = lazy(() =>
+  import('./screens/MedicalShiftsScreen').then((m) => ({
+    default: m.MedicalShiftsScreen,
+  }))
+);
 const ProjectionsScreen = lazy(() =>
   import('./screens/ProjectionsScreen').then((m) => ({
     default: m.ProjectionsScreen,
+  }))
+);
+const CoupleHubScreen = lazy(() =>
+  import('./screens/CoupleHubScreen').then((m) => ({
+    default: m.CoupleHubScreen,
   }))
 );
 
@@ -96,6 +106,11 @@ const WeeklyPulseModal = lazy(() =>
     default: m.WeeklyPulseModal,
   }))
 );
+const StrategicSpendingIntentModal = lazy(() =>
+  import('./components/modals/StrategicSpendingIntentModal').then((m) => ({
+    default: m.StrategicSpendingIntentModal,
+  }))
+);
 
 function ScreenFallback() {
   return (
@@ -113,6 +128,7 @@ function ScreenFallback() {
 // Títulos por tela: melhora a orientação no PWA, no histórico e em leitores de tela
 const SCREEN_TITLES: Record<ScreenId, string> = {
   home: 'Início',
+  couple_hub: 'Hub do Casal',
   calendar: 'Calendário',
   categories: 'Categorias',
   transactions: 'Transações',
@@ -121,6 +137,7 @@ const SCREEN_TITLES: Record<ScreenId, string> = {
   trends: 'Tendências',
   projections: 'Projeções',
   settings: 'Ajustes',
+  shifts: 'Gestão de Plantões',
 };
 
 const APP_TITLE = 'JUNTÔ — Finanças Inteligentes de Casal';
@@ -160,6 +177,7 @@ function MainApp() {
   const [isChatOpen, setIsChatOpen] = useState(false);
   const [hasChatLoaded, setHasChatLoaded] = useState(false);
   const [isPulseModalOpen, setIsPulseModalOpen] = useState(false);
+  const [isStrategicIntentModalOpen, setIsStrategicIntentModalOpen] = useState(false);
 
   const openChat = () => {
     setHasChatLoaded(true);
@@ -233,7 +251,7 @@ function MainApp() {
     state.piggyBanks.find((b) => b.id === depositPiggyId) || null;
 
   return (
-    <div className="min-h-screen bg-[#F8F7F4] dark:bg-[#111317] text-slate-900 dark:text-slate-100 flex flex-col lg:flex-row font-sans transition-colors">
+    <div className="min-h-screen bg-[#FAF7F2] dark:bg-[#0E1015] text-[#111318] dark:text-[#F8FAFC] flex flex-col lg:flex-row font-sans transition-colors">
       {/* Atalho de teclado: pula a navegação e vai direto ao conteúdo */}
       <a
         href="#conteudo-principal"
@@ -254,6 +272,7 @@ function MainApp() {
         onOpenChat={openChat}
         onOpenAuthModal={() => setIsAuthModalOpen(true)}
         onOpenAIOnboardingModal={() => setIsAIOnboardingOpen(true)}
+        onOpenStrategicIntentModal={() => setIsStrategicIntentModalOpen(true)}
       />
 
       {/* Main Viewport Content Area (adjacent to desktop sidebar) */}
@@ -323,6 +342,8 @@ function MainApp() {
             {currentScreen === 'settings' && <SettingsScreen />}
 
             {currentScreen === 'projections' && <ProjectionsScreen />}
+            {currentScreen === 'shifts' && <MedicalShiftsScreen />}
+            {currentScreen === 'couple_hub' && <CoupleHubScreen />}
           </Suspense>
         </main>
 
@@ -462,6 +483,15 @@ function MainApp() {
           <GeminiChatDrawer
             isOpen={isChatOpen}
             onClose={() => setIsChatOpen(false)}
+          />
+        </Suspense>
+      )}
+
+      {isStrategicIntentModalOpen && (
+        <Suspense fallback={null}>
+          <StrategicSpendingIntentModal
+            isOpen={isStrategicIntentModalOpen}
+            onClose={() => setIsStrategicIntentModalOpen(false)}
           />
         </Suspense>
       )}

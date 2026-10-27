@@ -54,7 +54,22 @@ import {
   FoodPacingMetrics,
   AIPredictiveInsight,
   FoodPillarType,
+  FundingSourceType,
+  StrategicSpendingIntent,
+  PushNotificationSettings,
+  MedicalShift,
+  MedicalShiftPreset,
+  HospitalIncomeMappingRule,
 } from '../types/finance';
+import {
+  DEFAULT_PUSH_SETTINGS,
+  checkAndTriggerScheduledPushNotifications,
+} from '../utils/pushNotificationEngine';
+import {
+  DEFAULT_SHIFT_PRESETS,
+  DEFAULT_HOSPITAL_MAPPING_RULES,
+  getSampleMedicalShifts,
+} from '../utils/shiftsEngine';
 import {
   LIFE_TIERS,
   getLifeTier,
@@ -358,6 +373,10 @@ const INITIAL_STATE: AppState = {
   dismissedSurplusMonths: [],
   monthlyDepositGuides: {},
   completedMonthDeposits: {},
+  pushSettings: DEFAULT_PUSH_SETTINGS,
+  medicalShifts: getSampleMedicalShifts(new Date().toISOString().slice(0, 7)),
+  medicalShiftPresets: DEFAULT_SHIFT_PRESETS,
+  hospitalMappingRules: DEFAULT_HOSPITAL_MAPPING_RULES,
   appMode: 'casal',
   collegeModeData: {
     active: false,
@@ -368,6 +387,7 @@ const INITIAL_STATE: AppState = {
     totalInvestedInCollege: 1420,
     studentName: 'Estudante',
   },
+  strategicIntents: [],
 };
 
 export interface FinanceContextType {
@@ -561,11 +581,30 @@ export interface FinanceContextType {
     shieldedFixedEssential: number;
     investmentsPercentage: number;
   };
-  getMonthlyDepositGuide: (monthKey?: string) => MonthlyDepositGuide;
+  getMonthlyDepositGuide: (monthKey?: string, customStrategy?: '100_percent_reserve' | 'split_freedom') => MonthlyDepositGuide;
+  updateDepositGuideStrategy: (monthKey: string, strategy: '100_percent_reserve' | 'split_freedom') => void;
   approveMonthlyDepositGuide: (monthKey: string, customItems?: MonthlyDepositItem[]) => void;
   adjustMonthlyDepositItem: (monthKey: string, itemId: string, newAmount: number) => void;
   executeMonthlyDeposit: (monthKey: string) => void;
   resetMonthlyDeposit: (monthKey: string) => void;
+
+  // Notificações Push & Alertas Estratégicos
+  pushSettings: PushNotificationSettings;
+  updatePushSettings: (updates: Partial<PushNotificationSettings>) => void;
+
+  // Gestão de Plantões Médicos & Escalas
+  medicalShifts: MedicalShift[];
+  medicalShiftPresets: MedicalShiftPreset[];
+  hospitalMappingRules: HospitalIncomeMappingRule[];
+  addMedicalShift: (shift: Omit<MedicalShift, 'id'>) => void;
+  updateMedicalShift: (id: string, updates: Partial<MedicalShift>) => void;
+  deleteMedicalShift: (id: string) => void;
+  reconcileShiftWithIncome: (shiftId: string, incomeId: string, rememberHospitalRule?: boolean) => void;
+  markShiftAsReceivedDirectly: (shiftId: string, actualDate?: string, createIncomeRecord?: boolean) => void;
+  addShiftPreset: (preset: Omit<MedicalShiftPreset, 'id'>) => void;
+  deleteShiftPreset: (id: string) => void;
+  addHospitalMappingRule: (rule: Omit<HospitalIncomeMappingRule, 'id' | 'createdAt'>) => void;
+  removeHospitalMappingRule: (id: string) => void;
 
   // Auth & Cloud Sync & Couple Fusion
   currentUser: User | null;
@@ -595,6 +634,24 @@ export interface FinanceContextType {
   emergencyReserveExcessAmount: number;
   reallocateReserveExcess: (amount: number, targetType: 'goal' | 'freedom', targetGoalId?: string, targetGoalName?: string) => void;
   advanceInstallmentPayment: (payload: import('../types/finance').AdvanceInstallmentPayload) => void;
+
+  // Intenções de Gasto Estratégico & Triagem Omnipresente (Alocação Proativa de Fonte)
+  strategicIntents: StrategicSpendingIntent[];
+  addStrategicIntent: (intent: Omit<StrategicSpendingIntent, 'id' | 'createdAt' | 'status'>) => void;
+  updateStrategicIntent: (id: string, updates: Partial<StrategicSpendingIntent>) => void;
+  deleteStrategicIntent: (id: string) => void;
+  reconcileExpenseWithIntent: (expenseId: string, intentId: string) => void;
+  updateExpenseTriage: (
+    expenseId: string,
+    triageData: {
+      assignedTo?: 'couple' | 'partner1' | 'partner2';
+      paymentMethod?: 'pix' | 'debit' | 'credit' | 'cash';
+      fundingSource?: FundingSourceType;
+      fundingGoalId?: string;
+      fundingGoalName?: string;
+      isExcludedFromMonthlyBudget?: boolean;
+    }
+  ) => void;
 
   // Motor de Insights Preditivos & Inteligência de Abastecimento (Comida)
   foodPacingMetrics: FoodPacingMetrics;
@@ -865,6 +922,7 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
             completedMonthDeposits: state.completedMonthDeposits || {},
             surplusTransfers: state.surplusTransfers || [],
             dismissedSurplusMonths: state.dismissedSurplusMonths || [],
+            strategicIntents: state.strategicIntents || [],
             updatedAt: new Date().toISOString(),
             lastUpdatedBy: currentUser?.uid || 'user',
           },
@@ -899,6 +957,7 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
     state.completedMonthDeposits,
     state.surplusTransfers,
     state.dismissedSurplusMonths,
+    state.strategicIntents,
     currentUser?.uid,
   ]);
 
@@ -1540,7 +1599,11 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
     });
 
     currentMonthExpenses.forEach(exp => {
-      if (res[exp.category]) {
+      // REGRA DE BLINDAGEM ORÇAMENTÁRIA (Intenção de Gasto Estratégico & Triagem):
+      // Gastos financiados pelo Excesso da Reserva, Caixinhas de Objetivo ou Mesada Individual
+      // NÃO consomem o orçamento da categoria do mês (Moradia, Lazer, etc. ficam 100% livres para a rotina diária).
+      const isExcluded = exp.isExcludedFromMonthlyBudget || (exp.fundingSource && exp.fundingSource !== 'month_budget');
+      if (res[exp.category] && !isExcluded) {
         res[exp.category].spent += exp.amount;
       }
     });
@@ -2018,40 +2081,115 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
       };
     }
 
-    setState(prev => ({
-      ...prev,
-      pluggyAccounts: (prev.pluggyAccounts || []).map(acc => ({
-        ...acc,
-        lastSynced: nowStr,
-        status: 'connected',
-      })),
-      pendingConfirmations: queuedConfirmation
-        ? [queuedConfirmation, ...(prev.pendingConfirmations || [])]
-        : prev.pendingConfirmations,
-      notifications: [
-        {
-          id: `notif-sync-${Date.now()}`,
-          title: 'Meu Pluggy Sincronizado ✅',
-          message: `Contas PF e PJ de ${prev.profile.partner1Name} e ${prev.profile.partner2Name} atualizadas. Transferências internas filtradas e protegidas.`,
-          timestamp: 'Agora mesmo',
-          type: 'success',
-          isRead: false,
-        },
-        ...(queuedConfirmation
-          ? [
-              {
-                id: `notif-deposit-${Date.now()}`,
-                title: 'Confirmação de Recebimento Ativa 🔔',
-                message: `Detectamos R$ 8.500,00 de ${queuedConfirmation.sourceName}. Toque para classificar como PF ou PJ.`,
-                timestamp: 'Agora mesmo',
-                type: 'alert' as const,
-                isRead: false,
-              },
-            ]
-          : []),
-        ...prev.notifications,
-      ],
-    }));
+    setState(prev => {
+      const nextExpenses = [...prev.expenses];
+      let nextIntents = [...(prev.strategicIntents || [])];
+      let nextProtAmount = prev.protectionCurrentAmount;
+      let nextProtInvested = prev.protectionTotalInvested;
+      let nextPiggyBanks = [...prev.piggyBanks];
+      const autoReconciledNotifs: AppNotification[] = [];
+
+      // Auto-reconciliation engine: match pending intents against un-reconciled expenses
+      const pendingIntents = nextIntents.filter(i => i.status === 'pending');
+      pendingIntents.forEach(intent => {
+        const matchedExpenseIndex = nextExpenses.findIndex(e => {
+          if (e.reconciledWithIntent || e.strategicIntentId) return false;
+          // Matching criterion: amounts within 3% or description contains core words of intent title
+          const amountDiff = Math.abs(e.amount - intent.estimatedAmount);
+          const amountMatch = intent.estimatedAmount > 0 && amountDiff / intent.estimatedAmount <= 0.05;
+          const words = intent.title.toLowerCase().split(/\s+/).filter(w => w.length > 3);
+          const descLower = e.description.toLowerCase();
+          const titleMatch = words.some(w => descLower.includes(w));
+          return amountMatch || titleMatch;
+        });
+
+        if (matchedExpenseIndex !== -1) {
+          const matchedExp = nextExpenses[matchedExpenseIndex];
+          const isExcluded = intent.targetSource !== 'month_budget';
+
+          // Apply balance deductions
+          if (intent.targetSource === 'reserve_excess') {
+            nextProtAmount = Math.max(0, nextProtAmount - matchedExp.amount);
+            nextProtInvested = Math.max(0, nextProtInvested - matchedExp.amount);
+          } else if (intent.targetSource === 'piggy_bank' && intent.targetGoalId) {
+            nextPiggyBanks = nextPiggyBanks.map(g => {
+              if (g.id === intent.targetGoalId) {
+                const nextCur = Math.max(0, g.currentAmount - matchedExp.amount);
+                return { ...g, currentAmount: nextCur, completed: nextCur >= g.targetAmount };
+              }
+              return g;
+            });
+          }
+
+          nextExpenses[matchedExpenseIndex] = {
+            ...matchedExp,
+            category: intent.category,
+            fundingSource: intent.targetSource,
+            fundingGoalId: intent.targetGoalId,
+            fundingGoalName: intent.targetGoalName,
+            strategicIntentId: intent.id,
+            isExcludedFromMonthlyBudget: isExcluded,
+            triageDone: true,
+            reconciledWithIntent: true,
+          };
+
+          nextIntents = nextIntents.map(i =>
+            i.id === intent.id ? { ...i, status: 'matched' as const, matchedExpenseId: matchedExp.id } : i
+          );
+
+          autoReconciledNotifs.push({
+            id: `notif-auto-recon-${Date.now()}-${intent.id}`,
+            title: 'Reconciliação Automática Pluggy! 🎯✨',
+            message: `A compra "${matchedExp.description}" (R$ ${matchedExp.amount.toLocaleString('pt-BR')}) bateu com a intenção prévia "${intent.title}" e foi blindada do orçamento mensal da casa.`,
+            timestamp: 'Agora mesmo',
+            type: 'success',
+            isRead: false,
+          });
+        }
+      });
+
+      return {
+        ...prev,
+        expenses: nextExpenses,
+        strategicIntents: nextIntents,
+        protectionCurrentAmount: nextProtAmount,
+        protectionTotalInvested: nextProtInvested,
+        isProtectionComplete: nextProtAmount >= autoCalculatedProtectionTarget,
+        piggyBanks: nextPiggyBanks,
+        pluggyAccounts: (prev.pluggyAccounts || []).map(acc => ({
+          ...acc,
+          lastSynced: nowStr,
+          status: 'connected',
+        })),
+        pendingConfirmations: queuedConfirmation
+          ? [queuedConfirmation, ...(prev.pendingConfirmations || [])]
+          : prev.pendingConfirmations,
+        notifications: [
+          ...autoReconciledNotifs,
+          {
+            id: `notif-sync-${Date.now()}`,
+            title: 'Meu Pluggy Sincronizado ✅',
+            message: `Contas PF e PJ de ${prev.profile.partner1Name} e ${prev.profile.partner2Name} atualizadas. Transferências internas filtradas e protegidas.`,
+            timestamp: 'Agora mesmo',
+            type: 'success',
+            isRead: false,
+          },
+          ...(queuedConfirmation
+            ? [
+                {
+                  id: `notif-deposit-${Date.now()}`,
+                  title: 'Confirmação de Recebimento Ativa 🔔',
+                  message: `Detectamos R$ 8.500,00 de ${queuedConfirmation.sourceName}. Toque para classificar como PF ou PJ.`,
+                  timestamp: 'Agora mesmo',
+                  type: 'alert' as const,
+                  isRead: false,
+                },
+              ]
+            : []),
+          ...prev.notifications,
+        ],
+      };
+    });
 
     setIsSyncingBanks(false);
     triggerCelebration();
@@ -2298,18 +2436,77 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
       }
     }
 
+    const fundingSource: FundingSourceType = expense.fundingSource || 'month_budget';
+    const isExcluded = fundingSource !== 'month_budget' || !!expense.isExcludedFromMonthlyBudget;
+
     const newExpense: ExpenseItem = {
       ...expense,
       category: finalCat,
       subcategory: finalSub,
+      fundingSource,
+      isExcludedFromMonthlyBudget: isExcluded,
+      triageDone: expense.triageDone ?? (fundingSource !== 'month_budget'),
       id: `exp-${Date.now()}`,
     };
 
     setState(prev => {
+      let nextProtAmount = prev.protectionCurrentAmount;
+      let nextProtInvested = prev.protectionTotalInvested;
+      let nextProtComplete = prev.isProtectionComplete;
+      let nextPiggyBanks = prev.piggyBanks;
+      let nextIntents = prev.strategicIntents || [];
+
+      // 1. Se a fonte for Excesso da Reserva: deduz do saldo da reserva de emergência
+      if (fundingSource === 'reserve_excess') {
+        nextProtAmount = Math.max(0, nextProtAmount - newExpense.amount);
+        nextProtInvested = Math.max(0, nextProtInvested - newExpense.amount);
+        nextProtComplete = nextProtAmount >= autoCalculatedProtectionTarget;
+      }
+
+      // 2. Se a fonte for Caixinha / Cofrinho de Objetivo: deduz do saldo do cofrinho
+      if (fundingSource === 'piggy_bank' && newExpense.fundingGoalId) {
+        nextPiggyBanks = nextPiggyBanks.map(g => {
+          if (g.id === newExpense.fundingGoalId) {
+            const nextCur = Math.max(0, g.currentAmount - newExpense.amount);
+            return {
+              ...g,
+              currentAmount: nextCur,
+              completed: nextCur >= g.targetAmount,
+            };
+          }
+          return g;
+        });
+      }
+
+      // 3. Se for vinculada a uma Intenção Estratégica prévia: marca como executada
+      if (newExpense.strategicIntentId) {
+        nextIntents = nextIntents.map(intent =>
+          intent.id === newExpense.strategicIntentId
+            ? { ...intent, status: 'executed' as const, matchedExpenseId: newExpense.id }
+            : intent
+        );
+      }
+
       const newExpenses = [newExpense, ...prev.expenses];
       const newNotifications = [...prev.notifications];
 
-      if (newExpense.amount >= 1000) {
+      if (isExcluded) {
+        const sourceLabel =
+          fundingSource === 'reserve_excess'
+            ? 'Excesso da Reserva de Proteção'
+            : fundingSource === 'piggy_bank'
+            ? (newExpense.fundingGoalName || 'Caixinha de Objetivo')
+            : 'Mesada Individual';
+
+        newNotifications.unshift({
+          id: `notif-exp-strat-${Date.now()}`,
+          title: 'Gasto Estratégico Registrado 🎯',
+          message: `"${newExpense.description}" (R$ ${newExpense.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}) saiu de ${sourceLabel}. A margem da categoria ${CATEGORIES_BASE[newExpense.category]?.name} continua 100% protegida para o dia a dia!`,
+          timestamp: 'Agora mesmo',
+          type: 'success',
+          isRead: false,
+        });
+      } else if (newExpense.amount >= 1000) {
         newNotifications.unshift({
           id: `notif-exp-${Date.now()}`,
           title: 'Gasto Relevante Registrado 💳',
@@ -2325,6 +2522,11 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
       return {
         ...prev,
         expenses: newExpenses,
+        protectionCurrentAmount: nextProtAmount,
+        protectionTotalInvested: nextProtInvested,
+        isProtectionComplete: nextProtComplete,
+        piggyBanks: nextPiggyBanks,
+        strategicIntents: nextIntents,
         notifications: newNotifications,
       };
     });
@@ -2340,10 +2542,270 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
   };
 
   const deleteExpense = (id: string) => {
+    setState(prev => {
+      const target = prev.expenses.find(e => e.id === id);
+      let nextProtAmount = prev.protectionCurrentAmount;
+      let nextProtInvested = prev.protectionTotalInvested;
+      let nextProtComplete = prev.isProtectionComplete;
+      let nextPiggyBanks = prev.piggyBanks;
+
+      // Reverter dedução se o gasto era de reserva ou caixinha
+      if (target?.fundingSource === 'reserve_excess') {
+        nextProtAmount += target.amount;
+        nextProtInvested += target.amount;
+        nextProtComplete = nextProtAmount >= autoCalculatedProtectionTarget;
+      } else if (target?.fundingSource === 'piggy_bank' && target.fundingGoalId) {
+        nextPiggyBanks = nextPiggyBanks.map(g => {
+          if (g.id === target.fundingGoalId) {
+            const nextCur = g.currentAmount + target.amount;
+            return { ...g, currentAmount: nextCur, completed: nextCur >= g.targetAmount };
+          }
+          return g;
+        });
+      }
+
+      return {
+        ...prev,
+        expenses: prev.expenses.filter(e => e.id !== id),
+        protectionCurrentAmount: nextProtAmount,
+        protectionTotalInvested: nextProtInvested,
+        isProtectionComplete: nextProtComplete,
+        piggyBanks: nextPiggyBanks,
+      };
+    });
+  };
+
+  // ==========================================
+  // TRIAGEM OMNIPRESENTE & INTENÇÕES ESTRATÉGICAS
+  // ==========================================
+  const addStrategicIntent = (intent: Omit<StrategicSpendingIntent, 'id' | 'createdAt' | 'status'>) => {
+    const newIntent: StrategicSpendingIntent = {
+      ...intent,
+      id: `intent-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      status: 'pending',
+      createdAt: new Date().toISOString(),
+    };
+
+    setState(prev => {
+      const sourceLabel =
+        newIntent.targetSource === 'reserve_excess'
+          ? 'Excesso da Reserva de Proteção'
+          : newIntent.targetSource === 'piggy_bank'
+          ? (newIntent.targetGoalName || 'Caixinha de Objetivo')
+          : 'Orçamento do Mês';
+
+      const notif: AppNotification = {
+        id: `notif-intent-add-${Date.now()}`,
+        title: 'Intenção Estratégica Cadastrada! 🎯✨',
+        message: `O gasto planejado "${newIntent.title}" (R$ ${newIntent.estimatedAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}) foi registrado para sair de ${sourceLabel}. Quando a compra passar no extrato, ela será reconciliada automaticamente sem afetar o teto do mês!`,
+        timestamp: 'Agora mesmo',
+        type: 'success',
+        isRead: false,
+      };
+
+      return {
+        ...prev,
+        strategicIntents: [newIntent, ...(prev.strategicIntents || [])],
+        notifications: [notif, ...prev.notifications],
+      };
+    });
+
+    triggerCelebration();
+  };
+
+  const updateStrategicIntent = (id: string, updates: Partial<StrategicSpendingIntent>) => {
     setState(prev => ({
       ...prev,
-      expenses: prev.expenses.filter(e => e.id !== id),
+      strategicIntents: (prev.strategicIntents || []).map(i => (i.id === id ? { ...i, ...updates } : i)),
     }));
+  };
+
+  const deleteStrategicIntent = (id: string) => {
+    setState(prev => ({
+      ...prev,
+      strategicIntents: (prev.strategicIntents || []).filter(i => i.id !== id),
+    }));
+  };
+
+  const reconcileExpenseWithIntent = (expenseId: string, intentId: string) => {
+    setState(prev => {
+      const targetExp = prev.expenses.find(e => e.id === expenseId);
+      const targetIntent = (prev.strategicIntents || []).find(i => i.id === intentId);
+      if (!targetExp || !targetIntent) return prev;
+
+      const fundingSource = targetIntent.targetSource;
+      const isExcluded = fundingSource !== 'month_budget';
+
+      let nextProtAmount = prev.protectionCurrentAmount;
+      let nextProtInvested = prev.protectionTotalInvested;
+      let nextProtComplete = prev.isProtectionComplete;
+      let nextPiggyBanks = prev.piggyBanks;
+
+      if (fundingSource === 'reserve_excess') {
+        nextProtAmount = Math.max(0, nextProtAmount - targetExp.amount);
+        nextProtInvested = Math.max(0, nextProtInvested - targetExp.amount);
+        nextProtComplete = nextProtAmount >= autoCalculatedProtectionTarget;
+      } else if (fundingSource === 'piggy_bank' && targetIntent.targetGoalId) {
+        nextPiggyBanks = nextPiggyBanks.map(g => {
+          if (g.id === targetIntent.targetGoalId) {
+            const nextCur = Math.max(0, g.currentAmount - targetExp.amount);
+            return { ...g, currentAmount: nextCur, completed: nextCur >= g.targetAmount };
+          }
+          return g;
+        });
+      }
+
+      const updatedExpenses = prev.expenses.map(e => {
+        if (e.id === expenseId) {
+          return {
+            ...e,
+            category: targetIntent.category,
+            fundingSource,
+            fundingGoalId: targetIntent.targetGoalId,
+            fundingGoalName: targetIntent.targetGoalName,
+            strategicIntentId: intentId,
+            isExcludedFromMonthlyBudget: isExcluded,
+            triageDone: true,
+            reconciledWithIntent: true,
+          };
+        }
+        return e;
+      });
+
+      const updatedIntents = (prev.strategicIntents || []).map(i => {
+        if (i.id === intentId) {
+          return { ...i, status: 'matched' as const, matchedExpenseId: expenseId };
+        }
+        return i;
+      });
+
+      const notif: AppNotification = {
+        id: `notif-reconciled-${Date.now()}`,
+        title: 'Reconciliação Automática Concluída! 🎯✨',
+        message: `A compra "${targetExp.description}" (R$ ${targetExp.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}) foi vinculada à intenção "${targetIntent.title}". A margem da categoria ${CATEGORIES_BASE[targetIntent.category]?.name} permanece 100% protegida.`,
+        timestamp: 'Agora mesmo',
+        type: 'success',
+        isRead: false,
+      };
+
+      return {
+        ...prev,
+        expenses: updatedExpenses,
+        strategicIntents: updatedIntents,
+        protectionCurrentAmount: nextProtAmount,
+        protectionTotalInvested: nextProtInvested,
+        isProtectionComplete: nextProtComplete,
+        piggyBanks: nextPiggyBanks,
+        notifications: [notif, ...prev.notifications],
+      };
+    });
+
+    triggerCelebration();
+  };
+
+  const updateExpenseTriage = (
+    expenseId: string,
+    triageData: {
+      assignedTo?: 'couple' | 'partner1' | 'partner2';
+      paymentMethod?: 'pix' | 'debit' | 'credit' | 'cash';
+      fundingSource?: FundingSourceType;
+      fundingGoalId?: string;
+      fundingGoalName?: string;
+      isExcludedFromMonthlyBudget?: boolean;
+    }
+  ) => {
+    setState(prev => {
+      const targetExp = prev.expenses.find(e => e.id === expenseId);
+      if (!targetExp) return prev;
+
+      const oldSource = targetExp.fundingSource || 'month_budget';
+      const newSource = triageData.fundingSource || oldSource;
+      const isExcluded = newSource !== 'month_budget';
+
+      let nextProtAmount = prev.protectionCurrentAmount;
+      let nextProtInvested = prev.protectionTotalInvested;
+      let nextProtComplete = prev.isProtectionComplete;
+      let nextPiggyBanks = prev.piggyBanks;
+
+      // Reverter impacto anterior se mudou de fonte
+      if (oldSource === 'reserve_excess' && newSource !== 'reserve_excess') {
+        nextProtAmount += targetExp.amount;
+        nextProtInvested += targetExp.amount;
+        nextProtComplete = nextProtAmount >= autoCalculatedProtectionTarget;
+      } else if (oldSource === 'piggy_bank' && targetExp.fundingGoalId && newSource !== 'piggy_bank') {
+        nextPiggyBanks = nextPiggyBanks.map(g => {
+          if (g.id === targetExp.fundingGoalId) {
+            const nextCur = g.currentAmount + targetExp.amount;
+            return { ...g, currentAmount: nextCur, completed: nextCur >= g.targetAmount };
+          }
+          return g;
+        });
+      }
+
+      // Aplicar novo impacto
+      if (newSource === 'reserve_excess' && oldSource !== 'reserve_excess') {
+        nextProtAmount = Math.max(0, nextProtAmount - targetExp.amount);
+        nextProtInvested = Math.max(0, nextProtInvested - targetExp.amount);
+        nextProtComplete = nextProtAmount >= autoCalculatedProtectionTarget;
+      } else if (newSource === 'piggy_bank' && triageData.fundingGoalId && oldSource !== 'piggy_bank') {
+        nextPiggyBanks = nextPiggyBanks.map(g => {
+          if (g.id === triageData.fundingGoalId) {
+            const nextCur = Math.max(0, g.currentAmount - targetExp.amount);
+            return { ...g, currentAmount: nextCur, completed: nextCur >= g.targetAmount };
+          }
+          return g;
+        });
+      }
+
+      const updatedExpenses = prev.expenses.map(e => {
+        if (e.id === expenseId) {
+          return {
+            ...e,
+            ...triageData,
+            fundingSource: newSource,
+            isExcludedFromMonthlyBudget: isExcluded,
+            triageDone: true,
+            paidBy:
+              triageData.assignedTo === 'partner1'
+                ? 'partner1'
+                : triageData.assignedTo === 'partner2'
+                ? 'partner2'
+                : 'both',
+          };
+        }
+        return e;
+      });
+
+      const sourceLabel =
+        newSource === 'reserve_excess'
+          ? 'Excesso da Reserva'
+          : newSource === 'piggy_bank'
+          ? (triageData.fundingGoalName || 'Caixinha de Objetivo')
+          : newSource === 'personal_allowance'
+          ? 'Mesada Individual'
+          : 'Orçamento do Mês';
+
+      const notif: AppNotification = {
+        id: `notif-triage-${Date.now()}`,
+        title: 'Triagem Concluída! 🏷️⚡',
+        message: `A despesa "${targetExp.description}" foi alocada em "${sourceLabel}". O orçamento da categoria foi ajustado automaticamente.`,
+        timestamp: 'Agora mesmo',
+        type: 'success',
+        isRead: false,
+      };
+
+      return {
+        ...prev,
+        expenses: updatedExpenses,
+        protectionCurrentAmount: nextProtAmount,
+        protectionTotalInvested: nextProtInvested,
+        isProtectionComplete: nextProtComplete,
+        piggyBanks: nextPiggyBanks,
+        notifications: [notif, ...prev.notifications],
+      };
+    });
+
+    triggerCelebration();
   };
 
   const addIncome = (income: Omit<IncomeItem, 'id'>) => {
@@ -2570,6 +3032,187 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
         },
         ...prev.notifications,
       ],
+    }));
+  };
+
+  const updatePushSettings = useCallback((updates: Partial<PushNotificationSettings>) => {
+    setState(prev => ({
+      ...prev,
+      pushSettings: {
+        ...(prev.pushSettings || DEFAULT_PUSH_SETTINGS),
+        ...updates,
+      },
+    }));
+  }, []);
+
+  useEffect(() => {
+    checkAndTriggerScheduledPushNotifications(
+      state,
+      (updates) => updatePushSettings(updates),
+      (notif) => addNotification(notif)
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.expenses, state.pendingConfirmations, state.currentMonth]);
+
+  // ==========================================
+  // GESTÃO DE PLANTÕES MÉDICOS & ESCALAS
+  // ==========================================
+  const addMedicalShift = (shift: Omit<MedicalShift, 'id'>) => {
+    const newShift: MedicalShift = {
+      ...shift,
+      id: `shift-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+    };
+    setState(prev => ({
+      ...prev,
+      medicalShifts: [newShift, ...(prev.medicalShifts || [])],
+    }));
+    triggerCelebration();
+  };
+
+  const updateMedicalShift = (id: string, updates: Partial<MedicalShift>) => {
+    setState(prev => ({
+      ...prev,
+      medicalShifts: (prev.medicalShifts || []).map(s => (s.id === id ? { ...s, ...updates } : s)),
+    }));
+  };
+
+  const deleteMedicalShift = (id: string) => {
+    setState(prev => ({
+      ...prev,
+      medicalShifts: (prev.medicalShifts || []).filter(s => s.id !== id),
+    }));
+  };
+
+  const reconcileShiftWithIncome = (shiftId: string, incomeId: string, rememberHospitalRule?: boolean) => {
+    setState(prev => {
+      const targetIncome = prev.incomes.find(i => i.id === incomeId);
+      const targetShift = (prev.medicalShifts || []).find(s => s.id === shiftId);
+      if (!targetShift) return prev;
+
+      const updatedShifts = (prev.medicalShifts || []).map(s => {
+        if (s.id === shiftId) {
+          return {
+            ...s,
+            status: 'received' as const,
+            actualPayDate: targetIncome?.date || new Date().toISOString().split('T')[0],
+            netAmount: targetIncome?.amount || s.grossAmount,
+            linkedIncomeId: incomeId,
+            linkedIncomeDescription: targetIncome?.description,
+          };
+        }
+        return s;
+      });
+
+      let updatedRules = prev.hospitalMappingRules || DEFAULT_HOSPITAL_MAPPING_RULES;
+      if (rememberHospitalRule && targetIncome) {
+        const cleanDesc = targetIncome.description.replace(/^(TED|DOC|PIX|TRANSF|CRED)\s+/i, '').trim();
+        const keyword = cleanDesc.split(' ').slice(0, 3).join(' ') || targetShift.hospitalName;
+        const newRule: HospitalIncomeMappingRule = {
+          id: `rule-hosp-${Date.now()}`,
+          hospitalName: targetShift.hospitalName,
+          keywordPattern: keyword.toUpperCase(),
+          partner: targetShift.partner,
+          createdAt: new Date().toISOString(),
+        };
+        updatedRules = [newRule, ...updatedRules];
+      }
+
+      const notif: AppNotification = {
+        id: `notif-shift-reconciled-${Date.now()}`,
+        title: 'Plantão Conciliado com Sucesso! 🩺✓',
+        message: `O plantão de R$ ${targetShift.grossAmount.toLocaleString('pt-BR')} no ${targetShift.hospitalName} foi vinculado ao recebimento bancário!`,
+        timestamp: 'Agora mesmo',
+        type: 'success',
+        isRead: false,
+      };
+
+      return {
+        ...prev,
+        medicalShifts: updatedShifts,
+        hospitalMappingRules: updatedRules,
+        notifications: [notif, ...prev.notifications],
+      };
+    });
+    triggerCelebration();
+  };
+
+  const markShiftAsReceivedDirectly = (shiftId: string, actualDate?: string, createIncomeRecord?: boolean) => {
+    setState(prev => {
+      const targetShift = (prev.medicalShifts || []).find(s => s.id === shiftId);
+      if (!targetShift) return prev;
+
+      const payDate = actualDate || new Date().toISOString().split('T')[0];
+      let newIncomes = prev.incomes;
+      let linkedId: string | undefined = undefined;
+
+      if (createIncomeRecord) {
+        const incomeItem: IncomeItem = {
+          id: `inc-shift-${Date.now()}`,
+          description: `Plantão ${targetShift.hospitalName} (${targetShift.durationHours}h)`,
+          amount: targetShift.grossAmount,
+          date: payDate,
+          recipient: targetShift.partner === 'partner1' ? 'partner1' : 'partner2',
+          type: 'extra',
+        };
+        newIncomes = [incomeItem, ...prev.incomes];
+        linkedId = incomeItem.id;
+      }
+
+      const updatedShifts = (prev.medicalShifts || []).map(s => {
+        if (s.id === shiftId) {
+          return {
+            ...s,
+            status: 'received' as const,
+            actualPayDate: payDate,
+            linkedIncomeId: linkedId,
+          };
+        }
+        return s;
+      });
+
+      return {
+        ...prev,
+        incomes: newIncomes,
+        medicalShifts: updatedShifts,
+      };
+    });
+    triggerCelebration();
+  };
+
+  const addShiftPreset = (preset: Omit<MedicalShiftPreset, 'id'>) => {
+    const newPreset: MedicalShiftPreset = {
+      ...preset,
+      id: `preset-${Date.now()}`,
+    };
+    setState(prev => ({
+      ...prev,
+      medicalShiftPresets: [newPreset, ...(prev.medicalShiftPresets || DEFAULT_SHIFT_PRESETS)],
+    }));
+  };
+
+  const deleteShiftPreset = (id: string) => {
+    setState(prev => ({
+      ...prev,
+      medicalShiftPresets: (prev.medicalShiftPresets || DEFAULT_SHIFT_PRESETS).filter(p => p.id !== id),
+    }));
+  };
+
+  const addHospitalMappingRule = (rule: Omit<HospitalIncomeMappingRule, 'id' | 'createdAt'>) => {
+    const newRule: HospitalIncomeMappingRule = {
+      ...rule,
+      id: `rule-hosp-${Date.now()}`,
+      createdAt: new Date().toISOString(),
+    };
+    setState(prev => ({
+      ...prev,
+      hospitalMappingRules: [newRule, ...(prev.hospitalMappingRules || DEFAULT_HOSPITAL_MAPPING_RULES)],
+    }));
+  };
+
+  const removeHospitalMappingRule = (id: string) => {
+    setState(prev => ({
+      ...prev,
+      hospitalMappingRules: (prev.hospitalMappingRules || DEFAULT_HOSPITAL_MAPPING_RULES).filter(r => r.id !== id),
     }));
   };
 
@@ -2899,29 +3542,34 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
   // ==========================================
   // GUIA DIDÁTICO DE APORTES MANUAIS & CONFIRMAÇÃO VISUAL
   // ==========================================
-  const getMonthlyDepositGuide = (targetMonth?: string): MonthlyDepositGuide => {
+  const getMonthlyDepositGuide = useCallback((targetMonth?: string, customStrategy?: '100_percent_reserve' | 'split_freedom'): MonthlyDepositGuide => {
     const mKey = targetMonth || state.currentMonth;
 
     const isPhase2 = state.isProtectionComplete;
-    // PARTE FIXA: Os 10% inegociáveis de todo mês
-    const fixedPercentage = 10;
-    const totalProgrammedSavings = totalIncome > 0 ? Math.round(totalIncome * (fixedPercentage / 100)) : 0;
+    const invPct = state.profile.investmentsPercentage ?? 10;
+    const totalProgrammedSavings = totalIncome > 0 ? Math.round(totalIncome * (invPct / 100)) : 0;
 
-    // Sobras elegíveis de categorias variáveis não essenciais (lazer, comida/delivery, profissional, etc.)
-    // Contas fixas essenciais comprometidas (moradia) são blindadas
     const eligibleVarSurplus = (['lazer', 'comida', 'profissional', 'protecao'] as CategoryKey[])
       .reduce((sum, key) => sum + Math.max(0, categoriesSpending[key]?.remaining || 0), 0);
     const shieldedEssential = Math.max(0, categoriesSpending['moradia']?.remaining || 0);
     const suggestedCeiling = totalProgrammedSavings + eligibleVarSurplus;
 
-    if (state.monthlyDepositGuides && state.monthlyDepositGuides[mKey]) {
-      const existing = state.monthlyDepositGuides[mKey];
+    const existingGuide = state.monthlyDepositGuides && state.monthlyDepositGuides[mKey];
+    const activeGoals = state.piggyBanks.filter(g => !g.completed);
+
+    const focusStrategy: '100_percent_reserve' | 'split_freedom' =
+      customStrategy ||
+      existingGuide?.focusStrategy ||
+      '100_percent_reserve';
+
+    if (existingGuide && !customStrategy) {
       return {
-        ...existing,
-        suggestedCeiling: existing.suggestedCeiling ?? suggestedCeiling,
-        programmedBase: existing.programmedBase ?? totalProgrammedSavings,
-        eligibleSurplus: existing.eligibleSurplus ?? eligibleVarSurplus,
-        shieldedEssential: existing.shieldedEssential ?? shieldedEssential,
+        ...existingGuide,
+        suggestedCeiling: existingGuide.suggestedCeiling ?? suggestedCeiling,
+        programmedBase: existingGuide.programmedBase ?? totalProgrammedSavings,
+        eligibleSurplus: existingGuide.eligibleSurplus ?? eligibleVarSurplus,
+        shieldedEssential: existingGuide.shieldedEssential ?? shieldedEssential,
+        focusStrategy: existingGuide.focusStrategy ?? focusStrategy,
       };
     }
 
@@ -2929,18 +3577,71 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
     const protSurplus = monthSurplus.filter(t => t.targetType === 'protection').reduce((s, t) => s + t.amount, 0);
     const freeSurplus = monthSurplus.filter(t => t.targetType === 'freedom').reduce((s, t) => s + t.amount, 0);
 
-    const activeGoals = state.piggyBanks.filter(g => !g.completed);
     const items: MonthlyDepositItem[] = [];
 
-    // 1. Bloco 1 Proteção (Fatia Fixa dos 10%: 50% se não completa, 0% se completa)
-    const baseProt = !isPhase2 ? Math.round(totalProgrammedSavings * 0.50) : 0;
+    let baseProt = 0;
+    let baseFreedom = 0;
+    let allocatedGoalsFixed = 0;
+    let redirectedBlock2Surplus = 0;
+
+    if (!isPhase2) {
+      // FASE 1: Construindo Reserva de Emergência
+      if (activeGoals.length === 0) {
+        // Sem cofrinhos ativos em Fase 1
+        if (focusStrategy === '100_percent_reserve') {
+          // 100% da verba programada para a Reserva de Emergência para fechar mais rápido
+          baseProt = totalProgrammedSavings;
+          baseFreedom = 0;
+          redirectedBlock2Surplus = Math.round(totalProgrammedSavings * 0.50); // 30% de cofrinhos + 20% de liberdade redirecionados
+        } else {
+          // Casal optou por dividir 50% Reserva / 50% Liberdade
+          baseProt = Math.round(totalProgrammedSavings * 0.50);
+          baseFreedom = Math.round(totalProgrammedSavings * 0.50);
+          redirectedBlock2Surplus = 0;
+        }
+      } else {
+        // Existem cofrinhos ativos em Fase 1 (Pool de 30%)
+        const targetGoalsFixedPool = Math.round(totalProgrammedSavings * 0.30);
+        const perGoalFixed = Math.round(targetGoalsFixedPool / activeGoals.length);
+        allocatedGoalsFixed = perGoalFixed * activeGoals.length;
+
+        // Sobra/sobra não consumida do Bloco 2 vai 100% para a Reserva
+        const unusedBlock2Pool = Math.max(0, targetGoalsFixedPool - allocatedGoalsFixed);
+        redirectedBlock2Surplus = unusedBlock2Pool;
+
+        const standardProtBase = Math.round(totalProgrammedSavings * 0.50);
+        baseProt = standardProtBase + redirectedBlock2Surplus;
+        baseFreedom = Math.max(0, totalProgrammedSavings - baseProt - allocatedGoalsFixed);
+      }
+    } else {
+      // FASE 2: Reserva Completa (100%)
+      baseProt = 0;
+      if (activeGoals.length > 0) {
+        const targetGoalsFixedPool = Math.round(totalProgrammedSavings * 0.50);
+        const perGoalFixed = Math.round(targetGoalsFixedPool / activeGoals.length);
+        allocatedGoalsFixed = perGoalFixed * activeGoals.length;
+        baseFreedom = Math.max(0, totalProgrammedSavings - allocatedGoalsFixed);
+      } else {
+        allocatedGoalsFixed = 0;
+        baseFreedom = totalProgrammedSavings;
+      }
+    }
+
+    // 1. Item Bloco 1 — Proteção
     const totalProt = baseProt + protSurplus;
     if (!isPhase2 || protSurplus > 0) {
+      let instructionStr = `Guardar R$ ${totalProt.toLocaleString('pt-BR')} na Caixinha da Reserva de Emergência`;
+      if (!isPhase2 && activeGoals.length === 0 && focusStrategy === '100_percent_reserve') {
+        instructionStr += ` (100% focado no Acelerador de Reserva — Fase 1)`;
+      } else if (!isPhase2 && redirectedBlock2Surplus > 0) {
+        instructionStr += ` (inclui +R$ ${redirectedBlock2Surplus.toLocaleString('pt-BR')} do Acelerador de Cofrinhos)`;
+      }
+
       items.push({
         id: `dep-item-prot-${mKey}`,
         block: 'protection',
         title: 'Bloco 1 — Proteção',
-        instruction: `Guardar R$ ${totalProt.toLocaleString('pt-BR')} na Caixinha da Reserva de Emergência`,
+        instruction: instructionStr,
         destinationLabel: 'Caixinha Reserva de Emergência (Liquidez Diária / 100% CDI)',
         baseAmount: baseProt,
         surplusAmount: protSurplus,
@@ -2948,8 +3649,7 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
       });
     }
 
-    // 2. Bloco 2 Objetivos (Caixinhas Ativas - Fatia Fixa dos 10%: 30% se fase 1, 50% se fase 2)
-    let allocatedGoalsFixed = 0;
+    // 2. Itens Bloco 2 — Objetivos
     if (activeGoals.length > 0) {
       const targetGoalsFixedPool = !isPhase2
         ? Math.round(totalProgrammedSavings * 0.30)
@@ -2962,7 +3662,6 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
           .reduce((s, t) => s + t.amount, 0);
 
         const baseGoal = perGoalFixed;
-        allocatedGoalsFixed += baseGoal;
         const totalGoal = baseGoal + goalSurplus;
 
         items.push({
@@ -2980,19 +3679,20 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
       });
     }
 
-    // 3. Bloco 3 Liberdade (Longo Prazo - Fica com o saldo exato restante da fatia fixa de 10%)
-    const baseFreedom = Math.max(0, totalProgrammedSavings - baseProt - allocatedGoalsFixed);
+    // 3. Item Bloco 3 — Liberdade
     const totalFreedom = baseFreedom + freeSurplus;
-    items.push({
-      id: `dep-item-free-${mKey}`,
-      block: 'freedom',
-      title: 'Bloco 3 — Liberdade Financeira',
-      instruction: `Enviar R$ ${totalFreedom.toLocaleString('pt-BR')} para os investimentos de longo prazo`,
-      destinationLabel: 'Investimentos de Longo Prazo (Corretora / Renda Perpétua)',
-      baseAmount: baseFreedom,
-      surplusAmount: freeSurplus,
-      totalAmount: totalFreedom,
-    });
+    if (baseFreedom > 0 || freeSurplus > 0 || isPhase2 || focusStrategy === 'split_freedom') {
+      items.push({
+        id: `dep-item-free-${mKey}`,
+        block: 'freedom',
+        title: 'Bloco 3 — Liberdade Financeira',
+        instruction: `Enviar R$ ${totalFreedom.toLocaleString('pt-BR')} para os investimentos de longo prazo`,
+        destinationLabel: 'Investimentos de Longo Prazo (Corretora / Renda Perpétua)',
+        baseAmount: baseFreedom,
+        surplusAmount: freeSurplus,
+        totalAmount: totalFreedom,
+      });
+    }
 
     const totalPlanned = items.reduce((s, it) => s + it.totalAmount, 0);
 
@@ -3005,7 +3705,20 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
       programmedBase: totalProgrammedSavings,
       eligibleSurplus: eligibleVarSurplus,
       shieldedEssential,
+      focusStrategy,
+      redirectedBlock2Surplus,
     };
+  }, [state.currentMonth, state.isProtectionComplete, state.profile.investmentsPercentage, totalIncome, categoriesSpending, state.monthlyDepositGuides, state.surplusTransfers, state.piggyBanks]);
+
+  const updateDepositGuideStrategy = (mKey: string, strategy: '100_percent_reserve' | 'split_freedom') => {
+    const updatedGuide = getMonthlyDepositGuide(mKey, strategy);
+    setState(prev => ({
+      ...prev,
+      monthlyDepositGuides: {
+        ...(prev.monthlyDepositGuides || {}),
+        [mKey]: updatedGuide,
+      },
+    }));
   };
 
   const approveMonthlyDepositGuide = (mKey: string, customItems?: MonthlyDepositItem[]) => {
@@ -3914,10 +4627,13 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
         completedMonthDeposits: state.completedMonthDeposits || {},
         investmentCeiling,
         getMonthlyDepositGuide,
+        updateDepositGuideStrategy,
         approveMonthlyDepositGuide,
         adjustMonthlyDepositItem,
         executeMonthlyDeposit,
         resetMonthlyDeposit,
+        pushSettings: state.pushSettings || DEFAULT_PUSH_SETTINGS,
+        updatePushSettings,
         confirmPendingIncome,
         dismissPendingIncome,
         addIncomeSourceRule,
@@ -3963,11 +4679,31 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
         emergencyReserveExcessAmount,
         reallocateReserveExcess,
         advanceInstallmentPayment,
+        // Intenções de Gasto Estratégico & Triagem Omnipresente
+        strategicIntents: state.strategicIntents || [],
+        addStrategicIntent,
+        updateStrategicIntent,
+        deleteStrategicIntent,
+        reconcileExpenseWithIntent,
+        updateExpenseTriage,
         // Motor de Insights Preditivos & Inteligência de Abastecimento (Comida)
         foodPacingMetrics,
         aiPredictiveInsights,
         applyAISuggestionAction,
         dismissAISuggestion,
+        // Gestão de Plantões Médicos & Previsão de Fluxo de Caixa
+        medicalShifts: state.medicalShifts || [],
+        medicalShiftPresets: state.medicalShiftPresets || DEFAULT_SHIFT_PRESETS,
+        hospitalMappingRules: state.hospitalMappingRules || DEFAULT_HOSPITAL_MAPPING_RULES,
+        addMedicalShift,
+        updateMedicalShift,
+        deleteMedicalShift,
+        reconcileShiftWithIncome,
+        markShiftAsReceivedDirectly,
+        addShiftPreset,
+        deleteShiftPreset,
+        addHospitalMappingRule,
+        removeHospitalMappingRule,
       }}
     >
       {children}

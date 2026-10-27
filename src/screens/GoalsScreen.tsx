@@ -37,6 +37,10 @@ import { compressImageFile, GOAL_PHOTO_PRESETS, GoalPhotoPreset } from '../utils
 import { MonthlyDepositGuideModal } from '../components/MonthlyDepositGuideModal';
 import { DonutChart } from '../components/DonutChart';
 import { ReallocateReserveExcessModal } from '../components/ReallocateReserveExcessModal';
+import { ClaymorphicIcon, ClayIconType } from '../components/ClaymorphicIcon';
+import { PixDiscountComparatorModal } from '../components/modals/PixDiscountComparatorModal';
+import { StrategicSpendingIntentModal } from '../components/modals/StrategicSpendingIntentModal';
+import { FundingSourceType } from '../types/finance';
 
 interface GoalsScreenProps {
   onOpenDepositModal?: (bankId: string) => void;
@@ -69,12 +73,17 @@ export const GoalsScreen: React.FC<GoalsScreenProps> = () => {
     getMonthlyDepositGuide,
     executeMonthlyDeposit,
     resetMonthlyDeposit,
+    strategicIntents,
+    deleteStrategicIntent,
   } = useFinance();
 
   // Top Page Sub-Tabs
   const [activeTab, setActiveTab] = useState<'investments' | 'simulator'>('investments');
   const [isGuideModalOpen, setIsGuideModalOpen] = useState(false);
   const [isReallocateModalOpen, setIsReallocateModalOpen] = useState(false);
+  const [isIntentModalOpen, setIsIntentModalOpen] = useState(false);
+  const [selectedIntentSource, setSelectedIntentSource] = useState<FundingSourceType>('reserve_excess');
+  const [selectedIntentGoalId, setSelectedIntentGoalId] = useState<string | undefined>(undefined);
 
   // Modals state - Create Goal
   const [isCreatingGoal, setIsCreatingGoal] = useState(false);
@@ -140,6 +149,9 @@ export const GoalsScreen: React.FC<GoalsScreenProps> = () => {
   const [editingGoalBankId, setEditingGoalBankId] = useState<string | null>(null);
   const [goalInvestedInput, setGoalInvestedInput] = useState('');
   const [goalBankTotalInput, setGoalBankTotalInput] = useState('');
+
+  // PIX vs CDI Comparator Modal
+  const [comparingPixGoal, setComparingPixGoal] = useState<SavingsPiggyBank | null>(null);
 
   // Celebration Toast Banner
   const [celebrationMessage, setCelebrationMessage] = useState<string | null>(null);
@@ -636,7 +648,9 @@ export const GoalsScreen: React.FC<GoalsScreenProps> = () => {
                   Primeiro garantimos a segurança contra imprevistos de até {formatCurrency(autoCalculatedProtectionTarget)}.
                 </p>
                 <div className="pt-2 flex items-center gap-1.5 text-[11px] font-extrabold text-emerald-300">
-                  <span>Aportes: 77% Proteção · 23% Objetivos · 0% Liberdade</span>
+                  <span>
+                    Aportes: {state.piggyBanks.filter(g => !g.completed).length === 0 ? '100% Proteção (Acelerador Ativo) · 0% Objetivos · 0% Liberdade' : '80% Proteção (inclui Acelerador) · 20% Objetivos · 0% Liberdade'}
+                  </span>
                 </div>
               </button>
 
@@ -1246,7 +1260,137 @@ export const GoalsScreen: React.FC<GoalsScreenProps> = () => {
                   Realocar Excesso da Reserva {emergencyReserveExcessAmount > 0 ? `(${formatCurrency(emergencyReserveExcessAmount)})` : ''}
                 </span>
               </button>
+
+              <button
+                onClick={() => {
+                  setSelectedIntentSource('reserve_excess');
+                  setSelectedIntentGoalId(undefined);
+                  setIsIntentModalOpen(true);
+                }}
+                className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-[#111318] hover:bg-black text-white dark:bg-white dark:text-[#111318] text-xs font-black shadow-sm active:scale-95 transition-all cursor-pointer"
+                title="Declarar compra prévia para sair do excesso da reserva sem consumir o orçamento do mês"
+              >
+                <Target className="w-4 h-4 text-[#A6D8FF]" />
+                <span>Gasto Estratégico do Excesso</span>
+              </button>
             </div>
+          </div>
+
+          {/* ========================================================================= */}
+          {/* SEÇÃO ESPECIAL: INTENÇÕES DE GASTO ESTRATÉGICO DO CASAL (BENTO CLAY)     */}
+          {/* ========================================================================= */}
+          <div className="bg-white dark:bg-slate-900 rounded-3xl p-6 sm:p-7 border-2 border-[#A6D8FF] dark:border-sky-800 shadow-md space-y-5 transition-colors">
+            <div className="flex flex-wrap items-start justify-between gap-4 pb-3 border-b border-slate-100 dark:border-slate-800">
+              <div className="space-y-1">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="w-9 h-9 rounded-xl bg-[#A6D8FF] text-[#111318] flex items-center justify-center text-lg font-black">
+                    🎯
+                  </span>
+                  <h3 className="text-lg sm:text-xl font-black text-slate-900 dark:text-white font-display">
+                    Intenções de Gasto Estratégico
+                  </h3>
+                  <span className="text-[11px] font-black px-2.5 py-0.5 rounded-full bg-[#D8C7FF] text-[#111318]">
+                    Alocação Proativa
+                  </span>
+                </div>
+                <p className="text-xs text-slate-500 dark:text-slate-400 font-medium">
+                  Planejem compras de mobília, viagens ou equipamentos antecipadamente. Ao escolher a Reserva ou Caixinha, a margem de Moradia/Lazer fica 100% livre para a rotina diária.
+                </p>
+              </div>
+
+              <button
+                onClick={() => {
+                  setSelectedIntentSource('reserve_excess');
+                  setSelectedIntentGoalId(undefined);
+                  setIsIntentModalOpen(true);
+                }}
+                className="flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-[#111318] hover:bg-black text-white dark:bg-white dark:text-[#111318] text-xs font-black shadow-sm active:scale-95 transition-all cursor-pointer"
+              >
+                <Plus className="w-4 h-4" />
+                <span>Nova Intenção</span>
+              </button>
+            </div>
+
+            {strategicIntents.length === 0 ? (
+              <div className="p-6 text-center rounded-2xl bg-[#FAF7F2] dark:bg-slate-950/40 border border-dashed border-stone-300 dark:border-stone-700 space-y-2">
+                <span className="text-3xl block">📋</span>
+                <h4 className="font-extrabold text-sm text-[#111318] dark:text-white">
+                  Nenhuma intenção prévia cadastrada
+                </h4>
+                <p className="text-xs text-slate-500 dark:text-slate-400 max-w-md mx-auto">
+                  Vão comprar algo grande este mês? Registrem aqui antes da compra para garantir que o Open Finance (Pluggy) reconcilie automaticamente e blinde a margem da rotina da casa.
+                </p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
+                {strategicIntents.map(intent => {
+                  const cat = CATEGORIES_BASE[intent.category];
+                  const sourceLabel =
+                    intent.targetSource === 'reserve_excess'
+                      ? 'Excesso da Reserva'
+                      : intent.targetSource === 'piggy_bank'
+                      ? (intent.targetGoalName || 'Caixinha de Sonhos')
+                      : 'Orçamento do Mês';
+
+                  return (
+                    <div
+                      key={intent.id}
+                      className="p-4 rounded-2xl border border-stone-200 dark:border-stone-800 bg-[#FAF7F2] dark:bg-stone-900 flex flex-col justify-between space-y-3 shadow-2xs hover:shadow-xs transition-all"
+                    >
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md bg-[#A6D8FF]/40 text-sky-950 dark:text-sky-200 border border-[#A6D8FF]">
+                            {sourceLabel}
+                          </span>
+                          {intent.status === 'pending' ? (
+                            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-100 text-amber-900 dark:bg-amber-950/60 dark:text-amber-300">
+                              Pendente
+                            </span>
+                          ) : (
+                            <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-900 dark:bg-emerald-950/60 dark:text-emerald-300 flex items-center gap-1">
+                              <Check className="w-3 h-3" /> Blindado ✓
+                            </span>
+                          )}
+                        </div>
+
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="text-lg">{cat?.emoji || '🎯'}</span>
+                            <h4 className="font-extrabold text-sm text-[#111318] dark:text-white truncate">
+                              {intent.title}
+                            </h4>
+                          </div>
+                          <span className="text-base font-black text-[#111318] dark:text-white block font-display tabular-nums mt-1">
+                            {formatCurrency(intent.estimatedAmount)}
+                          </span>
+                        </div>
+
+                        {intent.notes && (
+                          <p className="text-[11px] text-stone-500 dark:text-stone-400 line-clamp-2">
+                            {intent.notes}
+                          </p>
+                        )}
+                      </div>
+
+                      <div className="pt-2 border-t border-stone-200/80 dark:border-stone-800 flex items-center justify-between text-[11px] text-stone-500 dark:text-stone-400">
+                        <span>
+                          {intent.assignedTo === 'couple' ? '👥 Casal' : '👤 Pessoal'} · {intent.paymentMethod.toUpperCase()}
+                        </span>
+                        {intent.status === 'pending' && (
+                          <button
+                            onClick={() => deleteStrategicIntent(intent.id)}
+                            className="text-stone-400 hover:text-rose-600 p-1 rounded-lg transition-colors cursor-pointer"
+                            title="Remover intenção"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
 
           {/* ========================================================================= */}
@@ -1331,10 +1475,10 @@ export const GoalsScreen: React.FC<GoalsScreenProps> = () => {
                   return (
                     <div
                       key={bank.id}
-                      className={`rounded-3xl border transition-all overflow-hidden flex flex-col justify-between ${
+                      className={`clay-card transition-all overflow-hidden flex flex-col justify-between ${
                         bank.completed
-                          ? 'bg-slate-50 dark:bg-slate-800/40 border-slate-200 dark:border-slate-800 opacity-85 shadow-2xs'
-                          : 'bg-white dark:bg-slate-800/80 border-slate-200/80 dark:border-slate-700/80 shadow-sm hover:shadow-md'
+                          ? 'bento-card-sage opacity-90'
+                          : 'bento-card-pink'
                       }`}
                     >
                       {/* Photo Header (If photo present) OR Gradient Header */}
@@ -1387,32 +1531,46 @@ export const GoalsScreen: React.FC<GoalsScreenProps> = () => {
                           </div>
                         </div>
                       ) : (
-                        <div className="p-5 pb-3 bg-gradient-to-r from-sky-500/10 via-blue-500/5 to-transparent border-b border-slate-100 dark:border-slate-800">
+                        <div className="p-5 pb-3 border-b border-pink-200/60 dark:border-pink-900/40">
                           <div className="flex items-start justify-between gap-3">
                             <div className="flex items-center gap-3 min-w-0">
-                              <span className="w-12 h-12 rounded-2xl bg-sky-100 dark:bg-sky-950/80 text-sky-600 dark:text-sky-400 flex items-center justify-center text-2xl shrink-0 shadow-2xs">
-                                {bank.emoji}
-                              </span>
+                              <ClaymorphicIcon
+                                type={
+                                  bank.name.toLowerCase().includes('viagem') || bank.emoji === '✈️'
+                                    ? 'travel'
+                                    : bank.name.toLowerCase().includes('tv') || bank.emoji === '📺'
+                                    ? 'tv'
+                                    : bank.name.toLowerCase().includes('carro') || bank.emoji === '🚗'
+                                    ? 'car'
+                                    : bank.name.toLowerCase().includes('sofá') || bank.name.toLowerCase().includes('móvel')
+                                    ? 'furniture'
+                                    : bank.name.toLowerCase().includes('casa') || bank.emoji === '🏠'
+                                    ? 'housing'
+                                    : 'sparkle'
+                                }
+                                tone="pink"
+                                size={44}
+                              />
                               <div className="min-w-0">
                                 <div className="flex items-center gap-2">
-                                  <h4 className="font-extrabold text-slate-900 dark:text-white text-base font-display truncate">
+                                  <h4 className="font-black text-[#111318] dark:text-white text-base font-display truncate">
                                     {bank.name}
                                   </h4>
                                   {bank.completed && (
-                                    <span className="text-[10px] bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 font-extrabold px-2 py-0.5 rounded-full shrink-0">
+                                    <span className="text-[10px] bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 font-extrabold px-2 py-0.5 rounded-full shrink-0">
                                       Concluído ✓
                                     </span>
                                   )}
                                 </div>
-                                <p className="text-xs text-slate-500 dark:text-slate-400 line-clamp-1">
-                                  {bank.purpose || 'Conquista planejada'}
+                                <p className="text-xs text-slate-600 dark:text-slate-400 line-clamp-1 font-medium">
+                                  {bank.purpose || 'Conquista planejada do casal'}
                                 </p>
                               </div>
                             </div>
 
                             <button
                               onClick={() => setPhotoTargetGoal(bank)}
-                              className="text-[11px] font-bold text-sky-600 dark:text-sky-400 hover:text-sky-700 bg-sky-50 dark:bg-sky-950/50 hover:bg-sky-100 px-2.5 py-1.5 rounded-xl border border-sky-200/80 dark:border-sky-800/60 transition-all flex items-center gap-1 shrink-0 cursor-pointer"
+                              className="text-[11px] font-bold text-pink-700 dark:text-pink-300 bg-white dark:bg-slate-800 hover:bg-pink-50 px-2.5 py-1.5 rounded-xl border border-pink-300 dark:border-pink-800 transition-all flex items-center gap-1 shrink-0 cursor-pointer shadow-2xs"
                               title="Adicionar foto do objetivo"
                             >
                               <Camera className="w-3.5 h-3.5" />
@@ -1481,6 +1639,30 @@ export const GoalsScreen: React.FC<GoalsScreenProps> = () => {
                           </div>
                         </div>
 
+                        {/* Travel Buffer (Amortecedor de Viagem) */}
+                        {(bank.name.toLowerCase().includes('viagem') ||
+                          bank.name.toLowerCase().includes('férias') ||
+                          bank.name.toLowerCase().includes('ferias') ||
+                          bank.name.toLowerCase().includes('praia') ||
+                          bank.emoji === '✈️' ||
+                          bank.emoji === '🏖️' ||
+                          bank.emoji === '🌴') && (
+                          <div className="p-3 rounded-2xl bg-sky-50 dark:bg-sky-950/40 border border-sky-200 dark:border-sky-800/60 text-sky-950 dark:text-sky-200 text-xs font-medium space-y-1">
+                            <div className="flex items-center justify-between font-bold text-sky-900 dark:text-sky-300">
+                              <span className="flex items-center gap-1.5">
+                                <span>🛡️</span>
+                                <span>Amortecedor de Viagem Ativo</span>
+                              </span>
+                              <span className="text-[10px] px-2 py-0.5 rounded-full bg-sky-100 dark:bg-sky-900 text-sky-800 dark:text-sky-200 uppercase font-black tracking-wider">
+                                Sobras Protegem
+                              </span>
+                            </div>
+                            <p className="text-[11px] leading-relaxed opacity-90">
+                              As sobras mensais de Alimentação e Lazer acumulam neste cofrinho para blindar passeios e surpresas das férias sem mexer na Reserva de Emergência.
+                            </p>
+                          </div>
+                        )}
+
                         {/* Special Yield Savings Highlight if near target (>= 80%) */}
                         {isNearMeta && yieldAccum > 0 && !bank.completed && (
                           <div className="p-3 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800/60 text-amber-900 dark:text-amber-200 text-xs font-medium space-y-1">
@@ -1493,6 +1675,16 @@ export const GoalsScreen: React.FC<GoalsScreenProps> = () => {
                             </p>
                           </div>
                         )}
+
+                        {/* PIX vs 100% CDI comparator trigger */}
+                        <button
+                          type="button"
+                          onClick={() => setComparingPixGoal(bank)}
+                          className="w-full py-2 px-3 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 text-amber-900 dark:text-amber-200 border border-amber-300/60 dark:border-amber-700/60 font-black text-xs flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+                        >
+                          <Calculator className="w-3.5 h-3.5 text-amber-600" />
+                          <span>Comparar PIX c/ desconto vs Parcelar (100% CDI)</span>
+                        </button>
 
                         {/* Card Action Buttons (Aportar, Editar Meta/Mercado, Editar Banco, Concluir, Excluir) */}
                         <div className="pt-2 border-t border-slate-100 dark:border-slate-800/80 flex flex-wrap items-center justify-between gap-2 text-xs">
@@ -2130,7 +2322,7 @@ export const GoalsScreen: React.FC<GoalsScreenProps> = () => {
             })()}
           </div>
 
-          {/* Tool 2: Cash vs. Installments */}
+          {/* Tool 2: Cash vs. Installments (PIX vs 100% CDI) */}
           <div className="bg-white dark:bg-slate-900 rounded-3xl p-6 sm:p-7 border border-slate-200/90 dark:border-slate-800 shadow-sm space-y-5">
             <div className="flex items-center gap-3">
               <span className="w-10 h-10 rounded-2xl bg-emerald-100 dark:bg-emerald-950 text-emerald-600 dark:text-emerald-400 flex items-center justify-center text-xl font-bold">
@@ -2138,10 +2330,10 @@ export const GoalsScreen: React.FC<GoalsScreenProps> = () => {
               </span>
               <div>
                 <h3 className="text-base sm:text-lg font-bold text-slate-900 dark:text-white font-display">
-                  2. Comparador À Vista vs. Parcelado
+                  2. Comparador PIX com Desconto vs. Parcelado (100% do CDI)
                 </h3>
                 <p className="text-xs text-slate-500 dark:text-slate-400">
-                  Descubra qual opção rende mais considerando o rendimento do dinheiro.
+                  Descubra se vale mais a pena pagar no PIX à vista com desconto ou parcelar sem juros mantendo o dinheiro rendendo no CDB a 100% do CDI.
                 </p>
               </div>
             </div>
@@ -2149,7 +2341,7 @@ export const GoalsScreen: React.FC<GoalsScreenProps> = () => {
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
               <div>
                 <label className="text-xs font-bold text-slate-600 dark:text-slate-400 block mb-1">
-                  Valor À Vista (R$)
+                  Valor com Desconto no PIX (R$)
                 </label>
                 <input
                   type="number"
@@ -2185,11 +2377,11 @@ export const GoalsScreen: React.FC<GoalsScreenProps> = () => {
 
               <div>
                 <label className="text-xs font-bold text-slate-600 dark:text-slate-400 block mb-1">
-                  Rendimento Mensal (% a.m.)
+                  Rendimento 100% CDI Líquido (% a.m.)
                 </label>
                 <input
                   type="number"
-                  step="0.1"
+                  step="0.05"
                   value={compMonthlyYield}
                   onChange={e => setCompMonthlyYield(Number(e.target.value))}
                   className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-sm font-bold"
@@ -2962,6 +3154,21 @@ export const GoalsScreen: React.FC<GoalsScreenProps> = () => {
       <ReallocateReserveExcessModal
         isOpen={isReallocateModalOpen}
         onClose={() => setIsReallocateModalOpen(false)}
+      />
+
+      {/* Modal Comparador PIX c/ Desconto vs 100% CDI */}
+      <PixDiscountComparatorModal
+        isOpen={!!comparingPixGoal}
+        onClose={() => setComparingPixGoal(null)}
+        goal={comparingPixGoal}
+      />
+
+      {/* Modal de Intenção de Gasto Estratégico (Alocação Proativa de Recursos) */}
+      <StrategicSpendingIntentModal
+        isOpen={isIntentModalOpen}
+        onClose={() => setIsIntentModalOpen(false)}
+        defaultSource={selectedIntentSource}
+        defaultGoalId={selectedIntentGoalId}
       />
     </div>
   );

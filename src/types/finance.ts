@@ -13,7 +13,9 @@ export type ScreenId =
   | 'goals'
   | 'trends'
   | 'settings'
-  | 'projections';
+  | 'projections'
+  | 'shifts'
+  | 'couple_hub';
 
 export interface CategoryInfo {
   key: CategoryKey;
@@ -42,8 +44,39 @@ export interface ExpenseItem {
   installmentIndex?: number;
   installmentTotal?: number;
   notes?: string;
-  tags?: string[];
-  foodPillar?: 'estrutural' | 'rotina' | 'conveniencia';
+  // Triagem Omnipresente & Alocação Proativa de Fonte
+  fundingSource?: FundingSourceType;
+  fundingGoalId?: string;
+  fundingGoalName?: string;
+  strategicIntentId?: string;
+  isExcludedFromMonthlyBudget?: boolean;
+  triageDone?: boolean;
+  reconciledWithIntent?: boolean;
+  paymentMethod?: 'pix' | 'debit' | 'credit' | 'cash';
+  assignedTo?: 'couple' | 'partner1' | 'partner2';
+}
+
+export type FundingSourceType =
+  | 'month_budget'        // Orçamento do Mês (rotina diária da casa)
+  | 'piggy_bank'          // Caixinha / Cofrinho de Objetivo
+  | 'reserve_excess'      // Excesso da Reserva de Emergência (> piso de 3 meses)
+  | 'personal_allowance'; // Mesada Individual
+
+export interface StrategicSpendingIntent {
+  id: string;
+  title: string;
+  estimatedAmount: number;
+  category: CategoryKey;
+  targetSource: FundingSourceType;
+  targetGoalId?: string;
+  targetGoalName?: string;
+  targetPartner?: 'partner1' | 'partner2';
+  assignedTo: 'couple' | 'partner1' | 'partner2';
+  paymentMethod: 'pix' | 'debit' | 'credit' | 'cash';
+  status: 'pending' | 'matched' | 'executed';
+  matchedExpenseId?: string;
+  notes?: string;
+  createdAt: string;
 }
 
 export interface IncomeItem {
@@ -316,6 +349,8 @@ export interface MonthlyDepositGuide {
   programmedBase?: number;
   eligibleSurplus?: number;
   shieldedEssential?: number;
+  focusStrategy?: '100_percent_reserve' | 'split_freedom';
+  redirectedBlock2Surplus?: number;
 }
 
 export interface MonthDepositCompletionRecord {
@@ -403,6 +438,104 @@ export interface AppState {
   completedMonthDeposits?: Record<string, MonthDepositCompletionRecord>;
   appliedAIInsights?: Record<string, 'use_reward' | 'send_to_goal' | 'keep_buffer'>;
   temporaryBudgetAdjustments?: Record<string, { category: CategoryKey; amount: number; expiresAt: string }>;
+  // Intenções de Gasto Estratégico (Alocação Proativa de Reserva/Caixinhas)
+  strategicIntents?: StrategicSpendingIntent[];
+  // Notificações Push & Alertas Estratégicos
+  pushSettings?: PushNotificationSettings;
+  // Gestão de Plantões Médicos & Escalas
+  medicalShifts?: MedicalShift[];
+  medicalShiftPresets?: MedicalShiftPreset[];
+  hospitalMappingRules?: HospitalIncomeMappingRule[];
+  // Hub do Casal
+  coupleGoals?: CoupleGoal[];
+  coupleWishlist?: CoupleWishlistItem[];
+  coupleFixedBills?: FixedBillAlert[];
+  dreamSimulations?: DreamSimulation[];
+}
+
+export type ShiftSector =
+  | 'porta'
+  | 'vermelha'
+  | 'uti'
+  | 'enfermaria'
+  | 'sobreaviso'
+  | 'evento'
+  | 'outro';
+
+export type ShiftContractType =
+  | 'clt'
+  | 'pj_privado'
+  | 'pj_oss'
+  | 'evento'
+  | 'outro';
+
+export type ShiftPaymentStatus = 'pending' | 'overdue' | 'received';
+
+export interface MedicalShift {
+  id: string;
+  partner: 'partner1' | 'partner2';
+  title: string;
+  hospitalName: string;
+  sector: ShiftSector;
+  contractType: ShiftContractType;
+  dateWorked: string; // YYYY-MM-DD
+  durationHours: number; // 6, 12, 24, etc.
+  grossAmount: number;
+  netAmount?: number;
+  estimatedPayDate: string; // YYYY-MM-DD
+  actualPayDate?: string;
+  status: ShiftPaymentStatus;
+  notes?: string;
+  linkedIncomeId?: string; // Vínculo com a transação bancária real do Open Finance
+  linkedIncomeDescription?: string;
+}
+
+export interface MedicalShiftPreset {
+  id: string;
+  name: string;
+  hospitalName: string;
+  sector: ShiftSector;
+  contractType: ShiftContractType;
+  defaultDurationHours: number;
+  defaultGrossAmount: number;
+  typicalPayDelayDays: number;
+}
+
+export interface HospitalIncomeMappingRule {
+  id: string;
+  hospitalName: string;
+  keywordPattern: string; // ex: "VIVA RIO", "D'OR", "RIOSAUDE"
+  typicalAmount?: number;
+  partner?: 'partner1' | 'partner2' | 'both';
+  createdAt: string;
+}
+
+export interface ShiftPacingRecommendation {
+  monthKey: string;
+  monthLabel: string;
+  projectedAmount: number;
+  fixedExpensesAmount: number;
+  averageIncomeTarget: number;
+  averageShiftValue: number;
+  isDryMonth: boolean; // se projectedAmount < fixedExpensesAmount
+  shiftsToCoverFixed: number; // Nível 1: Pagar Contas
+  shiftsToMaintainLifestyle: number; // Nível 2: Manter Estilo
+  shiftsToAccelerateGains: number; // Nível 3: Acelerar +20%
+}
+
+export interface PushNotificationSettings {
+  enabled: boolean;
+  permissionStatus: 'default' | 'granted' | 'denied';
+  dailyTriageEnabled: boolean; // 17:30
+  weeklySummaryEnabled: boolean; // Domingos 18:00
+  monthlySummaryEnabled: boolean; // Último dia do mês 19:00
+  categoryAlertsEnabled: boolean; // Tetos de 80% e 100%
+  goalCelebrationsEnabled: boolean; // Metas atingidas
+  testNotificationSentAt?: string;
+  lastDailyTriageNotifiedAt?: string;
+  lastWeeklySummaryNotifiedAt?: string;
+  lastMonthlySummaryNotifiedAt?: string;
+  notifiedCategoryThresholds?: Record<string, '80' | '100'>;
 }
 
 export interface UserAuthProfile {
@@ -509,5 +642,93 @@ export interface AIPredictiveInsight {
   createdAt: string;
   status: 'active' | 'applied' | 'dismissed';
   appliedOption?: 'use_reward' | 'send_to_goal' | 'keep_buffer';
+}
+
+// ==========================================
+// HUB DO CASAL - METAS, WISHLIST, SONHOS & INDEPENDÊNCIA
+// ==========================================
+
+export interface CoupleGoalContribution {
+  id: string;
+  contributor: 'partner1' | 'partner2' | 'both';
+  contributorName: string;
+  amount: number;
+  date: string; // YYYY-MM-DD
+  type: 'deposit' | 'withdrawal';
+  note?: string;
+}
+
+export interface CoupleGoal {
+  id: string;
+  title: string;
+  category: 'viagem' | 'imovel' | 'veiculo' | 'reforma' | 'reserva' | 'liberdade' | 'outro';
+  emoji: string;
+  imageUrl?: string;
+  targetAmount: number;
+  currentAmount: number;
+  partner1Contribution: number;
+  partner2Contribution: number;
+  deadlineDate?: string; // YYYY-MM
+  monthlyPlannedDeposit: number;
+  isCompleted: boolean;
+  history: CoupleGoalContribution[];
+  createdAt: string;
+}
+
+export interface CoupleWishlistItem {
+  id: string;
+  title: string;
+  category: CategoryKey;
+  emoji: string;
+  estimatedPrice: number;
+  priority: 'alta' | 'media' | 'baixa';
+  requestedBy: 'partner1' | 'partner2' | 'both';
+  linkUrl?: string;
+  imageUrl?: string;
+  notes?: string;
+  status: 'desejo' | 'convertido_meta' | 'comprado';
+  convertedGoalId?: string;
+  createdAt: string;
+}
+
+export interface FixedBillAlert {
+  id: string;
+  title: string;
+  category: CategoryKey;
+  amount: number;
+  dueDay: number; // Day of month (1-31)
+  assignedPayer: PaidBy;
+  bankAccountOrCard?: string;
+  autoPay: boolean;
+  status: 'pending' | 'paid' | 'overdue';
+  lastPaidMonth?: string; // YYYY-MM
+  isRecurring: boolean;
+}
+
+export interface DreamSimulation {
+  id: string;
+  title: string;
+  emoji: string;
+  totalCost: number;
+  downPayment: number;
+  monthlySavings: number;
+  expectedAnnualYieldPct: number; // e.g. 8.5%
+  inflationAnnualPct: number; // e.g. 4.0%
+  monthsToAchieve: number;
+  estimatedCompletionDate: string; // YYYY-MM
+  partner1SharePct: number; // e.g. 50
+  partner2SharePct: number; // e.g. 50
+  createdAt: string;
+}
+
+export interface CoupleFIREMetrics {
+  currentNetWorth: number; // Total investido em Caixinhas + Liberdade + Reserva
+  monthlyCoupleExpenses: number; // Média de gastos do casal
+  emergencyReserveMonthsCurrent: number; // Quantos meses a reserva atual cobre
+  emergencyReserveMonthsTarget: number; // Meta de meses (ex: 6 meses)
+  fireTargetNetWorth: number; // Patrimônio necessário para Independência (Regra dos 25x gastos anuais ou 300x mensal)
+  fireProgressPct: number;
+  estimatedYearsToFIRE: number;
+  monthlyInvestmentPace: number; // Aporte mensal atual do casal
 }
 

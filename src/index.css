@@ -3,31 +3,65 @@
 @custom-variant dark (&:where(.dark, .dark *));
 
 :root {
-  --app-accent-primary: #059669;
-  --app-accent-hover: #047857;
-  --app-accent-light: #ecfdf5;
-  --app-accent-text: #047857;
-  --app-accent-border: #a7f3d0;
-  --app-accent-surface: #ecfdf5;
-  --app-accent-gradient-from: #065f46;
-  --app-accent-gradient-to: #115e59;
-  --app-accent-glow: rgba(5, 150, 105, 0.25);
-  --app-accent-subtle: rgba(5, 150, 105, 0.08);
+  --app-bg-canvas: #FAF7F2;
+  --app-bg-canvas-subtle: #F8F4EC;
+  --app-charcoal: #111318;
+  --app-charcoal-card: #181B22;
+
+  /* Pastel Bento Palette */
+  --bento-lavender: #D8C7FF;
+  --bento-lavender-subtle: #F3EFFF;
+  --bento-ochre: #FFC875;
+  --bento-ochre-subtle: #FFF6E5;
+  --bento-skyblue: #A6D8FF;
+  --bento-skyblue-subtle: #EEF7FF;
+  --bento-pink: #FFC2E2;
+  --bento-pink-subtle: #FFF0F7;
+  --bento-sage: #B8E0B0;
+  --bento-sage-subtle: #F0F8EE;
+
+  /* Accent Fallbacks */
+  --app-accent-primary: #111318;
+  --app-accent-hover: #222630;
+  --app-accent-light: #F0F8EE;
+  --app-accent-text: #111318;
+  --app-accent-border: #E8E2D8;
+  --app-accent-surface: #FAF7F2;
+  --app-accent-gradient-from: #111318;
+  --app-accent-gradient-to: #2B303C;
+  --app-accent-glow: rgba(17, 19, 24, 0.12);
+  --app-accent-subtle: rgba(17, 19, 24, 0.04);
+}
+
+.dark {
+  --app-bg-canvas: #0E1015;
+  --app-bg-canvas-subtle: #14171E;
+  --app-charcoal: #FAF7F2;
+  --app-charcoal-card: #161920;
+
+  --bento-lavender-subtle: rgba(216, 199, 255, 0.12);
+  --bento-ochre-subtle: rgba(255, 200, 117, 0.12);
+  --bento-skyblue-subtle: rgba(166, 216, 255, 0.12);
+  --bento-pink-subtle: rgba(255, 194, 226, 0.12);
+  --bento-sage-subtle: rgba(184, 224, 176, 0.12);
 }
 
 @layer base {
   body {
     font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
-    color: #0f172a;
+    background-color: var(--app-bg-canvas);
+    color: #111318;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
   }
   .dark body {
-    color: #f8fafc;
+    background-color: var(--app-bg-canvas);
+    color: #F8FAFC;
   }
   h1, h2, h3, h4, .font-display {
-    font-family: 'Outfit', 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
-    letter-spacing: -0.015em;
+    font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+    letter-spacing: -0.02em;
+    font-weight: 700;
   }
 }
 
@@ -147,12 +181,12 @@
 }
 
 .dark {
-  --app-card-border: #334155; /* Slate-700: distinct separation against dark canvas */
-  --app-card-bg: #0f172a;
-  --app-subtle-bg: #1e293b; /* Slate-800 */
+  --app-card-border: #3B475C; /* Sharp, refined boundary against dark canvas */
+  --app-card-bg: #141822;
+  --app-subtle-bg: #1C2230;
 }
 
-/* Contrast enhancement: ensure muted text has at least 4.5:1 WCAG AA ratio on light & dark mode */
+/* Contrast enhancement: ensure muted text has crisp contrast on light & dark mode */
 html:not(.dark) .text-slate-400 {
   color: #475569 !important; /* Slate-600 */
 }
@@ -162,11 +196,34 @@ html:not(.dark) .text-slate-500 {
 }
 
 .dark .text-slate-400 {
-  color: #cbd5e1 !important; /* Slate-300 */
+  color: #cbd5e1 !important; /* Slate-300 - clear high contrast */
 }
 
 .dark .text-slate-500 {
   color: #e2e8f0 !important; /* Slate-200 */
+}
+
+.dark .text-slate-600 {
+  color: #f1f5f9 !important; /* Slate-100 */
+}
+
+.dark .text-stone-400 {
+  color: #d6d3d1 !important; /* Stone-300 */
+}
+
+.dark .text-stone-500 {
+  color: #e7e5e4 !important; /* Stone-200 */
+}
+
+/* Defined subtle borders in dark mode across standard utility borders */
+.dark .border-slate-800,
+.dark .border-stone-800 {
+  border-color: rgba(255, 255, 255, 0.14) !important;
+}
+
+.dark .border-slate-700,
+.dark .border-stone-700 {
+  border-color: rgba(255, 255, 255, 0.20) !important;
 }
 
 /* Crisp card boundaries with visible separation */
@@ -395,4 +452,113 @@ input::placeholder {
   border-color: var(--app-border-strong);
   background-color: var(--app-surface-muted);
 }
+
+/* ------------------------------------------------------------------ */
+/* BENTO GRID & CLAYMORPHISM SYSTEM                                   */
+/* ------------------------------------------------------------------ */
+.bento-squircle {
+  border-radius: 28px;
+}
+
+.clay-card {
+  border-radius: 28px;
+  background-color: #FFFFFF;
+  border: 1.5px solid rgba(17, 19, 24, 0.08);
+  box-shadow: 0 12px 28px -6px rgba(17, 19, 24, 0.06), 0 4px 12px -2px rgba(17, 19, 24, 0.03), inset 0 2px 4px rgba(255, 255, 255, 0.95);
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.dark .clay-card {
+  background-color: var(--app-charcoal-card);
+  border: 1.5px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 12px 30px -6px rgba(0, 0, 0, 0.5), inset 0 1px 2px rgba(255, 255, 255, 0.1);
+}
+
+.clay-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 16px 36px -6px rgba(17, 19, 24, 0.09), 0 6px 16px -2px rgba(17, 19, 24, 0.04), inset 0 2px 4px rgba(255, 255, 255, 0.95);
+}
+
+.dark .clay-card:hover {
+  box-shadow: 0 16px 36px -6px rgba(0, 0, 0, 0.65), inset 0 1px 2px rgba(255, 255, 255, 0.14);
+}
+
+/* Claymorphic Embossed Element */
+.clay-embossed {
+  border-radius: 22px;
+  box-shadow: inset 0 2px 4px rgba(255, 255, 255, 0.8), 0 6px 16px -3px rgba(17, 19, 24, 0.08);
+}
+
+.dark .clay-embossed {
+  box-shadow: inset 0 1px 2px rgba(255, 255, 255, 0.15), 0 6px 16px -3px rgba(0, 0, 0, 0.4);
+}
+
+/* Pastel Bento Tone Cards */
+.bento-card-lavender {
+  background-color: #F6F2FF;
+  border: 1.5px solid #D8C7FF;
+}
+.dark .bento-card-lavender {
+  background-color: rgba(216, 199, 255, 0.08);
+  border-color: rgba(216, 199, 255, 0.25);
+}
+
+.bento-card-ochre {
+  background-color: #FFF9ED;
+  border: 1.5px solid #FFC875;
+}
+.dark .bento-card-ochre {
+  background-color: rgba(255, 200, 117, 0.08);
+  border-color: rgba(255, 200, 117, 0.25);
+}
+
+.bento-card-skyblue {
+  background-color: #F2F8FF;
+  border: 1.5px solid #A6D8FF;
+}
+.dark .bento-card-skyblue {
+  background-color: rgba(166, 216, 255, 0.08);
+  border-color: rgba(166, 216, 255, 0.25);
+}
+
+.bento-card-pink {
+  background-color: #FFF3F8;
+  border: 1.5px solid #FFC2E2;
+}
+.dark .bento-card-pink {
+  background-color: rgba(255, 194, 226, 0.08);
+  border-color: rgba(255, 194, 226, 0.25);
+}
+
+.bento-card-sage {
+  background-color: #F3FAF1;
+  border: 1.5px solid #B8E0B0;
+}
+.dark .bento-card-sage {
+  background-color: rgba(184, 224, 176, 0.08);
+  border-color: rgba(184, 224, 176, 0.25);
+}
+
+/* Floating Dark Capsule Navigation */
+.floating-dark-bar {
+  background-color: rgba(17, 19, 24, 0.94);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  color: #FFFFFF;
+  border-radius: 9999px;
+  box-shadow: 0 18px 45px -8px rgba(17, 19, 24, 0.5), 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+/* Elevated Magic Action Button (+) */
+.floating-magic-button {
+  background: linear-gradient(135deg, #FFC875, #FFB042);
+  color: #111318;
+  box-shadow: 0 8px 24px -4px rgba(255, 176, 66, 0.5), inset 0 2px 3px rgba(255, 255, 255, 0.7);
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.floating-magic-button:active {
+  transform: scale(0.92);
+}
+
 

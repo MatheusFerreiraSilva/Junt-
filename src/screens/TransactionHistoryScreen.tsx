@@ -26,15 +26,19 @@ import { useFinance, CATEGORIES_BASE } from '../context/FinanceContext';
 import { CategoryKey, PaidBy, ExpenseItem } from '../types/finance';
 import { formatCurrency, formatMonthYear } from '../utils/formatters';
 import { DuplicateReconciliationCard } from '../components/DuplicateReconciliationCard';
+import { TransactionTriageBottomSheet } from '../components/modals/TransactionTriageBottomSheet';
 
 interface TransactionHistoryScreenProps {
   onOpenExpenseModal: () => void;
+  onOpenTriageModal?: (expense: ExpenseItem) => void;
 }
 
 export const TransactionHistoryScreen: React.FC<TransactionHistoryScreenProps> = ({
   onOpenExpenseModal,
+  onOpenTriageModal,
 }) => {
   const { state, deleteExpense, getExpenseSplit, viewMode, detectedDuplicates } = useFinance();
+  const [triageExpense, setTriageExpense] = useState<ExpenseItem | null>(null);
 
   // Search and Filter States
   const [searchTerm, setSearchTerm] = useState('');
@@ -402,6 +406,37 @@ export const TransactionHistoryScreen: React.FC<TransactionHistoryScreenProps> =
                         <span className="px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-[10px] font-extrabold border border-slate-200 dark:border-slate-700">
                           {subcatBadge}
                         </span>
+
+                        {/* Triagem & Funding Source Badges */}
+                        {item.reconciledWithIntent ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-[#D8C7FF]/40 text-purple-900 dark:text-purple-200 text-[10px] font-black border border-[#D8C7FF]">
+                            <Sparkles className="w-3 h-3 text-purple-600" />
+                            Reconciliado Pluggy
+                          </span>
+                        ) : item.fundingSource === 'reserve_excess' ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-[#A6D8FF]/40 text-sky-900 dark:text-sky-200 text-[10px] font-black border border-[#A6D8FF]">
+                            🛡️ Excesso da Reserva
+                          </span>
+                        ) : item.fundingSource === 'piggy_bank' ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-[#FFC2E2]/40 text-pink-900 dark:text-pink-200 text-[10px] font-black border border-[#FFC2E2]">
+                            🎯 {item.fundingGoalName || 'Caixinha'}
+                          </span>
+                        ) : item.fundingSource === 'personal_allowance' ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-stone-100 dark:bg-stone-800 text-stone-700 dark:text-stone-300 text-[10px] font-black border border-stone-300">
+                            💼 Mesada
+                          </span>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (onOpenTriageModal) onOpenTriageModal(item);
+                              else setTriageExpense(item);
+                            }}
+                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-50 hover:bg-amber-100 dark:bg-amber-950/40 text-amber-900 dark:text-amber-200 text-[10px] font-bold border border-amber-200 dark:border-amber-800 transition-colors cursor-pointer"
+                          >
+                            ⚡ Triar Fonte
+                          </button>
+                        )}
                       </div>
 
                       <div className="flex items-center gap-2 flex-wrap text-xs text-slate-500 dark:text-slate-400 font-medium">
@@ -418,19 +453,30 @@ export const TransactionHistoryScreen: React.FC<TransactionHistoryScreenProps> =
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-4 shrink-0">
+                  <div className="flex items-center gap-3 shrink-0">
                     <div className="text-right">
                       <span className="text-base sm:text-lg font-black text-rose-600 dark:text-rose-400 tabular-nums block font-display">
                         -{formatCurrency(item.amount)}
                       </span>
                       <span className="text-[10px] text-slate-400 uppercase font-extrabold block">
-                        {cat?.name || 'Gasto'}
+                        {item.fundingSource && item.fundingSource !== 'month_budget' ? 'Blindado do Mês' : cat?.name || 'Gasto'}
                       </span>
                     </div>
 
                     <button
+                      onClick={() => {
+                        if (onOpenTriageModal) onOpenTriageModal(item);
+                        else setTriageExpense(item);
+                      }}
+                      className="p-2 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 transition-colors cursor-pointer"
+                      title="Triar ou alterar fonte pagadora"
+                    >
+                      <Tag className="w-4 h-4" />
+                    </button>
+
+                    <button
                       onClick={() => deleteExpense(item.id)}
-                      className="p-2 rounded-xl hover:bg-rose-50 dark:hover:bg-rose-950/40 text-slate-400 hover:text-rose-600 transition-colors"
+                      className="p-2 rounded-xl hover:bg-rose-50 dark:hover:bg-rose-950/40 text-slate-400 hover:text-rose-600 transition-colors cursor-pointer"
                       title="Excluir este gasto do app"
                     >
                       <Trash2 className="w-4 h-4" />
@@ -442,6 +488,15 @@ export const TransactionHistoryScreen: React.FC<TransactionHistoryScreenProps> =
           </div>
         )}
       </div>
+
+      {/* BOTTOM SHEET DE TRIAGEM INTELIGENTE OMNIPRESENTE */}
+      {triageExpense && (
+        <TransactionTriageBottomSheet
+          isOpen={!!triageExpense}
+          expense={triageExpense}
+          onClose={() => setTriageExpense(null)}
+        />
+      )}
     </div>
   );
 };

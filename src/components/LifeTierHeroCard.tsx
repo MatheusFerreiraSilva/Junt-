@@ -56,7 +56,7 @@ export const LifeTierHeroCard: React.FC = () => {
 
   return (
     <div
-      className="relative rounded-3xl p-5 sm:p-7 border-2 transition-all duration-500 overflow-hidden shadow-xl bg-white dark:bg-slate-900"
+      className="clay-card relative p-5 sm:p-7 border-2 transition-all duration-500 overflow-hidden shadow-xl"
       style={{
         borderColor: tier.colors.border,
         boxShadow: `0 14px 40px -8px ${tier.colors.glow}`,

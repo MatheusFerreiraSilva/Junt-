@@ -60,6 +60,11 @@ import {
   requestPushNotificationPermission,
   triggerBrowserPushNotification,
 } from '../utils/monthlyReviewNotifications';
+import {
+  requestPushPermission,
+  sendTestNotification,
+  getBrowserPermissionStatus,
+} from '../utils/pushNotificationEngine';
 
 interface ProposedRebalance {
   percentages: Record<string, number>;
@@ -147,6 +152,8 @@ export const SettingsScreen: React.FC = () => {
     generateNewInviteCode,
     joinCoupleWithInviteCode,
     unlinkCouple,
+    pushSettings,
+    updatePushSettings,
   } = useFinance();
 
   const [activeTab, setActiveTab] = useState<SettingsTab>('geral');
@@ -2690,74 +2697,194 @@ export const SettingsScreen: React.FC = () => {
           {/* Banner PWA */}
           <PWAInstallButton variant="banner" />
 
-          {/* Regras das Notificações de Revisão Mensal */}
-          <div className="bg-white dark:bg-slate-900 rounded-3xl p-6 sm:p-7 border border-slate-200/90 dark:border-slate-800 shadow-xs space-y-5">
-            <div className="flex items-center gap-3">
-              <span className="w-9 h-9 rounded-xl bg-emerald-100 dark:bg-emerald-950 text-emerald-600 dark:text-emerald-400 flex items-center justify-center text-lg font-bold">
-                🔔
+          {/* CENTRAL DE NOTIFICAÇÕES PUSH E ALERTAS ESTRATÉGICOS */}
+          <div className="bg-white dark:bg-slate-900 rounded-3xl p-6 sm:p-7 border-2 border-emerald-500/30 shadow-md space-y-6">
+            <div className="flex flex-wrap items-center justify-between gap-4 pb-4 border-b border-slate-100 dark:border-slate-800">
+              <div className="flex items-center gap-3">
+                <span className="w-11 h-11 rounded-2xl bg-emerald-100 dark:bg-emerald-950 text-emerald-600 dark:text-emerald-400 flex items-center justify-center text-xl font-black shrink-0">
+                  🔔
+                </span>
+                <div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <h3 className="text-base sm:text-lg font-black text-slate-950 dark:text-white font-display">
+                      Central de Notificações Push & Alertas Estratégicos
+                    </h3>
+                    <span
+                      className={`text-[10px] font-black px-2.5 py-0.5 rounded-full ${
+                        getBrowserPermissionStatus() === 'granted'
+                          ? 'bg-emerald-100 dark:bg-emerald-900 text-emerald-800 dark:text-emerald-200'
+                          : getBrowserPermissionStatus() === 'denied'
+                          ? 'bg-rose-100 dark:bg-rose-950 text-rose-800 dark:text-rose-200'
+                          : 'bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-200'
+                      }`}
+                    >
+                      {getBrowserPermissionStatus() === 'granted'
+                        ? 'Permissão Concedida ✓'
+                        : getBrowserPermissionStatus() === 'denied'
+                        ? 'Permissão Bloqueada no Navegador 🔴'
+                        : 'Permissão Pendente ⚠️'}
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                    Receba notificações nativas na tela de bloqueio do seu celular ou computador sem abrir o app.
+                  </p>
+                </div>
+              </div>
+
+              {/* Botões de Ação de Permissão e Teste */}
+              <div className="flex items-center gap-2 flex-wrap">
+                {getBrowserPermissionStatus() !== 'granted' && (
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      const status = await requestPushPermission();
+                      updatePushSettings({ permissionStatus: status });
+                      if (status === 'granted') {
+                        triggerCelebration();
+                      }
+                    }}
+                    className="px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs shadow-md flex items-center gap-2 cursor-pointer transition-all active:scale-95"
+                  >
+                    <Bell className="w-4 h-4" />
+                    <span>Ativar Notificações Push</span>
+                  </button>
+                )}
+
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const sent = await sendTestNotification();
+                    if (sent) {
+                      setPushStatusMsg('Notificação de teste enviada com sucesso! 🔔');
+                      triggerCelebration();
+                    } else {
+                      setPushStatusMsg('Ative a permissão de notificações no navegador primeiro.');
+                    }
+                    setTimeout(() => setPushStatusMsg(null), 4000);
+                  }}
+                  className="px-4 py-2.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 font-bold text-xs border border-slate-300 dark:border-slate-700 flex items-center gap-1.5 transition-colors cursor-pointer"
+                >
+                  <Sparkles className="w-4 h-4 text-amber-500" />
+                  <span>Testar Notificação de Teste</span>
+                </button>
+              </div>
+            </div>
+
+            {/* STATUS FEEDBACK MSG */}
+            {pushStatusMsg && (
+              <div className="p-3 rounded-2xl bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-200 dark:border-emerald-800 text-xs font-bold text-emerald-800 dark:text-emerald-200 flex items-center gap-2 animate-in fade-in">
+                <Check className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                <span>{pushStatusMsg}</span>
+              </div>
+            )}
+
+            {/* CONFIGURAÇÃO E TOGGLES GRANULARES */}
+            <div className="space-y-4">
+              <span className="text-xs font-black uppercase text-slate-400 tracking-wider block">
+                Escolham quais notificações o casal deseja receber:
               </span>
-              <div>
-                <h3 className="text-base sm:text-lg font-bold text-slate-900 dark:text-white font-display">
-                  Notificações de Revisão Mensal no Celular
-                </h3>
-                <p className="text-xs text-slate-500 dark:text-slate-400">
-                  Chegam na tela de bloqueio do celular como as do WhatsApp.
-                </p>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {/* 1. TRIAGEM DIÁRIA */}
+                <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/80 space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <span className="text-lg">📋</span>
+                      <strong className="text-xs font-black text-slate-900 dark:text-white">
+                        Triagem Diária de Compras (17:30)
+                      </strong>
+                    </div>
+
+                    <label className="relative inline-flex items-center cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={pushSettings.dailyTriageEnabled}
+                        onChange={e => updatePushSettings({ dailyTriageEnabled: e.target.checked })}
+                        className="sr-only peer"
+                      />
+                      <div className="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer dark:bg-slate-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all dark:after:border-slate-600 peer-checked:bg-emerald-600" />
+                    </label>
+                  </div>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-snug">
+                    Resumo ao fim da tarde das compras e receitas capturadas via Open Finance que precisam de triagem em 1 toque.
+                  </p>
+                </div>
+
+                {/* 2. RESUMO SEMANAL */}
+                <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/80 space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <span className="text-lg">📊</span>
+                      <strong className="text-xs font-black text-slate-900 dark:text-white">
+                        Resumo Semanal (Domingos às 18:00)
+                      </strong>
+                    </div>
+
+                    <label className="relative inline-flex items-center cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={pushSettings.weeklySummaryEnabled}
+                        onChange={e => updatePushSettings({ weeklySummaryEnabled: e.target.checked })}
+                        className="sr-only peer"
+                      />
+                      <div className="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer dark:bg-slate-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all dark:after:border-slate-600 peer-checked:bg-emerald-600" />
+                    </label>
+                  </div>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-snug">
+                    Balanço dos acertos da semana e ritmo orçamentário enviado no horário ideal para o alinhamento do casal.
+                  </p>
+                </div>
+
+                {/* 3. FECHAMENTO DO MÊS */}
+                <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/80 space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <span className="text-lg">🏆</span>
+                      <strong className="text-xs font-black text-slate-900 dark:text-white">
+                        Fechamento do Mês (Último dia às 19:00)
+                      </strong>
+                    </div>
+
+                    <label className="relative inline-flex items-center cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={pushSettings.monthlySummaryEnabled}
+                        onChange={e => updatePushSettings({ monthlySummaryEnabled: e.target.checked })}
+                        className="sr-only peer"
+                      />
+                      <div className="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer dark:bg-slate-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all dark:after:border-slate-600 peer-checked:bg-emerald-600" />
+                    </label>
+                  </div>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-snug">
+                    Lembrete no último dia do mês para destinar sobras orçamentárias e aprovar o Guia de Aportes.
+                  </p>
+                </div>
+
+                {/* 4. ALERTAS DE TETO DE CATEGORIA */}
+                <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/80 space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <span className="text-lg">⚠️</span>
+                      <strong className="text-xs font-black text-slate-900 dark:text-white">
+                        Alertas de Teto (80% / 100%) e Parcelas
+                      </strong>
+                    </div>
+
+                    <label className="relative inline-flex items-center cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={pushSettings.categoryAlertsEnabled}
+                        onChange={e => updatePushSettings({ categoryAlertsEnabled: e.target.checked })}
+                        className="sr-only peer"
+                      />
+                      <div className="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer dark:bg-slate-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all dark:after:border-slate-600 peer-checked:bg-emerald-600" />
+                    </label>
+                  </div>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-snug">
+                    Notifica imediatamente quando o casal se aproxima ou atinge o limite mensal de alguma categoria ou parcelas.
+                  </p>
+                </div>
               </div>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs text-slate-700 dark:text-slate-300">
-              <div className="p-4 rounded-2xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 space-y-1.5">
-                <span className="font-extrabold text-emerald-900 dark:text-emerald-300 block">
-                  1ª Segunda-Feira às 20h
-                </span>
-                <p className="italic">
-                  "{reviewSchedule.primaryMessage}"
-                </p>
-                <span className="text-[10px] text-emerald-700 dark:text-emerald-400 block pt-1 font-bold">
-                  Disparo principal do mês
-                </span>
-              </div>
-
-              <div className="p-4 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 space-y-1.5">
-                <span className="font-extrabold text-amber-900 dark:text-amber-300 block">
-                  Após 48 Horas sem abrir
-                </span>
-                <p className="italic">
-                  "{reviewSchedule.secondaryMessage}"
-                </p>
-                <span className="text-[10px] text-amber-700 dark:text-amber-400 block pt-1 font-bold">
-                  Relembrete suave
-                </span>
-              </div>
-
-              <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 space-y-1.5">
-                <span className="font-extrabold text-slate-900 dark:text-white block font-display">
-                  Após 7 Dias
-                </span>
-                <p className="text-slate-600 dark:text-slate-400">
-                  Para de insistir até o próximo mês. Notificação que insiste vira ruído.
-                </p>
-                <span className="text-[10px] text-slate-400 block pt-1 font-bold">
-                  Regra de respeito à rotina
-                </span>
-              </div>
-            </div>
-
-            <div className="pt-2 flex flex-wrap items-center gap-3">
-              <button
-                onClick={handleTestPush}
-                className="btn-primary-accent flex items-center gap-2 px-4 py-2.5 rounded-xl text-white text-xs font-bold shadow-md cursor-pointer"
-              >
-                <Bell className="w-4 h-4" />
-                <span>Testar Notificação de Revisão no Meu Dispositivo</span>
-              </button>
-
-              {pushStatusMsg && (
-                <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400 animate-in fade-in">
-                  {pushStatusMsg}
-                </span>
-              )}
             </div>
           </div>
         </div>

@@ -1,119 +1,101 @@
-# Área Dedicada de Sobras & Excessos Semanais no Dashboard
+# Unificação e Integração Total: Hub do Casal x Investimentos & Extrato
 
-Reorganização inteligente e otimizada da nova mecânica de acompanhamento semanal, unificando o Pacing de Comida & Conveniência, as sugestões da IA e o radar de recalibragem de excessos em uma aba dedicada no menu do Dashboard do Junto.
+Unificação completa e bidirecional dos dados de investimentos, reserva de emergência, desejos da wishlist e contas fixas do casal no aplicativo JUNTÔ. As abas **Investimentos** e **Hub do Casal** passarão a compartilhar uma fonte de dados única e sincronizada, garantindo que qualquer alteração em uma refletirá instantaneamente na outra.
 
 ---
 
-### User Review & Critical Decisions
+## Decisões Confirmadas do Usuário
 
 > [!IMPORTANT]
-> **Decisões confirmadas com o casal:**
-> - **Posicionamento**: Criação de uma aba dedicada no seletor de abas do Dashboard (`Sobras & Excessos`), aliviando a poluição visual do topo e da aba de ações gerais.
-> - **Escopo Unificado**: A nova aba reúne (1) Pacing Semanal de Comida & Abastecimento, (2) Sugestões Contextuais da IA de 1 toque e (3) Radar Empático de Excessos e Recalibragem.
-> - **Tratamento de Excessos Semanais**: Abordagem acolhedora e empática para semanas com plantões pesados, oferecendo ações rápidas de recalibragem de ritmo diário e compensação sem julgamento financeiro frio.
+> As escolhas a seguir foram confirmadas diretamente pelo usuário na fase de alinhamento:
+
+- **Unificação Total de Caixinhas & Metas**: As mesmas Caixinhas (`piggyBanks` e `coupleGoals`) serão utilizadas simultaneamente na aba *Investimentos* e no *Hub do Casal*. Aportes e retiradas feitos em qualquer uma das telas atualizam o saldo consolidado e mantêm a divisão de contribuição do casal (Ele x Ela).
+- **Integração dos Alertas de Contas Fixas com o Extrato**: Ao marcar uma conta fixa como paga no Hub do Casal, o sistema registrará automaticamente uma nova despesa no **Extrato de Transações**, vinculada à categoria correspondente e ao pagador designado.
+- **Intenções Estratégicas de Gasto na Wishlist e Caixinhas**: Botão direto na Lista de Desejos (Wishlist) e nos Cofrinhos para vincular ou converter um desejo diretamente em uma **Intenção Estratégica de Gasto** (Alocação Proativa de Reserva/Caixinha).
 
 ---
 
-### 1. Overview & Core Concept
+## 1. Visão Geral e Conceito Central
 
-- **O que faz**: Cria um centro de inteligência financeira semanal no Dashboard do Junto (`🌿 Sobras & Excessos`), isolando a análise de ritmo semanal em um espaço focado e harmonioso.
-- **Público-alvo**: O casal (Dra. Bia & Dr. Lucas), que precisa verificar rapidamente a saúde da semana atual, gerenciar o saldo de comida/delivery e decidir o destino de sobras orçamentárias sem sobrecarga de informação.
-- **Valor Principal**: Elimina a fragmentação visual, permitindo que a aba principal continue limpa para lançamentos rápidos e rituais, enquanto a nova aba oferece profundidade analítica, acolhimento e celebração das vitórias semanais.
-
----
-
-### 2. User Experience & Visual Design
-
-```
-┌────────────────────────────────────────────────────────────────────────┐
-│                        DASHBOARD - SELETOR DE ABAS                     │
-├──────────────────┬─────────────────┬─────────────────┬─────────────────┤
-│ ✨ Ações Rápidas │ 🌿 Sobras & Ex. │ ⚖️ Divisão 50/50│ 📅 Cofrinhos/Par│
-└──────────────────┴────────┬────────┴─────────────────┴─────────────────┘
-                            │
-                            ▼
-┌────────────────────────────────────────────────────────────────────────┐
-│ 🌿 HUB SEMANAL: SOBRAS, RITMO & INTELIGÊNCIA DA IA                     │
-│                                                                        │
-│ 1. HERO DO RITMO SEMANAL                                               │
-│    • Semana 3 de 4 (Dias 15 a 21) · Ritmo Seguro: R$ 85,00/dia         │
-│    • Saldo Líquido Operacional em Aberto                               │
-│                                                                        │
-│ 2. SUGESTÕES CONTEXTUAIS DA IA (3 OPÇÕES RÁPIDAS DE 1 TOQUE)           │
-│    • Proposta de Recompensa / Sobras Identificadas                     │
-│      [ ✨ Gostei, vamos usar! ] [ 🎯 Mandar p/ Cofrinho ] [ 🛡️ Guardar]│
-│                                                                        │
-│ 3. RADAR EMPÁTICO DE RECALIBRAGEM (QUANDO HOUVER EXCESSO)              │
-│    • Leitura de cansaço nos plantões sem culpa                         │
-│    • Botão de recalibragem inteligente do ritmo diário restante        │
-│                                                                        │
-│ 4. INTELIGÊNCIA DE ABASTECIMENTO & PACING (COMIDA & CONVENIÊNCIA)      │
-│    • Detalhamento dos 3 Pilares (Estrutural, Rotina, Conveniência)     │
-│    • Blocos das 4 semanas com status em tempo real                     │
-└────────────────────────────────────────────────────────────────────────┘
-```
-
-#### Fluxo do Usuário:
-1. **Entrada Natural**: Na tela inicial, abaixo das 3 Perguntas Essenciais, o casal encontra a barra de navegação de contexto. Um indicador discreto na aba `🌿 Sobras & Excessos` sinaliza quando houver sobras ativas para direcionamento.
-2. **Visão da Semana**: Ao tocar na aba, o casal visualiza imediatamente o saldo seguro dos próximos dias, sem misturar com formulários de entrada de dados.
-3. **Decisão em 1 Toque**: As sugestões da IA aparecem organizadas em cards acolhedores com as 3 opções diretas ("Gostei, vamos usar!", "Mandar para o Cofrinho", "Manter guardado na conta").
-4. **Recalibragem Serena**: Se uma semana tiver excesso de delivery devido a plantões, o radar acolhe o cansaço e oferece recalibrar a média diária dos dias restantes em 1 clique.
+### O que esta mudança entrega
+- **Fonte Única da Verdade (`Single Source of Truth`)**: Eliminação de redundâncias. A aba *Investimentos* e a aba *Hub do Casal* operam sobre os mesmos objetos de estado no `FinanceContext`.
+- **Conexão Real com a Reserva de Emergência**: O painel de Reserva do Hub do Casal consumirá diretamente os valores reais do Bloco 1 (`protectionCurrentAmount` e `protectionTotalInvested`) e os alvos de meses definidos no perfil do casal.
+- **Fluxo Automático de Pagamento de Contas**: Marcar um boleto/fatura como pago atualiza o checklist e lança a saída no orçamento mensal instantaneamente.
+- **Wishlist -> Meta -> Intenção Estratégica**: Ciclo de vida completo do desejo do casal:
+  `Desejo na Wishlist` ➔ `Transformar em Meta/Caixinha` ➔ `Aportar` ➔ `Vincular Intenção Estratégica de Gasto` ao atingir a meta.
 
 ---
 
-### 3. Key Product Decisions & Trade-Offs
+## 2. Experiência do Usuário & Design Visual
 
-- **Aba Dedicada vs. Card no Topo**:
-  - *Decisão*: Criar a aba `surplus` no menu de seções do Dashboard.
-  - *Por que*: O topo do dashboard já possui o Termômetro do Mês e a Faixa de Vida, que são o "raio-x" instantâneo. Inserir múltiplos cards de sobras no topo alongava desnecessariamente a rolagem vertical.
-- **Componente Unificado `WeeklySurplusHub`**:
-  - *Decisão*: Criar uma área modular que engloba as sugestões da IA, o Pacing de Comida e o Radar de Excessos de forma integrada.
-  - *Por que*: Evita renderização duplicada ou cards órfãos espalhados pelo código.
-- **Tratamento de Excessos com Recalibragem**:
-  - *Decisão*: Em vez de mero aviso vermelho de estouro, oferecer cálculo de novo ritmo seguro diário para o restante do mês.
-  - *Por que*: Reduz ansiedade e mantém a cumplicidade do relacionamento.
+### Fluxos Principais
+
+1. **Gestão Única de Caixinhas (Investimentos ⇄ Hub do Casal)**
+   - O usuário acessa a aba *Investimentos* ou o *Hub do Casal*.
+   - Ao criar uma nova Caixinha ou Meta, ela aparece em ambas as abas.
+   - No *Hub do Casal*, a Caixinha ganha visualização detalhada da participação individual (**Ele x Ela**), enquanto na aba *Investimentos* é exibida no contexto dos 3 Blocos de Segurança (Proteção, Objetivos, Liberdade).
+
+2. **Checklist Inteligente de Contas Fixas & Lançamento no Extrato**
+   - Na aba *Hub do Casal*, na seção *Alertas de Contas*, o usuário clica em **"Marcar Pago"**.
+   - O app pergunta/confirma a data e o método de pagamento e cria automaticamente uma transação na lista de `expenses`.
+   - Se desmarcado, o registro correspondente no extrato pode ser estornado ou atualizado.
+
+3. **Ciclo de Vida do Desejo (Wishlist)**
+   - Na Wishlist, botão **"Vincular Intenção Estratégica"** abre o modal de alocação de reserva pré-preenchido com o item desejado.
+   - Botão **"Transformar em Meta do Casal"** cria a Caixinha correspondente e atualiza o status para `convertido_meta`.
 
 ---
 
-### 4. Technical Architecture & Data Strategy
+## 3. Decisões de Arquitetura & Modelo de Dados
 
 ```
-┌────────────────────────────────────────────────────────────────────────┐
-│                        FinanceContext                                  │
-│  - foodPacingMetrics (semanas, saldo operacional, pilares)             │
-│  - aiPredictiveInsights (sugestões com 3 ações)                        │
-│  - applyAISuggestionAction / dismissAISuggestion                       │
-│  - recalculateSafeDailyPacing                                          │
-└───────────────────────────────────┬────────────────────────────────────┘
-                                    │
-                                    ▼
-┌────────────────────────────────────────────────────────────────────────┐
-│                   src/screens/HomeScreen.tsx                           │
-│  - activeDashboardTab: 'actions' | 'surplus' | 'split' | 'future' ...  │
-│  - renderiza WeeklySurplusHub quando activeDashboardTab === 'surplus'  │
-└───────────────────────────────────┬────────────────────────────────────┘
-                                    │
-                                    ▼
-┌────────────────────────────────────────────────────────────────────────┐
-│           src/components/WeeklySurplusHub.tsx (NOVO)                   │
-│  ├── Header com Status da Semana e Ritmo Seguro Diário                 │
-│  ├── Radar Empático de Excessos e Recalibragem de Ritmo               │
-│  ├── AIPredictiveInsightsCard (Sugestões de 1 toque da IA)             │
-│  └── FoodPacingWeeklyCard (Pacing Semanal dos 3 Pilares de Comida)     │
-└────────────────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                       FinanceContext (Global State)                         │
+│                                                                             │
+│ ┌─────────────────────────┐ ┌───────────────────────┐ ┌───────────────────┐ │
+│ │ piggyBanks &           │ │ protectionCurrentAmt │ │ expenses          │ │
+│ │ coupleGoals (Unified)   │ │ (Reserva do Bloco 1)  │ │ (Extrato do Mês)  │ │
+│ └────────────┬────────────┘ └───────────┬───────────┘ └─────────┬─────────┘ │
+└──────────────┼──────────────────────────┼───────────────────────┼───────────┘
+               │                          │                       │
+               ▼                          ▼                       ▼
+┌──────────────────────────────┐ ┌───────────────────────────────────────────┐
+│ GoalsScreen (Investimentos)  │ │         CoupleHubScreen (Hub)             │
+│                              │ │                                           │
+│  - Visão por 3 Blocos        │ │  - Divisão de Aportes Ele x Ela           │
+│  - Caixinhas Unificadas      │ │  - Reserva Real de Emergência             │
+│  - Guia de Aportes Mensais   │ │  - Wishlist ➔ Meta ➔ Intenção Estratégica │
+│                              │ │  - Alertas de Vencimento ➔ Extrato Auto  │
+└──────────────────────────────┘ └───────────────────────────────────────────┘
 ```
 
-#### Passos de Implementação:
-1. **Criar componente `WeeklySurplusHub.tsx`**:
-   - Reúne métricas da semana em andamento, ritmo diário, card de excessos com recalibragem suave, `AIPredictiveInsightsCard` e `FoodPacingWeeklyCard`.
-2. **Atualizar `DashboardTab` em `HomeScreen.tsx`**:
-   - Adicionar `'surplus'` ao tipo `DashboardTab` (`actions | surplus | split | future | fusion`).
-   - Atualizar a barra de abas com label `🌿 Sobras & Excessos` e contador de insights pendentes.
-   - Mover a visualização densa de `AIPredictiveInsightsCard` e `FoodPacingWeeklyCard` para dentro da aba `surplus`.
-   - Adicionar banner sutil ou badge na aba indicando quando há sobras semanais para direcionar.
-3. **Garantir Integração com Ações**:
-   - Manter as ações de 1 toque funcionando perfeitamente (recompensas, cofrinhos, amortecedor de caixa).
-   - Manter compatibilidade com tela de detalhes de categoria (`CategoryDetailsScreen.tsx`).
-4. **Verificação & Testes**:
-   - Executar `lint_applet` e `compile_applet`.
-   - Executar `vitest` em `src/utils/__tests__` garantindo 100% de sucesso.
+### Mapeamento das Entidades Unificadas
+
+1. **`SavingsPiggyBank` & `CoupleGoal`**:
+   - Mapeamento bidirecional no helper do context ou fusão de tipos de modo que todas as caixinhas criadas em *Investimentos* sejam refletidas como metas no *Hub do Casal* com divisão padrão de 50/50 quando a divisão não for especificada.
+
+2. **Reserva de Emergência Bloco 1 (`protectionCurrentAmount`)**:
+   - Conectada diretamente ao indicador do Hub do Casal. Operações de depósito/resgate no Bloco 1 sincronizam em tempo real no dashboard do casal.
+
+3. **Contas Fixas ➔ Extrato de Despesas**:
+   - Ação de pagamento adiciona item na lista de `expenses` com `assignedTo`, `category` e `paidBy`.
+
+---
+
+## 4. Plano de Execução em Etapas
+
+1. **Ajustes de Tipos & Mapeadores no Contexto (`src/types/finance.ts` & `src/context/FinanceContext.tsx`)**:
+   - Adicionar helpers para criar/sincronizar caixinhas entre `piggyBanks` e `coupleGoals`.
+   - Adicionar handler no context `markFixedBillPaid(billId, paymentDetails)` que atualiza o status do alerta e insere no extrato `expenses`.
+
+2. **Atualização da tela `GoalsScreen.tsx` (Investimentos)**:
+   - Exibir indicadores de divisão do casal nas Caixinhas e atalho para o *Hub do Casal*.
+
+3. **Atualização da tela `CoupleHubScreen.tsx` (Hub do Casal)**:
+   - Conectar os cofrinhos do Hub diretamente à lista unificada `piggyBanks` do context.
+   - Conectar a Reserva de Emergência do Hub aos valores reais de `protectionCurrentAmount`.
+   - Adicionar botão **"Vincular Intenção Estratégica"** na Wishlist.
+   - Conectar a ação de pagamento de contas para criar a transação automática no Extrato.
+
+4. **Verificação & Compilação**:
+   - Executar `compile_applet` e `lint_applet` para garantir compilação limpa sem erros.

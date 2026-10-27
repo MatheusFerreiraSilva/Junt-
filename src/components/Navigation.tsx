@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import {
   Home,
+  Stethoscope,
   Calendar,
   PieChart,
   CreditCard,
@@ -18,6 +19,8 @@ import {
   Cloud,
   Plus,
   Coins,
+  ChevronRight,
+  Users,
 } from 'lucide-react';
 import { useFinance, ACCENT_THEMES } from '../context/FinanceContext';
 import { JuntoLogo } from './JuntoLogo';
@@ -31,7 +34,9 @@ export type ScreenId =
   | 'goals'
   | 'trends'
   | 'settings'
-  | 'projections';
+  | 'projections'
+  | 'shifts'
+  | 'couple_hub';
 
 interface NavigationProps {
   currentScreen: ScreenId;
@@ -44,6 +49,7 @@ interface NavigationProps {
   onOpenChat: () => void;
   onOpenAuthModal: () => void;
   onOpenAIOnboardingModal: () => void;
+  onOpenStrategicIntentModal?: () => void;
 }
 
 export const Navigation: React.FC<NavigationProps> = ({
@@ -57,6 +63,7 @@ export const Navigation: React.FC<NavigationProps> = ({
   onOpenChat,
   onOpenAuthModal,
   onOpenAIOnboardingModal,
+  onOpenStrategicIntentModal,
 }) => {
   const {
     state,
@@ -71,12 +78,19 @@ export const Navigation: React.FC<NavigationProps> = ({
   } = useFinance();
 
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [isQuickActionModalOpen, setIsQuickActionModalOpen] = useState(false);
 
   const p1Short = state.profile.partner1Name?.trim().split(' ')[0] || 'Você';
   const p2Short = state.profile.partner2Name?.trim().split(' ')[0] || 'Par';
 
   const navItems: { id: ScreenId; label: string; icon: React.ReactNode; warning?: boolean; badge?: string }[] = [
     { id: 'home', label: 'Início', icon: <Home className="w-4 h-4 shrink-0" /> },
+    {
+      id: 'couple_hub',
+      label: 'Hub do Casal',
+      icon: <Users className="w-4 h-4 shrink-0 text-rose-500" />,
+      badge: 'Novo',
+    },
     {
       id: 'calendar',
       label: 'Calendário',
@@ -89,7 +103,7 @@ export const Navigation: React.FC<NavigationProps> = ({
       icon: <PieChart className="w-4 h-4 shrink-0" />,
       warning: blownCategories.length > 0,
     },
-    { id: 'transactions', label: 'Histórico', icon: <ListFilter className="w-4 h-4 shrink-0" /> },
+    { id: 'transactions', label: 'Extrato', icon: <ListFilter className="w-4 h-4 shrink-0" /> },
     {
       id: 'installments',
       label: 'Parcelas',
@@ -97,6 +111,11 @@ export const Navigation: React.FC<NavigationProps> = ({
       warning: isInstallmentCommitmentHigh,
     },
     { id: 'goals', label: 'Investimentos', icon: <Target className="w-4 h-4 shrink-0" /> },
+    {
+      id: 'shifts',
+      label: 'Plantões',
+      icon: <Stethoscope className="w-4 h-4 shrink-0" />,
+    },
     { id: 'trends', label: 'Tendências', icon: <BarChart2 className="w-4 h-4 shrink-0" /> },
     { id: 'projections', label: 'Projeções', icon: <TrendingUp className="w-4 h-4 shrink-0" /> },
     { id: 'settings', label: 'Ajustes', icon: <Settings className="w-4 h-4 shrink-0" /> },
@@ -112,17 +131,9 @@ export const Navigation: React.FC<NavigationProps> = ({
       {/* ========================================================================= */}
       {/* DESKTOP SIDEBAR NAVIGATION (Visible on screens >= lg)                      */}
       {/* ========================================================================= */}
-      <aside className="hidden lg:flex flex-col w-64 xl:w-72 h-screen sticky top-0 shrink-0 border-r-2 border-slate-300 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-md z-40 transition-colors">
-        {/* Top Ambient Profile Glow Line */}
-        <div
-          className="h-1.5 w-full shrink-0 transition-all duration-500 shadow-xs"
-          style={{
-            background: 'linear-gradient(90deg, var(--app-accent-gradient-from), var(--app-accent-primary), var(--app-accent-gradient-to))',
-          }}
-        />
-
+      <aside className="hidden lg:flex flex-col w-64 xl:w-72 h-screen sticky top-0 shrink-0 border-r border-[#E8E2D8] dark:border-slate-800 bg-[#FAF7F2] dark:bg-[#111318] z-40 transition-colors">
         {/* Sidebar Header: Logo & Couple Identity */}
-        <div className="p-4 xl:p-5 border-b-2 border-slate-200 dark:border-slate-800 space-y-3 shrink-0">
+        <div className="p-4 xl:p-5 border-b border-[#E8E2D8] dark:border-slate-800 space-y-3 shrink-0">
           <button
             onClick={() => onSelectScreen('home')}
             className="flex items-center gap-2 text-left focus:outline-none w-full group cursor-pointer"
@@ -131,38 +142,30 @@ export const Navigation: React.FC<NavigationProps> = ({
           </button>
 
           {/* Couple Badge */}
-          <div className="flex items-center justify-between gap-1 text-xs font-bold bg-slate-100 dark:bg-slate-800 px-3 py-2 rounded-xl border-2 border-slate-300 dark:border-slate-700 shadow-2xs">
-            <span className="text-slate-900 dark:text-slate-100 truncate max-w-[85px] font-extrabold">
+          <div className="flex items-center justify-between gap-1 text-xs font-bold bg-white dark:bg-slate-800 px-3 py-2 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-2xs">
+            <span className="text-[#111318] dark:text-slate-100 truncate max-w-[85px] font-extrabold">
               {state.profile.partner1Name}
             </span>
             <span className="text-rose-500 font-black shrink-0">❤</span>
-            <span className="text-slate-900 dark:text-slate-100 truncate max-w-[85px] font-extrabold">
+            <span className="text-[#111318] dark:text-slate-100 truncate max-w-[85px] font-extrabold">
               {state.profile.partner2Name === 'Aguardando Par...' ? 'Convide o Par' : state.profile.partner2Name}
             </span>
             {state.profile.city && (
-              <span className="text-[11px] text-slate-600 dark:text-slate-400 shrink-0 ml-1 font-semibold">
+              <span className="text-[11px] text-slate-500 dark:text-slate-400 shrink-0 ml-1 font-semibold">
                 📍 {state.profile.city.split('-')[0].trim()}
               </span>
             )}
           </div>
 
           {/* View Mode Segmented Switcher (Casal vs Pessoa 1 vs Pessoa 2) */}
-          <div className="grid grid-cols-3 items-center p-1 bg-slate-200 dark:bg-slate-800 rounded-xl border-2 border-slate-300 dark:border-slate-700 shadow-inner h-9">
+          <div className="grid grid-cols-3 items-center p-1 bg-[#EFE9DF] dark:bg-slate-800 rounded-2xl border border-[#E0D8CB] dark:border-slate-700 shadow-inner h-9">
             <button
               onClick={() => setViewMode('couple')}
-              className={`h-full flex items-center justify-center gap-1 rounded-lg text-xs font-black transition-all text-center select-none active:scale-95 cursor-pointer ${
+              className={`h-full flex items-center justify-center gap-1 rounded-xl text-xs font-black transition-all text-center select-none active:scale-95 cursor-pointer ${
                 viewMode === 'couple'
-                  ? 'text-white shadow-md'
-                  : 'text-slate-800 dark:text-slate-200 hover:text-slate-950 dark:hover:text-white'
+                  ? 'bg-[#111318] text-white shadow-sm'
+                  : 'text-slate-700 dark:text-slate-300 hover:text-black dark:hover:text-white'
               }`}
-              style={
-                viewMode === 'couple'
-                  ? {
-                      backgroundColor: ACCENT_THEMES[state.profile.coupleTheme || 'emerald'].hex,
-                      boxShadow: `0 2px 8px ${ACCENT_THEMES[state.profile.coupleTheme || 'emerald'].hex}50`,
-                    }
-                  : {}
-              }
               title="Visão Integrada do Casal"
             >
               <span>👥</span>
@@ -171,19 +174,11 @@ export const Navigation: React.FC<NavigationProps> = ({
 
             <button
               onClick={() => setViewMode('partner1')}
-              className={`h-full flex items-center justify-center gap-1 rounded-lg text-xs font-black transition-all text-center select-none active:scale-95 cursor-pointer ${
+              className={`h-full flex items-center justify-center gap-1 rounded-xl text-xs font-black transition-all text-center select-none active:scale-95 cursor-pointer ${
                 viewMode === 'partner1'
-                  ? 'text-white shadow-md'
-                  : 'text-slate-800 dark:text-slate-200 hover:text-slate-950 dark:hover:text-white'
+                  ? 'bg-[#111318] text-white shadow-sm'
+                  : 'text-slate-700 dark:text-slate-300 hover:text-black dark:hover:text-white'
               }`}
-              style={
-                viewMode === 'partner1'
-                  ? {
-                      backgroundColor: ACCENT_THEMES[state.profile.partner1Theme || 'sapphire'].hex,
-                      boxShadow: `0 2px 8px ${ACCENT_THEMES[state.profile.partner1Theme || 'sapphire'].hex}50`,
-                    }
-                  : {}
-              }
               title={`Ver apenas ${state.profile.partner1Name}`}
             >
               <span>👩</span>
@@ -192,58 +187,35 @@ export const Navigation: React.FC<NavigationProps> = ({
 
             <button
               onClick={() => setViewMode('partner2')}
-              className={`h-full flex items-center justify-center gap-1 rounded-lg text-xs font-black transition-all text-center select-none active:scale-95 cursor-pointer ${
+              className={`h-full flex items-center justify-center gap-1 rounded-xl text-xs font-black transition-all text-center select-none active:scale-95 cursor-pointer ${
                 viewMode === 'partner2'
-                  ? 'text-white shadow-md'
-                  : 'text-slate-800 dark:text-slate-200 hover:text-slate-950 dark:hover:text-white'
+                  ? 'bg-[#111318] text-white shadow-sm'
+                  : 'text-slate-700 dark:text-slate-300 hover:text-black dark:hover:text-white'
               }`}
-              style={
-                viewMode === 'partner2'
-                  ? {
-                      backgroundColor: ACCENT_THEMES[state.profile.partner2Theme || 'rose'].hex,
-                      boxShadow: `0 2px 8px ${ACCENT_THEMES[state.profile.partner2Theme || 'rose'].hex}50`,
-                    }
-                  : {}
-              }
               title={`Ver apenas ${state.profile.partner2Name}`}
             >
               <span>👨</span>
               <span className="truncate">{p2Short}</span>
             </button>
           </div>
-
-          {/* Modo Faculdade Pill Switcher */}
-          <div className="flex items-center justify-between">
-            <button
-              onClick={() => setAppMode(state.appMode === 'faculdade' ? 'casal' : 'faculdade')}
-              className={`w-full py-1.5 px-3 rounded-xl text-xs font-extrabold border-2 transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-xs ${
-                state.appMode === 'faculdade'
-                  ? 'bg-emerald-600 text-white border-emerald-500 shadow-emerald-500/20'
-                  : 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-900 dark:text-emerald-200 border-emerald-300 dark:border-emerald-700 hover:bg-emerald-100'
-              }`}
-            >
-              <span>🎓</span>
-              <span>{state.appMode === 'faculdade' ? 'Modo Faculdade Ativo' : 'Ativar Modo Faculdade'}</span>
-            </button>
-          </div>
         </div>
 
         {/* Sidebar Nav Links */}
         <div className="flex-1 overflow-y-auto px-3 xl:px-4 py-3 space-y-1">
-          <div className="text-xs font-black text-slate-700 dark:text-slate-300 uppercase tracking-wider px-2 pb-1.5">
-            Navegação Principal
+          <div className="text-[11px] font-black text-slate-500 dark:text-slate-400 uppercase tracking-wider px-2 pb-1.5">
+            Menu
           </div>
 
-          {navItems.map(item => {
+          {navItems.map((item) => {
             const isActive = currentScreen === item.id;
             return (
               <button
                 key={item.id}
                 onClick={() => onSelectScreen(item.id)}
-                className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-xs font-extrabold transition-all cursor-pointer ${
+                className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-2xl text-xs font-extrabold transition-all cursor-pointer ${
                   isActive
-                    ? 'bg-accent-surface text-accent-themed border-2 border-accent-themed shadow-xs'
-                    : 'text-slate-800 dark:text-slate-200 hover:text-slate-950 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800/80 border border-transparent'
+                    ? 'bg-[#111318] text-white shadow-sm'
+                    : 'text-slate-700 dark:text-slate-300 hover:text-[#111318] dark:hover:text-white hover:bg-white/70 dark:hover:bg-slate-800/80'
                 }`}
               >
                 <div className="flex items-center gap-2.5">
@@ -253,7 +225,7 @@ export const Navigation: React.FC<NavigationProps> = ({
 
                 <div className="flex items-center gap-1.5">
                   {item.badge && (
-                    <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-md bg-purple-100 dark:bg-purple-950 text-purple-900 dark:text-purple-200 border border-purple-300 dark:border-purple-800">
+                    <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-full bg-[#D8C7FF] text-[#111318]">
                       {item.badge}
                     </span>
                   )}
@@ -267,63 +239,63 @@ export const Navigation: React.FC<NavigationProps> = ({
 
           {/* Quick Actions Header */}
           <div className="pt-4 pb-1">
-            <div className="text-xs font-black text-slate-700 dark:text-slate-300 uppercase tracking-wider px-2 pb-1.5">
-              Ações Rápidas
+            <div className="text-[11px] font-black text-slate-500 dark:text-slate-400 uppercase tracking-wider px-2 pb-1.5">
+              Registro Rápido
             </div>
-            
+
             {/* Primary Action Button: Gastei */}
             <button
               onClick={onOpenExpenseModal}
-              className="w-full btn-primary-accent flex items-center justify-center gap-2 py-3 px-3 rounded-xl text-xs font-black shadow-md active:scale-95 transition-all cursor-pointer mt-1"
+              className="w-full flex items-center justify-center gap-2 py-3 px-3 rounded-2xl text-xs font-black bg-[#111318] text-white shadow-md active:scale-95 transition-all cursor-pointer mt-1"
             >
-              <span>➕</span>
-              <span>NOVO GASTO</span>
+              <Plus className="w-4 h-4 stroke-[3]" />
+              <span>GASTEI</span>
             </button>
 
             {/* Secondary Action Row: Ganhei & Parcela */}
             <div className="grid grid-cols-2 gap-2 mt-2">
               <button
                 onClick={onOpenIncomeModal}
-                className="flex items-center justify-center gap-1.5 py-2 px-2.5 rounded-xl text-xs font-black bg-emerald-100 dark:bg-emerald-950/60 hover:bg-emerald-200 text-emerald-950 dark:text-emerald-200 border-2 border-emerald-300 dark:border-emerald-700 transition-colors cursor-pointer shadow-2xs"
+                className="flex items-center justify-center gap-1.5 py-2 px-2.5 rounded-2xl text-xs font-black bg-[#B8E0B0]/40 dark:bg-emerald-950/60 hover:bg-[#B8E0B0]/70 text-[#111318] dark:text-emerald-200 border border-[#B8E0B0] dark:border-emerald-700 transition-colors cursor-pointer"
               >
                 <Coins className="w-4 h-4 text-emerald-700 dark:text-emerald-400" />
-                <span>+ Ganhei</span>
+                <span>+ Recebi</span>
               </button>
 
               <button
                 onClick={onOpenInstallmentModal}
-                className="flex items-center justify-center gap-1.5 py-2 px-2.5 rounded-xl text-xs font-black bg-amber-100 dark:bg-amber-950/60 hover:bg-amber-200 text-amber-950 dark:text-amber-200 border-2 border-amber-300 dark:border-amber-700 transition-colors cursor-pointer shadow-2xs"
+                className="flex items-center justify-center gap-1.5 py-2 px-2.5 rounded-2xl text-xs font-black bg-[#FFC875]/40 dark:bg-amber-950/60 hover:bg-[#FFC875]/70 text-[#111318] dark:text-amber-200 border border-[#FFC875] dark:border-amber-700 transition-colors cursor-pointer"
               >
                 <CreditCard className="w-4 h-4 text-amber-700 dark:text-amber-400" />
-                <span>+ Parcela</span>
+                <span>+ Parcelei</span>
               </button>
             </div>
           </div>
         </div>
 
         {/* Sidebar Footer & Utilities */}
-        <div className="p-3 xl:p-4 border-t border-slate-100 dark:border-slate-800/80 bg-slate-50/70 dark:bg-slate-950/70 space-y-2 shrink-0">
+        <div className="p-3 xl:p-4 border-t border-[#E8E2D8] dark:border-slate-800 bg-white/40 dark:bg-slate-900/40 space-y-2 shrink-0">
           {/* Cloud Nuvem Sincronizada / Entrar */}
           <button
             onClick={onOpenAuthModal}
-            className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-bold border transition-colors cursor-pointer ${
+            className={`w-full flex items-center justify-between px-3 py-2 rounded-2xl text-xs font-bold border transition-colors cursor-pointer ${
               isCloudSynced
-                ? 'bg-emerald-50 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 border-emerald-300 dark:border-emerald-800'
-                : 'bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:border-emerald-500'
+                ? 'bg-[#B8E0B0]/30 text-emerald-900 dark:text-emerald-300 border-[#B8E0B0]'
+                : 'bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700'
             }`}
           >
             <div className="flex items-center gap-2">
-              <Cloud className={`w-4 h-4 ${isCloudSynced ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-500'}`} />
-              <span className="truncate">{isCloudSynced ? 'Nuvem Ativa' : 'Entrar / Sincronizar'}</span>
+              <Cloud className={`w-4 h-4 ${isCloudSynced ? 'text-emerald-600' : 'text-slate-500'}`} />
+              <span className="truncate">{isCloudSynced ? 'Nuvem Conectada' : 'Entrar / Sincronizar'}</span>
             </div>
-            <span className="text-[10px] text-slate-400">{isCloudSynced ? '☁️' : '🔒'}</span>
+            <span className="text-[10px]">{isCloudSynced ? '☁️' : '🔒'}</span>
           </button>
 
           {/* AI Assistants & Open Finance Row */}
           <div className="grid grid-cols-2 gap-1.5">
             <button
               onClick={onOpenChat}
-              className="flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-xl bg-slate-900 dark:bg-slate-800 hover:bg-slate-800 text-white text-[11px] font-bold shadow-2xs transition-all cursor-pointer"
+              className="flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-xl bg-[#111318] text-white text-[11px] font-bold shadow-xs transition-all cursor-pointer"
               title="Falar com Dr. Finanças"
             >
               <Sparkles className="w-3 h-3 text-amber-400" />
@@ -332,7 +304,7 @@ export const Navigation: React.FC<NavigationProps> = ({
 
             <button
               onClick={onOpenBankSyncModal}
-              className="flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-xl bg-purple-50 dark:bg-purple-950/60 hover:bg-purple-100 dark:hover:bg-purple-900 text-purple-800 dark:text-purple-300 text-[11px] font-bold border border-purple-200/80 dark:border-purple-800 transition-colors cursor-pointer"
+              className="flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-xl bg-[#D8C7FF]/40 text-[#111318] text-[11px] font-bold border border-[#D8C7FF] transition-colors cursor-pointer"
               title="Open Finance"
             >
               <span>🏦</span>
@@ -344,18 +316,16 @@ export const Navigation: React.FC<NavigationProps> = ({
           <div className="flex items-center justify-between pt-1">
             <button
               onClick={onOpenAIOnboardingModal}
-              className="text-[11px] font-bold text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 flex items-center gap-1 cursor-pointer"
-              title="Refazer IA Onboarding"
+              className="text-[11px] font-bold text-slate-500 hover:text-[#111318] dark:hover:text-slate-200 flex items-center gap-1 cursor-pointer"
             >
               <Sparkles className="w-3.5 h-3.5 text-amber-500" />
               <span>Onboarding</span>
             </button>
 
             <div className="flex items-center gap-1">
-              {/* Notification Bell */}
               <button
                 onClick={onOpenNotifications}
-                className="relative w-8 h-8 rounded-lg hover:bg-slate-200 dark:hover:bg-slate-800 flex items-center justify-center text-slate-600 dark:text-slate-300 transition-colors cursor-pointer"
+                className="relative w-8 h-8 rounded-xl hover:bg-slate-200 dark:hover:bg-slate-800 flex items-center justify-center text-slate-600 dark:text-slate-300 transition-colors cursor-pointer"
                 title="Central de Alertas"
               >
                 <Bell className="w-4 h-4" />
@@ -366,11 +336,9 @@ export const Navigation: React.FC<NavigationProps> = ({
                 )}
               </button>
 
-              {/* Theme Toggle */}
               <button
                 onClick={toggleThemeMode}
-                className="w-8 h-8 rounded-lg hover:bg-slate-200 dark:hover:bg-slate-800 flex items-center justify-center text-slate-600 dark:text-slate-300 transition-colors cursor-pointer"
-                title={state.profile.themeMode === 'dark' ? 'Mudar para fundo claro' : 'Mudar para fundo escuro'}
+                className="w-8 h-8 rounded-xl hover:bg-slate-200 dark:hover:bg-slate-800 flex items-center justify-center text-slate-600 dark:text-slate-300 transition-colors cursor-pointer"
               >
                 {state.profile.themeMode === 'dark' ? (
                   <Sun className="w-4 h-4 text-amber-400" />
@@ -384,20 +352,12 @@ export const Navigation: React.FC<NavigationProps> = ({
       </aside>
 
       {/* ========================================================================= */}
-      {/* MOBILE TOP HEADER NAVIGATION BAR (Visible only on < lg)                   */}
+      {/* MOBILE TOP HEADER BAR (< lg)                                              */}
       {/* ========================================================================= */}
-      <header className="lg:hidden sticky top-0 z-40 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-b border-slate-200/80 dark:border-slate-800 transition-colors">
-        {/* Top Ambient Profile Glow Line */}
-        <div
-          className="h-1 w-full transition-all duration-500 shrink-0 shadow-xs"
-          style={{
-            background: 'linear-gradient(90deg, var(--app-accent-gradient-from), var(--app-accent-primary), var(--app-accent-gradient-to))',
-          }}
-        />
-
+      <header className="lg:hidden sticky top-0 z-40 bg-[#FAF7F2]/95 dark:bg-[#111318]/95 backdrop-blur-md border-b border-[#E8E2D8] dark:border-slate-800 transition-colors">
         <div className="px-3 sm:px-6 h-14 flex items-center justify-between gap-2">
-          {/* Brand Logo & Couple Badge */}
-          <div className="flex items-center gap-2 min-w-0">
+          {/* Brand Wordmark */}
+          <div className="flex items-center gap-2">
             <button
               onClick={() => onSelectScreen('home')}
               className="flex items-center gap-1.5 focus:outline-none cursor-pointer"
@@ -406,39 +366,43 @@ export const Navigation: React.FC<NavigationProps> = ({
             </button>
           </div>
 
-          {/* Quick Actions on Mobile Header */}
-          <div className="flex items-center gap-1.5 shrink-0">
-            {/* Cloud Nuvem Sincronizada / Entrar */}
+          {/* Quick Status and Theme */}
+          <div className="flex items-center gap-1.5">
             <button
-              onClick={onOpenAuthModal}
-              className={`p-2 rounded-xl text-xs font-bold border transition-colors ${
-                isCloudSynced
-                  ? 'bg-emerald-50 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 border-emerald-300 dark:border-emerald-800'
-                  : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700'
+              onClick={() => onSelectScreen('shifts')}
+              className={`px-2.5 py-1.5 rounded-xl text-xs font-bold border flex items-center gap-1.5 transition-all cursor-pointer ${
+                currentScreen === 'shifts'
+                  ? 'bg-[#111318] text-white border-[#111318] dark:bg-teal-600 dark:border-teal-500'
+                  : 'bg-teal-50 dark:bg-teal-950/70 text-teal-700 dark:text-teal-300 border-teal-300 dark:border-teal-700 hover:bg-teal-100'
               }`}
-              title="Conta do Casal e Sincronização em Nuvem"
+              title="Gestão de Plantões Médicos"
             >
-              <Cloud className={`w-4 h-4 ${isCloudSynced ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-500'}`} />
+              <Stethoscope className="w-4 h-4 text-teal-600 dark:text-teal-300" />
+              <span className="font-extrabold">Plantões</span>
             </button>
 
-            {/* Notification Bell */}
+            <button
+              onClick={onOpenAuthModal}
+              className="p-2 rounded-xl text-xs font-bold border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300"
+              title="Nuvem"
+            >
+              <Cloud className={`w-4 h-4 ${isCloudSynced ? 'text-emerald-600' : 'text-slate-400'}`} />
+            </button>
+
             <button
               onClick={onOpenNotifications}
-              className="relative w-8 h-8 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center text-slate-600 dark:text-slate-300 transition-colors"
-              title="Central de Alertas"
+              className="relative p-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300"
+              title="Alertas"
             >
               <Bell className="w-4 h-4" />
               {unreadNotificationsCount > 0 && (
-                <span className="absolute top-0.5 right-0.5 w-3.5 h-3.5 rounded-full bg-rose-500 text-white text-[9px] font-bold flex items-center justify-center animate-pulse">
-                  {unreadNotificationsCount}
-                </span>
+                <span className="absolute top-1 right-1 w-2.5 h-2.5 rounded-full bg-rose-500 animate-pulse" />
               )}
             </button>
 
-            {/* Theme Toggle */}
             <button
               onClick={toggleThemeMode}
-              className="w-8 h-8 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center text-slate-600 dark:text-slate-300 transition-colors"
+              className="p-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300"
             >
               {state.profile.themeMode === 'dark' ? (
                 <Sun className="w-4 h-4 text-amber-400" />
@@ -446,250 +410,212 @@ export const Navigation: React.FC<NavigationProps> = ({
                 <Moon className="w-4 h-4 text-slate-600" />
               )}
             </button>
-
-            {/* GASTEI Button */}
-            <button
-              onClick={onOpenExpenseModal}
-              className="btn-primary-accent flex items-center gap-1 px-3 py-1.5 rounded-xl text-xs font-extrabold shadow-sm active:scale-95 transition-all cursor-pointer"
-            >
-              <span>➕</span>
-              <span>GASTEI</span>
-            </button>
-          </div>
-        </div>
-
-        {/* Mobile Sub-bar: Casal vs Pessoa 1 vs Pessoa 2 */}
-        <div className="border-t border-slate-100 dark:border-slate-800/80 bg-slate-50/90 dark:bg-slate-950/80 py-1.5 px-3">
-          <div className="flex items-center justify-between gap-2">
-            <div className="grid grid-cols-3 items-center p-0.5 bg-slate-200/80 dark:bg-slate-850 rounded-xl border border-slate-300/60 dark:border-slate-700 shadow-inner w-full max-w-xs h-8">
-              <button
-                onClick={() => setViewMode('couple')}
-                className={`h-full flex items-center justify-center gap-1 rounded-lg text-[11px] font-black transition-all text-center select-none active:scale-95 cursor-pointer ${
-                  viewMode === 'couple'
-                    ? 'text-white shadow-md'
-                    : 'text-slate-600 dark:text-slate-400'
-                }`}
-                style={
-                  viewMode === 'couple'
-                    ? {
-                        backgroundColor: ACCENT_THEMES[state.profile.coupleTheme || 'emerald'].hex,
-                      }
-                    : {}
-                }
-              >
-                <span>👥</span>
-                <span>Casal</span>
-              </button>
-
-              <button
-                onClick={() => setViewMode('partner1')}
-                className={`h-full flex items-center justify-center gap-1 rounded-lg text-[11px] font-black transition-all text-center select-none active:scale-95 cursor-pointer ${
-                  viewMode === 'partner1'
-                    ? 'text-white shadow-md'
-                    : 'text-slate-600 dark:text-slate-400'
-                }`}
-                style={
-                  viewMode === 'partner1'
-                    ? {
-                        backgroundColor: ACCENT_THEMES[state.profile.partner1Theme || 'sapphire'].hex,
-                      }
-                    : {}
-                }
-              >
-                <span>👩</span>
-                <span className="truncate">{p1Short}</span>
-              </button>
-
-              <button
-                onClick={() => setViewMode('partner2')}
-                className={`h-full flex items-center justify-center gap-1 rounded-lg text-[11px] font-black transition-all text-center select-none active:scale-95 cursor-pointer ${
-                  viewMode === 'partner2'
-                    ? 'text-white shadow-md'
-                    : 'text-slate-600 dark:text-slate-400'
-                }`}
-                style={
-                  viewMode === 'partner2'
-                    ? {
-                        backgroundColor: ACCENT_THEMES[state.profile.partner2Theme || 'rose'].hex,
-                      }
-                    : {}
-                }
-              >
-                <span>👨</span>
-                <span className="truncate">{p2Short}</span>
-              </button>
-            </div>
-
-            <button
-              onClick={() => setAppMode(state.appMode === 'faculdade' ? 'casal' : 'faculdade')}
-              className={`px-2 py-1 rounded-xl text-[10px] font-extrabold border transition-all shrink-0 cursor-pointer ${
-                state.appMode === 'faculdade'
-                  ? 'bg-emerald-600 text-white border-emerald-500'
-                  : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700'
-              }`}
-            >
-              <span>🎓 {state.appMode === 'faculdade' ? 'Faculdade' : 'Facul'}</span>
-            </button>
           </div>
         </div>
       </header>
 
       {/* ========================================================================= */}
-      {/* MOBILE FLOATING ROUNDED TAB BAR WITH SMOOTH ANIMATED TAB SWITCHING        */}
+      {/* FLOATING DARK BOTTOM BAR (Capsule in Charcoal #111318 with Magic Button +)*/}
       {/* ========================================================================= */}
-      {(() => {
-        const isMoreActive =
-          currentScreen === 'goals' ||
-          currentScreen === 'trends' ||
-          currentScreen === 'projections' ||
-          currentScreen === 'settings';
-
-        const activeTabIndex =
-          currentScreen === 'home'
-            ? 0
-            : currentScreen === 'calendar'
-            ? 1
-            : currentScreen === 'categories'
-            ? 2
-            : currentScreen === 'transactions'
-            ? 3
-            : currentScreen === 'installments'
-            ? 4
-            : isMoreActive
-            ? 5
-            : 0;
-
-        return (
-          <nav
-            aria-label="Navegação inferior mobile"
-            className="lg:hidden fixed bottom-[calc(0.75rem+env(safe-area-inset-bottom,0px))] inset-x-3 sm:inset-x-6 sm:max-w-md sm:mx-auto z-40 rounded-3xl bg-white/95 dark:bg-slate-900/95 backdrop-blur-xl border-2 border-slate-200/90 dark:border-slate-800/90 shadow-[0_12px_36px_-6px_rgba(0,0,0,0.2)] dark:shadow-[0_12px_36px_-6px_rgba(0,0,0,0.65)] p-1.5 transition-all"
+      <nav
+        aria-label="Navegação inferior mobile flutuante"
+        className="lg:hidden fixed bottom-[calc(0.75rem+env(safe-area-inset-bottom,0px))] inset-x-4 sm:max-w-md sm:mx-auto z-40 floating-dark-bar p-1.5 transition-all"
+      >
+        <div className="grid grid-cols-5 items-center h-14 relative">
+          {/* 1. Início */}
+          <button
+            onClick={() => onSelectScreen('home')}
+            className={`flex flex-col items-center justify-center py-1 select-none min-h-[44px] cursor-pointer transition-all ${
+              currentScreen === 'home'
+                ? 'text-white font-black scale-105'
+                : 'text-slate-400 hover:text-white font-medium'
+            }`}
           >
-            <div className="relative grid grid-cols-6 items-center h-14">
-              {/* Sliding Active Pill Indicator */}
-              <div
-                className="absolute top-1 bottom-1 rounded-2xl bg-slate-100 dark:bg-slate-800 border border-slate-300/80 dark:border-slate-700/80 shadow-xs transition-all duration-300 ease-out pointer-events-none"
-                style={{
-                  left: `${(activeTabIndex * 100) / 6}%`,
-                  width: `${100 / 6}%`,
-                }}
-              >
-                <div
-                  className="absolute bottom-1 inset-x-3 h-0.5 rounded-full"
-                  style={{ backgroundColor: 'var(--app-accent-primary)' }}
-                />
-              </div>
+            <Home className="w-4 h-4 stroke-[2.5]" />
+            <span className="text-[10px] tracking-tight mt-0.5 truncate">Início</span>
+          </button>
 
-              {/* 1. Início */}
-              <button
-                onClick={() => onSelectScreen('home')}
-                className={`relative z-10 flex flex-col items-center justify-center py-1 transition-all duration-200 select-none min-h-[44px] cursor-pointer ${
-                  currentScreen === 'home'
-                    ? 'scale-105 font-black'
-                    : 'text-slate-600 dark:text-slate-400 font-bold hover:text-slate-950 dark:hover:text-white'
-                }`}
-                style={currentScreen === 'home' ? { color: 'var(--app-accent-text)' } : {}}
-              >
-                <Home className="w-4 h-4 stroke-[2.5]" />
-                <span className="text-[11px] tracking-tight mt-0.5 truncate">Início</span>
-              </button>
+          {/* 2. Calendário */}
+          <button
+            onClick={() => onSelectScreen('calendar')}
+            className={`flex flex-col items-center justify-center py-1 select-none min-h-[44px] cursor-pointer transition-all ${
+              currentScreen === 'calendar'
+                ? 'text-white font-black scale-105'
+                : 'text-slate-400 hover:text-white font-medium'
+            }`}
+          >
+            <Calendar className="w-4 h-4 stroke-[2.5]" />
+            <span className="text-[10px] tracking-tight mt-0.5 truncate">Agenda</span>
+          </button>
 
-              {/* 2. Calendário */}
-              <button
-                onClick={() => onSelectScreen('calendar')}
-                className={`relative z-10 flex flex-col items-center justify-center py-1 transition-all duration-200 select-none min-h-[44px] cursor-pointer ${
-                  currentScreen === 'calendar'
-                    ? 'scale-105 font-black'
-                    : 'text-slate-600 dark:text-slate-400 font-bold hover:text-slate-950 dark:hover:text-white'
-                }`}
-                style={currentScreen === 'calendar' ? { color: 'var(--app-accent-text)' } : {}}
-              >
-                <Calendar className="w-4 h-4 stroke-[2.5]" />
-                <span className="text-[11px] tracking-tight mt-0.5 truncate">Agenda</span>
-              </button>
+          {/* 3. BOTÃO MÁGICO CENTRAL ELEVADO (+) */}
+          <div className="flex items-center justify-center relative -top-3">
+            <button
+              type="button"
+              onClick={() => setIsQuickActionModalOpen(true)}
+              className="floating-magic-button w-13 h-13 rounded-full flex items-center justify-center font-black text-2xl shadow-xl active:scale-90 transition-all cursor-pointer ring-4 ring-[#FAF7F2] dark:ring-[#111318]"
+              title="Registro Rápido: Gastei, Recebi, Parcelei"
+              aria-label="Abrir registro rápido"
+            >
+              <Plus className="w-6 h-6 stroke-[3.5] text-[#111318]" />
+            </button>
+          </div>
 
-              {/* 3. Gastos */}
-              <button
-                onClick={() => onSelectScreen('categories')}
-                className={`relative z-10 flex flex-col items-center justify-center py-1 transition-all duration-200 select-none min-h-[44px] cursor-pointer ${
-                  currentScreen === 'categories'
-                    ? 'scale-105 font-black'
-                    : 'text-slate-600 dark:text-slate-400 font-bold hover:text-slate-950 dark:hover:text-white'
-                }`}
-                style={currentScreen === 'categories' ? { color: 'var(--app-accent-text)' } : {}}
-              >
-                <div className="relative">
-                  <PieChart className="w-4 h-4 stroke-[2.5]" />
-                  {blownCategories.length > 0 && (
-                    <span className="absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full bg-rose-500 animate-pulse" />
-                  )}
-                </div>
-                <span className="text-[11px] tracking-tight mt-0.5 truncate">Gastos</span>
-              </button>
+          {/* 4. Gastos */}
+          <button
+            onClick={() => onSelectScreen('categories')}
+            className={`flex flex-col items-center justify-center py-1 select-none min-h-[44px] cursor-pointer transition-all ${
+              currentScreen === 'categories'
+                ? 'text-white font-black scale-105'
+                : 'text-slate-400 hover:text-white font-medium'
+            }`}
+          >
+            <div className="relative">
+              <PieChart className="w-4 h-4 stroke-[2.5]" />
+              {blownCategories.length > 0 && (
+                <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-rose-500 animate-pulse" />
+              )}
+            </div>
+            <span className="text-[10px] tracking-tight mt-0.5 truncate">Gastos</span>
+          </button>
 
-              {/* 4. Histórico */}
-              <button
-                onClick={() => onSelectScreen('transactions')}
-                className={`relative z-10 flex flex-col items-center justify-center py-1 transition-all duration-200 select-none min-h-[44px] cursor-pointer ${
-                  currentScreen === 'transactions'
-                    ? 'scale-105 font-black'
-                    : 'text-slate-600 dark:text-slate-400 font-bold hover:text-slate-950 dark:hover:text-white'
-                }`}
-                style={currentScreen === 'transactions' ? { color: 'var(--app-accent-text)' } : {}}
-              >
-                <ListFilter className="w-4 h-4 stroke-[2.5]" />
-                <span className="text-[11px] tracking-tight mt-0.5 truncate">Extrato</span>
-              </button>
+          {/* 5. Mais */}
+          <button
+            onClick={() => setIsMobileMenuOpen(true)}
+            className={`flex flex-col items-center justify-center py-1 select-none min-h-[44px] cursor-pointer transition-all ${
+              currentScreen === 'goals' ||
+              currentScreen === 'shifts' ||
+              currentScreen === 'trends' ||
+              currentScreen === 'projections' ||
+              currentScreen === 'installments' ||
+              currentScreen === 'transactions' ||
+              currentScreen === 'settings'
+                ? 'text-white font-black scale-105'
+                : 'text-slate-400 hover:text-white font-medium'
+            }`}
+          >
+            <Menu className="w-4 h-4 stroke-[2.5]" />
+            <span className="text-[10px] tracking-tight mt-0.5 truncate">Mais</span>
+          </button>
+        </div>
+      </nav>
 
-              {/* 5. Parcelas */}
+      {/* ========================================================================= */}
+      {/* QUICK ACTION SHEET MODAL: GASTEI / RECEBI / PARCELEI                      */}
+      {/* ========================================================================= */}
+      {isQuickActionModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in">
+          <div className="w-full max-w-sm clay-card p-6 bg-white dark:bg-slate-900 space-y-4 animate-in zoom-in-95 duration-200">
+            <div className="flex items-center justify-between pb-2 border-b border-slate-100 dark:border-slate-800">
+              <span className="font-black text-[#111318] dark:text-white text-sm font-display">
+                O que você quer registrar agora?
+              </span>
               <button
-                onClick={() => onSelectScreen('installments')}
-                className={`relative z-10 flex flex-col items-center justify-center py-1 transition-all duration-200 select-none min-h-[44px] cursor-pointer ${
-                  currentScreen === 'installments'
-                    ? 'scale-105 font-black'
-                    : 'text-slate-600 dark:text-slate-400 font-bold hover:text-slate-950 dark:hover:text-white'
-                }`}
-                style={currentScreen === 'installments' ? { color: 'var(--app-accent-text)' } : {}}
+                onClick={() => setIsQuickActionModalOpen(false)}
+                className="w-8 h-8 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center text-slate-400 cursor-pointer"
               >
-                <div className="relative">
-                  <CreditCard className="w-4 h-4 stroke-[2.5]" />
-                  {isInstallmentCommitmentHigh && (
-                    <span className="absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full bg-rose-500 animate-pulse" />
-                  )}
-                </div>
-                <span className="text-[11px] tracking-tight mt-0.5 truncate">Parcelas</span>
-              </button>
-
-              {/* 6. Mais Drawer */}
-              <button
-                onClick={() => setIsMobileMenuOpen(true)}
-                className={`relative z-10 flex flex-col items-center justify-center py-1 transition-all duration-200 select-none min-h-[44px] cursor-pointer ${
-                  isMoreActive
-                    ? 'scale-105 font-black'
-                    : 'text-slate-600 dark:text-slate-400 font-bold hover:text-slate-950 dark:hover:text-white'
-                }`}
-                style={isMoreActive ? { color: 'var(--app-accent-text)' } : {}}
-              >
-                <Menu className="w-4 h-4 stroke-[2.5]" />
-                <span className="text-[11px] tracking-tight mt-0.5 truncate">Mais</span>
+                <X className="w-4 h-4" />
               </button>
             </div>
-          </nav>
-        );
-      })()}
+
+            <div className="grid grid-cols-1 gap-2.5">
+              {/* Option 1: GASTEI */}
+              <button
+                onClick={() => {
+                  setIsQuickActionModalOpen(false);
+                  onOpenExpenseModal();
+                }}
+                className="w-full p-4 rounded-2xl bg-[#FFF9ED] dark:bg-amber-950/40 border-2 border-[#FFC875] dark:border-amber-700/60 flex items-center justify-between text-left hover:scale-[1.02] active:scale-98 transition-all cursor-pointer shadow-xs group"
+              >
+                <div className="flex items-center gap-3">
+                  <span className="w-10 h-10 rounded-2xl bg-[#FFC875] text-[#111318] flex items-center justify-center text-xl font-black shrink-0">
+                    💸
+                  </span>
+                  <div>
+                    <h4 className="font-black text-sm text-[#111318] dark:text-white">Gastei</h4>
+                    <p className="text-[11px] text-slate-600 dark:text-slate-400">Despesa à vista, mercado ou delivery</p>
+                  </div>
+                </div>
+                <ChevronRight className="w-5 h-5 text-amber-700 group-hover:translate-x-1 transition-transform" />
+              </button>
+
+              {/* Option 2: RECEBI */}
+              <button
+                onClick={() => {
+                  setIsQuickActionModalOpen(false);
+                  onOpenIncomeModal();
+                }}
+                className="w-full p-4 rounded-2xl bg-[#F3FAF1] dark:bg-emerald-950/40 border-2 border-[#B8E0B0] dark:border-emerald-700/60 flex items-center justify-between text-left hover:scale-[1.02] active:scale-98 transition-all cursor-pointer shadow-xs group"
+              >
+                <div className="flex items-center gap-3">
+                  <span className="w-10 h-10 rounded-2xl bg-[#B8E0B0] text-[#111318] flex items-center justify-center text-xl font-black shrink-0">
+                    💰
+                  </span>
+                  <div>
+                    <h4 className="font-black text-sm text-[#111318] dark:text-white">Recebi</h4>
+                    <p className="text-[11px] text-slate-600 dark:text-slate-400">Salário, plantão médico ou renda extra</p>
+                  </div>
+                </div>
+                <ChevronRight className="w-5 h-5 text-emerald-700 group-hover:translate-x-1 transition-transform" />
+              </button>
+
+              {/* Option 3: PARCELEI */}
+              <button
+                onClick={() => {
+                  setIsQuickActionModalOpen(false);
+                  onOpenInstallmentModal();
+                }}
+                className="w-full p-4 rounded-2xl bg-[#F6F2FF] dark:bg-purple-950/40 border-2 border-[#D8C7FF] dark:border-purple-700/60 flex items-center justify-between text-left hover:scale-[1.02] active:scale-98 transition-all cursor-pointer shadow-xs group"
+              >
+                <div className="flex items-center gap-3">
+                  <span className="w-10 h-10 rounded-2xl bg-[#D8C7FF] text-[#111318] flex items-center justify-center text-xl font-black shrink-0">
+                    💳
+                  </span>
+                  <div>
+                    <h4 className="font-black text-sm text-[#111318] dark:text-white">Parcelei</h4>
+                    <p className="text-[11px] text-slate-600 dark:text-slate-400">Compra parcelada no cartão (teto 20%)</p>
+                  </div>
+                </div>
+                <ChevronRight className="w-5 h-5 text-purple-700 group-hover:translate-x-1 transition-transform" />
+              </button>
+
+              {/* Option 4: GASTO ESTRATÉGICO (Alocação Proativa de Reserva/Caixinha) */}
+              <button
+                onClick={() => {
+                  setIsQuickActionModalOpen(false);
+                  onOpenStrategicIntentModal?.();
+                }}
+                className="w-full p-4 rounded-2xl bg-[#F0F8FF] dark:bg-sky-950/40 border-2 border-[#A6D8FF] dark:border-sky-700/60 flex items-center justify-between text-left hover:scale-[1.02] active:scale-98 transition-all cursor-pointer shadow-xs group"
+              >
+                <div className="flex items-center gap-3">
+                  <span className="w-10 h-10 rounded-2xl bg-[#A6D8FF] text-[#111318] flex items-center justify-center text-xl font-black shrink-0">
+                    🎯
+                  </span>
+                  <div>
+                    <h4 className="font-black text-sm text-[#111318] dark:text-white">Gasto Estratégico</h4>
+                    <p className="text-[11px] text-slate-600 dark:text-slate-400">Planejar compra prévia da Reserva ou Caixinha (blindado)</p>
+                  </div>
+                </div>
+                <ChevronRight className="w-5 h-5 text-sky-700 group-hover:translate-x-1 transition-transform" />
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ========================================================================= */}
       {/* MOBILE "MAIS" DRAWER BOTTOM SHEET                                         */}
       {/* ========================================================================= */}
       {isMobileMenuOpen && (
-        <div className="lg:hidden fixed inset-0 z-50 flex items-end bg-slate-950/60 backdrop-blur-xs animate-in fade-in">
-          <div className="w-full bg-white dark:bg-slate-900 rounded-t-3xl p-5 border-t border-slate-200 dark:border-slate-800 space-y-4 max-h-[85vh] overflow-y-auto">
-            <div className="flex items-center justify-between pb-2 border-b border-slate-100 dark:border-slate-800">
-              <span className="font-black text-slate-900 dark:text-white text-sm">
-                Recursos Adicionais do Casal
+        <div className="lg:hidden fixed inset-0 z-50 flex items-end bg-black/60 backdrop-blur-xs animate-in fade-in">
+          <div className="w-full bg-[#FAF7F2] dark:bg-[#111318] rounded-t-3xl p-5 border-t border-[#E8E2D8] dark:border-slate-800 space-y-4 max-h-[85vh] overflow-y-auto">
+            <div className="flex items-center justify-between pb-2 border-b border-slate-200 dark:border-slate-800">
+              <span className="font-black text-[#111318] dark:text-white text-sm font-display">
+                Todos os Recursos do JUNTÔ
               </span>
               <button
                 onClick={() => setIsMobileMenuOpen(false)}
-                className="w-8 h-8 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center text-slate-400"
+                className="w-8 h-8 rounded-full hover:bg-slate-200 dark:hover:bg-slate-800 flex items-center justify-center text-slate-400"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -697,63 +623,85 @@ export const Navigation: React.FC<NavigationProps> = ({
 
             <div className="grid grid-cols-2 gap-2.5">
               <button
-                onClick={() => handleMobileNav('goals')}
-                className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 flex flex-col items-center text-center gap-1.5"
+                onClick={() => handleMobileNav('couple_hub')}
+                className="p-3.5 rounded-2xl bg-rose-50 dark:bg-rose-950/70 border-2 border-rose-300 dark:border-rose-700 flex flex-col items-center text-center gap-1.5 col-span-2 shadow-xs cursor-pointer active:scale-98 transition-transform"
               >
-                <Target className="w-5 h-5 text-emerald-600 dark:text-emerald-400" />
-                <span className="font-bold text-xs text-slate-900 dark:text-white">Investimentos</span>
-                <span className="text-[10px] text-slate-400">Metas & 3 Blocos</span>
+                <div className="flex items-center gap-2 text-rose-900 dark:text-rose-200 font-extrabold text-sm">
+                  <Users className="w-5 h-5 text-rose-600 dark:text-rose-400 stroke-[2.5]" />
+                  <span>Hub do Casal</span>
+                  <span className="text-[10px] bg-rose-200 dark:bg-rose-800 text-rose-900 dark:text-rose-100 px-2 py-0.5 rounded-full font-black uppercase">Ultimate</span>
+                </div>
+                <span className="text-[11px] text-rose-700 dark:text-rose-300 font-medium">
+                  Cofrinhos, Wishlist, Reserva, FIRE, Sonhos &amp; Alertas de Contas
+                </span>
+              </button>
+
+              <button
+                onClick={() => handleMobileNav('shifts')}
+                className="p-3.5 rounded-2xl bg-teal-50 dark:bg-teal-950/70 border-2 border-teal-300 dark:border-teal-700 flex flex-col items-center text-center gap-1.5 col-span-2 shadow-xs cursor-pointer active:scale-98 transition-transform"
+              >
+                <div className="flex items-center gap-2 text-teal-800 dark:text-teal-200 font-extrabold text-sm">
+                  <Stethoscope className="w-5 h-5 text-teal-600 dark:text-teal-300 stroke-[2.5]" />
+                  <span>Plantões Médicos</span>
+                  <span className="text-[10px] bg-teal-200 dark:bg-teal-800 text-teal-900 dark:text-teal-100 px-2 py-0.5 rounded-full font-black uppercase">Novo</span>
+                </div>
+                <span className="text-[11px] text-teal-700 dark:text-teal-300 font-medium">
+                  Controle de escalas, previsão de recebimentos &amp; conciliação bancária
+                </span>
+              </button>
+
+              <button
+                onClick={() => handleMobileNav('goals')}
+                className="p-3.5 rounded-2xl bg-white dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 flex flex-col items-center text-center gap-1.5"
+              >
+                <Target className="w-5 h-5 text-emerald-600" />
+                <span className="font-bold text-xs text-[#111318] dark:text-white">Investimentos</span>
+                <span className="text-[10px] text-slate-500">Metas &amp; 3 Blocos</span>
+              </button>
+
+              <button
+                onClick={() => handleMobileNav('installments')}
+                className="p-3.5 rounded-2xl bg-white dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 flex flex-col items-center text-center gap-1.5"
+              >
+                <CreditCard className="w-5 h-5 text-amber-600" />
+                <span className="font-bold text-xs text-[#111318] dark:text-white">Parcelas</span>
+                <span className="text-[10px] text-slate-500">Teto inteligente 20%</span>
+              </button>
+
+              <button
+                onClick={() => handleMobileNav('transactions')}
+                className="p-3.5 rounded-2xl bg-white dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 flex flex-col items-center text-center gap-1.5"
+              >
+                <ListFilter className="w-5 h-5 text-sky-600" />
+                <span className="font-bold text-xs text-[#111318] dark:text-white">Extrato</span>
+                <span className="text-[10px] text-slate-500">Histórico completo</span>
               </button>
 
               <button
                 onClick={() => handleMobileNav('trends')}
-                className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 flex flex-col items-center text-center gap-1.5"
+                className="p-3.5 rounded-2xl bg-white dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 flex flex-col items-center text-center gap-1.5"
               >
-                <BarChart2 className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />
-                <span className="font-bold text-xs text-slate-900 dark:text-white">Tendências</span>
-                <span className="text-[10px] text-slate-400">Análise histórica</span>
+                <BarChart2 className="w-5 h-5 text-purple-600" />
+                <span className="font-bold text-xs text-[#111318] dark:text-white">Tendências</span>
+                <span className="text-[10px] text-slate-500">Análise histórica</span>
               </button>
 
               <button
                 onClick={() => handleMobileNav('projections')}
-                className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 flex flex-col items-center text-center gap-1.5"
+                className="p-3.5 rounded-2xl bg-white dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 flex flex-col items-center text-center gap-1.5"
               >
-                <TrendingUp className="w-5 h-5 text-purple-600 dark:text-purple-400" />
-                <span className="font-bold text-xs text-slate-900 dark:text-white">Projeções</span>
-                <span className="text-[10px] text-slate-400">Futuro 5 a 30 anos</span>
+                <TrendingUp className="w-5 h-5 text-indigo-600" />
+                <span className="font-bold text-xs text-[#111318] dark:text-white">Projeções</span>
+                <span className="text-[10px] text-slate-500">Futuro 5 a 30 anos</span>
               </button>
 
               <button
                 onClick={() => handleMobileNav('settings')}
-                className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 flex flex-col items-center text-center gap-1.5"
+                className="p-3.5 rounded-2xl bg-white dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 flex flex-col items-center text-center gap-1.5"
               >
                 <Settings className="w-5 h-5 text-slate-600 dark:text-slate-300" />
-                <span className="font-bold text-xs text-slate-900 dark:text-white">Ajustes</span>
-                <span className="text-[10px] text-slate-400">Cores, perfis & temas</span>
-              </button>
-
-              <button
-                onClick={() => {
-                  setIsMobileMenuOpen(false);
-                  onOpenIncomeModal();
-                }}
-                className="p-3.5 rounded-2xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 flex flex-col items-center text-center gap-1.5"
-              >
-                <Coins className="w-5 h-5 text-emerald-600" />
-                <span className="font-bold text-xs text-emerald-900 dark:text-emerald-200">Nova Receita</span>
-                <span className="text-[10px] text-emerald-700 dark:text-emerald-400">Lançar ganho</span>
-              </button>
-
-              <button
-                onClick={() => {
-                  setIsMobileMenuOpen(false);
-                  onOpenInstallmentModal();
-                }}
-                className="p-3.5 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 flex flex-col items-center text-center gap-1.5"
-              >
-                <CreditCard className="w-5 h-5 text-amber-600" />
-                <span className="font-bold text-xs text-amber-900 dark:text-amber-200">Nova Parcela</span>
-                <span className="text-[10px] text-amber-700 dark:text-amber-400">Compra parcelada</span>
+                <span className="font-bold text-xs text-[#111318] dark:text-white">Ajustes</span>
+                <span className="text-[10px] text-slate-500">Cores &amp; perfis</span>
               </button>
 
               <button
@@ -761,23 +709,11 @@ export const Navigation: React.FC<NavigationProps> = ({
                   setIsMobileMenuOpen(false);
                   onOpenBankSyncModal();
                 }}
-                className="p-3.5 rounded-2xl bg-purple-50 dark:bg-purple-950/40 border border-purple-200 dark:border-purple-800 flex flex-col items-center text-center gap-1.5"
+                className="p-3.5 rounded-2xl bg-[#D8C7FF]/40 border border-[#D8C7FF] flex flex-col items-center text-center gap-1.5 col-span-2"
               >
                 <span className="text-xl">🏦</span>
-                <span className="font-bold text-xs text-purple-900 dark:text-purple-200">Open Finance</span>
-                <span className="text-[10px] text-purple-700 dark:text-purple-400">Sincronizar bancos</span>
-              </button>
-
-              <button
-                onClick={() => {
-                  setIsMobileMenuOpen(false);
-                  onOpenChat();
-                }}
-                className="p-3.5 rounded-2xl bg-slate-900 text-white flex flex-col items-center text-center gap-1.5"
-              >
-                <Sparkles className="w-5 h-5 text-amber-400" />
-                <span className="font-bold text-xs">Dr. Finanças</span>
-                <span className="text-[10px] text-slate-300">Assistente IA</span>
+                <span className="font-bold text-xs text-[#111318] dark:text-white">Open Finance Pluggy</span>
+                <span className="text-[10px] text-slate-600 dark:text-slate-400">Sincronização de bancos em 2 CPFs</span>
               </button>
             </div>
           </div>

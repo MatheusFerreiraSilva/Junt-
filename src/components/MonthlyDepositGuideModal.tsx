@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   Sparkles,
   CheckCircle2,
@@ -38,13 +38,17 @@ export const MonthlyDepositGuideModal: React.FC<MonthlyDepositGuideModalProps> =
     state,
     investmentCeiling,
     getMonthlyDepositGuide,
+    updateDepositGuideStrategy,
     approveMonthlyDepositGuide,
     executeMonthlyDeposit,
     resetMonthlyDeposit,
   } = useFinance();
 
   const monthKey = targetMonth || state.currentMonth;
-  const guide = getMonthlyDepositGuide(monthKey);
+  const guide = useMemo(
+    () => getMonthlyDepositGuide(monthKey),
+    [getMonthlyDepositGuide, monthKey]
+  );
   const completionRecord = state.completedMonthDeposits?.[monthKey];
   const isCompleted = guide.status === 'completed' || !!completionRecord;
 
@@ -64,12 +68,13 @@ export const MonthlyDepositGuideModal: React.FC<MonthlyDepositGuideModalProps> =
   const [surplusInputs, setSurplusInputs] = useState<Record<string, string>>({});
   const [baseInputs, setBaseInputs] = useState<Record<string, string>>({});
 
-  // Sync inputs whenever guide or modal opens
+  // Sync inputs whenever modal opens or month changes
   useEffect(() => {
     if (isOpen) {
+      const g = getMonthlyDepositGuide(monthKey);
       const initSurplus: Record<string, string> = {};
       const initBase: Record<string, string> = {};
-      guide.items.forEach(it => {
+      g.items.forEach(it => {
         initSurplus[it.id] = it.surplusAmount.toString();
         initBase[it.id] = it.baseAmount.toString();
       });
@@ -78,7 +83,7 @@ export const MonthlyDepositGuideModal: React.FC<MonthlyDepositGuideModalProps> =
       setActiveTab(initialTab);
       setShowResetConfirm(false);
     }
-  }, [isOpen, guide.items, initialTab]);
+  }, [isOpen, monthKey, initialTab, getMonthlyDepositGuide]);
 
   if (!isOpen) return null;
 
@@ -673,6 +678,78 @@ export const MonthlyDepositGuideModal: React.FC<MonthlyDepositGuideModalProps> =
                   </div>
                 </div>
               </div>
+
+              {/* FASE 1: Seletor de Estratégia & Banner do Acelerador de Reserva */}
+              {!state.isProtectionComplete && (
+                <div className="p-4 rounded-3xl bg-emerald-500/10 dark:bg-emerald-950/40 border-2 border-emerald-400/80 dark:border-emerald-600/60 space-y-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs font-black text-emerald-950 dark:text-emerald-200 uppercase tracking-wider flex items-center gap-1.5">
+                      <Shield className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                      <span>Fase 1 Ativa — Foco na Reserva de Emergência</span>
+                    </span>
+                    <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-emerald-200/80 dark:bg-emerald-900 text-emerald-900 dark:text-emerald-200">
+                      Estratégia do Casal
+                    </span>
+                  </div>
+
+                  {/* Se sem cofrinhos ativos, permite escolher entre Aceleração 100% ou Dividir */}
+                  {state.piggyBanks.filter(g => !g.completed).length === 0 ? (
+                    <div className="space-y-2">
+                      <p className="text-xs text-emerald-900 dark:text-emerald-200 font-medium">
+                        Como vocês não possuem cofrinhos ativos no momento, para onde preferem direcionar a verba de investimentos do mês?
+                      </p>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
+                        <button
+                          type="button"
+                          onClick={() => updateDepositGuideStrategy(monthKey, '100_percent_reserve')}
+                          className={`p-3 rounded-2xl border-2 text-left transition-all cursor-pointer ${
+                            (guide.focusStrategy || '100_percent_reserve') === '100_percent_reserve'
+                              ? 'bg-emerald-600 text-white border-emerald-700 shadow-md font-bold'
+                              : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:border-emerald-400'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs font-black">🛡️ (Recomendado) 100% Reserva</span>
+                            {(guide.focusStrategy || '100_percent_reserve') === '100_percent_reserve' && (
+                              <Check className="w-4 h-4 text-white" />
+                            )}
+                          </div>
+                          <span className="text-[10px] opacity-90 block mt-1 font-normal">
+                            Acelera a conquista da imunidade financeira o mais rápido possível.
+                          </span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => updateDepositGuideStrategy(monthKey, 'split_freedom')}
+                          className={`p-3 rounded-2xl border-2 text-left transition-all cursor-pointer ${
+                            guide.focusStrategy === 'split_freedom'
+                              ? 'bg-emerald-600 text-white border-emerald-700 shadow-md font-bold'
+                              : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:border-emerald-400'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs font-black">⚖️ Dividir 50% / 50%</span>
+                            {guide.focusStrategy === 'split_freedom' && (
+                              <Check className="w-4 h-4 text-white" />
+                            )}
+                          </div>
+                          <span className="text-[10px] opacity-90 block mt-1 font-normal">
+                            50% Reserva de Emergência e 50% Liberdade Financeira.
+                          </span>
+                        </button>
+                      </div>
+                    </div>
+                  ) : guide.redirectedBlock2Surplus && guide.redirectedBlock2Surplus > 0 ? (
+                    <div className="p-3 rounded-2xl bg-emerald-100/80 dark:bg-emerald-900/60 text-xs text-emerald-950 dark:text-emerald-200 flex items-start gap-2">
+                      <Sparkles className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />
+                      <div>
+                        <strong>Acelerador de Reserva Ativo:</strong> +{formatCurrency(guide.redirectedBlock2Surplus)} da verba não consumida dos cofrinhos foram redirecionados para fechar a Reserva de Emergência mais rápido!
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+              )}
 
               {/* Aviso Amigável caso tenha ultrapassado o teto */}
               {isOverCeiling && (
