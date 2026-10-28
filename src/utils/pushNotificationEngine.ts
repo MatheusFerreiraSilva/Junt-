@@ -3,6 +3,7 @@ import { AppState, PushNotificationSettings, CategoryKey } from '../types/financ
 export const DEFAULT_PUSH_SETTINGS: PushNotificationSettings = {
   enabled: true,
   permissionStatus: 'default',
+  lunchReminderEnabled: true,
   dailyTriageEnabled: true,
   weeklySummaryEnabled: true,
   monthlySummaryEnabled: true,
@@ -115,6 +116,7 @@ export function checkAndTriggerScheduledPushNotifications(
 
   const todayStr = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
   const now = new Date();
+  const hour = now.getHours();
   const currentMonthKey = state.currentMonth || todayStr.slice(0, 7);
 
   if (settings.statementReminderEnabled && settings.lastStatementReminderAt !== todayStr) {
@@ -123,38 +125,64 @@ export function checkAndTriggerScheduledPushNotifications(
     updatePushSettings({ lastStatementReminderAt: todayStr });
   }
 
-  // 1. TRIAGEM DIÁRIA (Ex: Final da Tarde)
-  if (settings.dailyTriageEnabled && settings.lastDailyTriageNotifiedAt !== todayStr) {
+  // 1. LEMBRETE DO ALMOÇO (~12:30 - 13:30)
+  if (settings.lunchReminderEnabled && hour >= 12 && hour < 15 && settings.lastLunchReminderAt !== todayStr) {
+    const notifTitle = '🍽️ JUNTÔ — Lembrete de Almoço do Casal';
+    const notifBody = 'Fizeram refeição fora ou pediram algo? Registrem o almoço e café de hoje para manter a rotina em dia!';
+
+    addNotification({
+      title: 'Lembrete do Almoço 🍽️',
+      message: notifBody,
+      type: 'info',
+    });
+
+    if (currentPermission === 'granted') {
+      void sendLocalPushNotification(notifTitle, {
+        body: notifBody,
+        tag: 'lunch-reminder',
+      });
+    }
+
+    updatePushSettings({ lastLunchReminderAt: todayStr });
+  }
+
+  // 2. TRIAGEM E FECHAMENTO DO DIA (A partir das 18:00 - Maior Prioridade)
+  if (settings.dailyTriageEnabled && hour >= 18 && settings.lastDailyTriageNotifiedAt !== todayStr) {
     const pendingExpenses = state.expenses.filter(
       e => e.triageDone === false || e.isExcludedFromMonthlyBudget === undefined
     ).length;
-    const pendingConfirmations = (state.pendingConfirmations || []).length;
-    const totalPending = pendingExpenses + pendingConfirmations;
+    const pendingShifts = (state.medicalShifts || []).filter(
+      s => s.status === 'pending'
+    ).length;
+    const pendingBankTransactions = (state.bankImportedTransactions || []).filter(
+      t => t.status === 'pending'
+    ).length;
 
-    if (totalPending > 0) {
-      const notifTitle = '🏦 JUNTÔ — Lançamentos Pendentes de Triagem';
-      const notifBody = `Vocês têm ${totalPending} lançamento(s) aguardando definição de fonte ou categoria hoje!`;
+    const totalAttention = pendingExpenses + pendingShifts + pendingBankTransactions;
 
-      addNotification({
-        title: 'Triagem Diária Pendente 📋',
-        message: notifBody,
-        type: 'info',
+    const notifTitle = '🩺 JUNTÔ — Balanço do Dia & Plantões (18h)';
+    const notifBody = totalAttention > 0
+      ? `Final de tarde: vocês têm ${totalAttention} item(ns) para conferir entre gastos, extratos e plantões do casal!`
+      : 'Fim do dia: hora rápida de conferir se houve gastos ou plantões novos hoje para manter o orçamento equilibrado!';
+
+    addNotification({
+      title: 'Fechamento do Dia (18h) 📋',
+      message: notifBody,
+      type: 'info',
+    });
+
+    if (currentPermission === 'granted') {
+      void sendLocalPushNotification(notifTitle, {
+        body: notifBody,
+        tag: 'daily-triage',
       });
-
-      if (currentPermission === 'granted') {
-        sendLocalPushNotification(notifTitle, {
-          body: notifBody,
-          tag: 'daily-triage',
-        });
-      }
-
-      updatePushSettings({ lastDailyTriageNotifiedAt: todayStr });
     }
+
+    updatePushSettings({ lastDailyTriageNotifiedAt: todayStr });
   }
 
-  // 2. RESUMO SEMANAL (Domingos a partir das 18:00)
+  // 3. RESUMO SEMANAL (Domingos a partir das 18:00)
   const isSunday = now.getDay() === 0;
-  const hour = now.getHours();
   const currentWeekNumber = Math.ceil(now.getDate() / 7);
   const weekKey = `${currentMonthKey}-W${currentWeekNumber}`;
 

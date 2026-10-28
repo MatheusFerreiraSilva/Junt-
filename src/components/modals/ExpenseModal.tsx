@@ -35,6 +35,7 @@ export const ExpenseModal: React.FC<ExpenseModalProps> = ({
   const [isInstallment, setIsInstallment] = useState<boolean>(false);
   const [installmentsCount, setInstallmentsCount] = useState<number>(3);
   const [fundingSource, setFundingSource] = useState<FundingSourceType>('month_budget');
+  const [paymentMethod, setPaymentMethod] = useState<'pix' | 'debit' | 'credit' | 'cash'>('pix');
   const [selectedGoalId, setSelectedGoalId] = useState<string>(() => state.piggyBanks[0]?.id || '');
   const [successCelebration, setSuccessCelebration] = useState(false);
   const [validationError, setValidationError] = useState('');
@@ -154,6 +155,7 @@ export const ExpenseModal: React.FC<ExpenseModalProps> = ({
         fundingSource,
         fundingGoalId: fundingSource === 'piggy_bank' ? selectedGoalId : undefined,
         fundingGoalName: fundingSource === 'piggy_bank' ? targetGoal?.name : undefined,
+        paymentMethod: isInstallment ? 'credit' : paymentMethod,
         isExcludedFromMonthlyBudget: fundingSource !== 'month_budget',
       });
     }
@@ -707,6 +709,35 @@ export const ExpenseModal: React.FC<ExpenseModalProps> = ({
                           </div>
                         </div>
                       )}
+
+                      {/* Forma de Pagamento */}
+                      <div className="pt-2 border-t border-slate-200 dark:border-slate-800 space-y-1.5">
+                        <label className="text-[11px] font-bold text-slate-600 dark:text-slate-400 block">
+                          Forma de Pagamento
+                        </label>
+                        <div className="grid grid-cols-4 gap-1.5 text-xs font-bold">
+                          {[
+                            { key: 'pix', label: 'Pix', emoji: '⚡' },
+                            { key: 'debit', label: 'Débito', emoji: '💳' },
+                            { key: 'credit', label: 'Crédito', emoji: '📦' },
+                            { key: 'cash', label: 'Dinheiro', emoji: '💵' },
+                          ].map(pm => (
+                            <button
+                              key={pm.key}
+                              type="button"
+                              onClick={() => setPaymentMethod(pm.key as any)}
+                              className={`py-2 px-1 rounded-xl border text-center transition-all cursor-pointer ${
+                                paymentMethod === pm.key
+                                  ? 'border-slate-900 dark:border-white bg-slate-900 dark:bg-white text-white dark:text-slate-900 shadow-xs'
+                                  : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300'
+                              }`}
+                            >
+                              <span className="block text-sm">{pm.emoji}</span>
+                              <span className="text-[10px] mt-0.5 block">{pm.label}</span>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
 
                       {/* Aviso de blindagem suave */}
                       {fundingSource !== 'month_budget' && (

@@ -306,10 +306,10 @@ export const Navigation: React.FC<NavigationProps> = ({
             <button
               onClick={onOpenBankSyncModal}
               className="flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-xl bg-[#D8C7FF]/40 text-[#111318] text-[11px] font-bold border border-[#D8C7FF] transition-colors cursor-pointer"
-              title="Open Finance"
+              title="Importar Extratos Bancários (OFX / CSV)"
             >
-              <span>🏦</span>
-              <span>Bancos</span>
+              <span>📄</span>
+              <span>Extratos</span>
             </button>
           </div>
 
@@ -710,11 +710,11 @@ export const Navigation: React.FC<NavigationProps> = ({
                   setIsMobileMenuOpen(false);
                   onOpenBankSyncModal();
                 }}
-                className="p-3.5 rounded-2xl bg-[#D8C7FF]/40 border border-[#D8C7FF] flex flex-col items-center text-center gap-1.5 col-span-2"
+                className="p-3.5 rounded-2xl bg-[#D8C7FF]/40 border border-[#D8C7FF] flex flex-col items-center text-center gap-1.5 col-span-2 cursor-pointer active:scale-98 transition-transform"
               >
-                <span className="text-xl">🏦</span>
-                <span className="font-bold text-xs text-[#111318] dark:text-white">Open Finance Pluggy</span>
-                <span className="text-[10px] text-slate-600 dark:text-slate-400">Conecte e revise seus lançamentos</span>
+                <span className="text-xl">📄</span>
+                <span className="font-bold text-xs text-[#111318] dark:text-white">Extratos Bancários (OFX e CSV)</span>
+                <span className="text-[10px] text-slate-600 dark:text-slate-400">Importação com categorização automática e assinaturas</span>
               </button>
             </div>
           </div>

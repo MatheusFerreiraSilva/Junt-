@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { Users, DollarSign, AlertTriangle, CheckCircle2, Sparkles, RefreshCw, Save, Check, X, RotateCcw, Trash2, Palette, Building, Smartphone, Tag, Plus, Bell, Copy } from 'lucide-react';
+import { Users, DollarSign, AlertTriangle, CheckCircle2, Sparkles, RefreshCw, Save, Check, X, RotateCcw, Trash2, Palette, Building, Smartphone, Tag, Plus, Bell, Copy, UploadCloud, FileText } from 'lucide-react';
 import { useFinance, CATEGORIES_BASE, ACCENT_THEMES } from '../context/FinanceContext';
 import { CategoryKey, AccentTheme, LifeTierInfo } from '../types/finance';
 import { getLifeTier } from '../utils/incomeTiersEngine';
@@ -624,11 +624,11 @@ export const SettingsScreen: React.FC = () => {
             <h2 className="text-xl sm:text-2xl font-bold text-slate-900 dark:text-white font-display tracking-tight flex items-center gap-2">
               <span>Configurações & Conexões</span>
               <span className="text-xs px-2.5 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 font-bold">
-                Open Finance & PWA
+                Extratos & Notificações
               </span>
             </h2>
             <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 mt-0.5">
-              Personalize cores dos 3 modos, gerencie contas bancárias via Meu Pluggy, palavras-chave e notificações PWA.
+              Personalize cores dos 3 modos, importe extratos bancários (OFX/CSV), configure palavras-chave e lembretes diários.
             </p>
           </div>
 
@@ -675,9 +675,8 @@ export const SettingsScreen: React.FC = () => {
                 : 'bg-slate-100 dark:bg-slate-800/80 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
             }`}
           >
-            <Building className="w-3.5 h-3.5" />
-            <span>Minhas Contas (Meu Pluggy)</span>
-            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+            <UploadCloud className="w-3.5 h-3.5" />
+            <span>Extratos Bancários (OFX/CSV)</span>
           </button>
 
           <button
@@ -1725,15 +1724,126 @@ export const SettingsScreen: React.FC = () => {
       )}
 
       {/* ========================================================================= */}
-      {/* ABA 2: MINHAS CONTAS (MEU PLUGGY & OPEN FINANCE) */}
+      {/* ABA 2: CENTRAL DE IMPORTAÇÃO DE EXTRATOS BANCÁRIOS (OFX E CSV) */}
       {/* ========================================================================= */}
       {activeTab === 'contas' && (
-        <section className="surface-card p-6 sm:p-8 space-y-5">
-          <div className="flex items-start gap-4"><Building className="w-7 h-7 text-emerald-700 shrink-0" /><div><h2 className="text-xl font-bold">Conexões bancárias</h2><p className="text-sm text-slate-500 mt-2 leading-relaxed">Conecte suas contas com a Pluggy e revise os lançamentos antes de organizar seu orçamento. As credenciais da integração são configuradas no servidor.</p></div></div>
-          <div className="grid gap-3">{pluggyAccounts.map(account => <div key={account.id} className="flex flex-wrap justify-between gap-3 p-4 rounded-xl border border-slate-200 dark:border-slate-700"><div><h3 className="font-semibold text-sm">{account.name}</h3><p className="text-xs text-slate-500 mt-1">{account.status === 'connected' ? 'Conectada' : 'Atualização necessária'}</p></div><span className="text-sm tabular-nums font-semibold">{formatCurrency(account.balance)}</span></div>)}</div>
-          {!pluggyAccounts.length && <p className="text-sm text-slate-500 py-4">Nenhuma conta conectada. Seus registros manuais continuam disponíveis.</p>}
-          <button onClick={() => setIsAddingAccount(true)} className="btn-accent"><Plus size={17} /> Gerenciar conexões</button>
-        </section>
+        <div className="space-y-6">
+          <section className="bg-white dark:bg-slate-900 rounded-3xl p-6 sm:p-8 border border-slate-200 dark:border-slate-800 shadow-sm space-y-6">
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div className="flex items-start gap-4">
+                <div className="w-12 h-12 rounded-2xl bg-emerald-100 dark:bg-emerald-950/80 text-emerald-800 dark:text-emerald-300 flex items-center justify-center text-2xl shrink-0 shadow-xs">
+                  📄
+                </div>
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800">
+                      Importação Manual 100% Privada
+                    </span>
+                  </div>
+                  <h2 className="text-xl font-black text-slate-900 dark:text-white font-display">
+                    Central de Extratos Bancários (OFX e CSV)
+                  </h2>
+                  <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 max-w-2xl leading-relaxed">
+                    Importem extratos em formato <strong>OFX ou CSV</strong> diretamente dos seus bancos. O Juntô categoriza automaticamente pelos estabelecimentos, detecta assinaturas recorrentes e mantém todo o controle financeiro do casal no dispositivo sem intermediários externos.
+                  </p>
+                </div>
+              </div>
+
+              <button
+                onClick={() => setIsAddingAccount(true)}
+                className="btn-primary-accent flex items-center gap-2 px-5 py-3 rounded-2xl text-white font-bold text-xs shadow-md active:scale-95 transition-all cursor-pointer"
+              >
+                <UploadCloud className="w-4 h-4 stroke-[2.5]" />
+                <span>Importar Extrato Agora</span>
+              </button>
+            </div>
+
+            {/* Quick Metrics of Imported Statements */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2">
+              <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700">
+                <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block">
+                  Total no Histórico
+                </span>
+                <span className="text-2xl font-black text-slate-900 dark:text-white mt-1 block">
+                  {(state.bankImportedTransactions || []).length}
+                </span>
+                <span className="text-[11px] text-slate-500">
+                  lançamentos importados
+                </span>
+              </div>
+
+              <div className="p-4 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800">
+                <span className="text-[11px] font-bold text-amber-800 dark:text-amber-300 uppercase tracking-wider block">
+                  Pendentes de Revisão
+                </span>
+                <span className="text-2xl font-black text-amber-900 dark:text-amber-200 mt-1 block">
+                  {(state.bankImportedTransactions || []).filter(t => t.status === 'pending').length}
+                </span>
+                <span className="text-[11px] text-amber-700 dark:text-amber-400">
+                  aguardando sua confirmação
+                </span>
+              </div>
+
+              <div className="p-4 rounded-2xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800">
+                <span className="text-[11px] font-bold text-emerald-800 dark:text-emerald-300 uppercase tracking-wider block">
+                  Contas Reconhecidas
+                </span>
+                <span className="text-2xl font-black text-emerald-900 dark:text-emerald-200 mt-1 block">
+                  {new Set((state.bankImportedTransactions || []).map(t => t.accountId)).size || 1}
+                </span>
+                <span className="text-[11px] text-emerald-700 dark:text-emerald-400">
+                  instituições mapeadas
+                </span>
+              </div>
+            </div>
+
+            {/* Brazilian Bank Export Guide Card */}
+            <div className="p-5 rounded-2xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 space-y-3">
+              <h4 className="text-xs font-black uppercase tracking-wider text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
+                <Building className="w-3.5 h-3.5 text-emerald-600" />
+                <span>Como baixar o extrato no seu banco (OFX ou CSV)</span>
+              </h4>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+                <div className="p-3 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-1">
+                  <div className="font-extrabold text-slate-900 dark:text-white flex items-center gap-1.5">
+                    <span>🟣</span> Nubank (Conta ou Cartão)
+                  </div>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                    No app, abra a Conta &gt; Histórico &gt; Pedir extrato &gt; selecione <strong>OFX</strong> ou <strong>CSV</strong>.
+                  </p>
+                </div>
+
+                <div className="p-3 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-1">
+                  <div className="font-extrabold text-slate-900 dark:text-white flex items-center gap-1.5">
+                    <span>🟠</span> Itaú &amp; Personalité
+                  </div>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                    No Internet Banking ou App, acesse Extrato &gt; Salvar em outros formatos &gt; <strong>OFX (Money)</strong>.
+                  </p>
+                </div>
+
+                <div className="p-3 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-1">
+                  <div className="font-extrabold text-slate-900 dark:text-white flex items-center gap-1.5">
+                    <span>🟡</span> Banco do Brasil &amp; Bradesco
+                  </div>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                    No menu Extrato da conta corrente, escolha o período e clique em <strong>Salvar como OFX</strong>.
+                  </p>
+                </div>
+
+                <div className="p-3 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-1">
+                  <div className="font-extrabold text-slate-900 dark:text-white flex items-center gap-1.5">
+                    <span>🟢</span> Santander, Inter &amp; BTG Pactual
+                  </div>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                    Na tela de extrato, use a opção de exportação de dados para arquivo <strong>OFX ou CSV</strong>.
+                  </p>
+                </div>
+              </div>
+            </div>
+          </section>
+        </div>
       )}
 
       {activeTab === 'cores' && (
@@ -1970,7 +2080,7 @@ export const SettingsScreen: React.FC = () => {
                   Tabela de Palavras-Chave para Categorização Automática
                 </h3>
                 <p className="text-xs text-slate-500 dark:text-slate-400">
-                  Como o Meu Pluggy entrega dados brutos, esta tabela mapeia automaticamente estabelecimentos (ex: UBER, NETFLIX, IFOOD) para suas categorias.
+                  Os extratos bancários importados (OFX e CSV) são mapeados em tempo real por esta tabela de palavras-chave inteligentes e reconhecimento de assinaturas recorrentes.
                 </p>
               </div>
             </div>
@@ -2234,13 +2344,38 @@ export const SettingsScreen: React.FC = () => {
               </span>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                {/* 1. TRIAGEM DIÁRIA */}
+                {/* 1. LEMBRETE DO ALMOÇO (13:00) */}
                 <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/80 space-y-2">
                   <div className="flex items-center justify-between gap-2">
                     <div className="flex items-center gap-2">
-                      <span className="text-lg">📋</span>
+                      <span className="text-lg">🍽️</span>
                       <strong className="text-xs font-black text-slate-900 dark:text-white">
-                        Triagem Diária de Compras (17:30)
+                        Lembrete Diário no Almoço (13:00)
+                      </strong>
+                    </div>
+
+                    <label className="relative inline-flex items-center cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={pushSettings.lunchReminderEnabled ?? true}
+                        onChange={e => updatePushSettings({ lunchReminderEnabled: e.target.checked })}
+                        className="sr-only peer"
+                      />
+                      <div className="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer dark:bg-slate-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all dark:after:border-slate-600 peer-checked:bg-emerald-600" />
+                    </label>
+                  </div>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-snug">
+                    Lembrete leve ao meio-dia para anotar cafés, almoços fora e refeições da rotina.
+                  </p>
+                </div>
+
+                {/* 2. FECHAMENTO DO DIA & PLANTÕES (18:00 - Maior Prioridade) */}
+                <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/80 space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <span className="text-lg">🩺</span>
+                      <strong className="text-xs font-black text-slate-900 dark:text-white">
+                        Fechamento do Dia &amp; Plantões (18:00)
                       </strong>
                     </div>
 
@@ -2255,11 +2390,11 @@ export const SettingsScreen: React.FC = () => {
                     </label>
                   </div>
                   <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-snug">
-                    Resumo ao fim da tarde das compras e receitas capturadas via Open Finance que precisam de triagem em 1 toque.
+                    Resumo prioritário no fim da tarde para conferir gastos do dia, extratos importados e baixa em plantões médicos.
                   </p>
                 </div>
 
-                {/* 2. RESUMO SEMANAL */}
+                {/* 3. RESUMO SEMANAL */}
                 <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/80 space-y-2">
                   <div className="flex items-center justify-between gap-2">
                     <div className="flex items-center gap-2">

@@ -519,6 +519,18 @@ export interface FinanceContextType {
     targetGoalName?: string,
     note?: string
   ) => void;
+  reallocateCategoryBudget: (fromCategory: CategoryKey, toCategory: CategoryKey, amount: number, note?: string) => void;
+  coverExpenseDeficitWithShift: (shiftId: string, categoryKey: CategoryKey, amount: number) => void;
+  distributeSurplusPercentages: (
+    allocations: {
+      targetType: 'goal' | 'protection' | 'freedom' | 'leisure';
+      targetGoalId?: string;
+      targetGoalName?: string;
+      percentage: number;
+      amount: number;
+    }[],
+    sourceCategory?: CategoryKey
+  ) => void;
   dismissMonthSurplusNotification: (monthKey: string) => void;
   triggerMonthSurplusNotificationManually: () => void;
 
@@ -3021,6 +3033,222 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
     triggerCelebration();
   };
 
+  const reallocateCategoryBudget = (fromCategory: CategoryKey, toCategory: CategoryKey, amount: number, note?: string) => {
+    if (amount <= 0 || fromCategory === toCategory) return;
+    const fromName = CATEGORIES_BASE[fromCategory]?.name || fromCategory;
+    const toName = CATEGORIES_BASE[toCategory]?.name || toCategory;
+    const todayStr = new Date().toISOString().split('T')[0];
+
+    const debitExpense: ExpenseItem = {
+      id: `exp-vaso-debit-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`,
+      description: `Vaso Comunicante: Transferência → ${toName}`,
+      amount: amount,
+      category: fromCategory,
+      date: todayStr,
+      paidBy: 'both',
+      notes: note || `Transferência de saldo por Vaso Comunicante de ${fromName} para cobrir excesso em ${toName}.`,
+    };
+
+    const creditExpense: ExpenseItem = {
+      id: `exp-vaso-credit-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`,
+      description: `Vaso Comunicante: Compensação ← ${fromName}`,
+      amount: -amount,
+      category: toCategory,
+      date: todayStr,
+      paidBy: 'both',
+      notes: note || `Crédito compensatório de Vaso Comunicante recebido de ${fromName}.`,
+    };
+
+    const newTransfer: SurplusTransferRecord = {
+      id: `surplus-vc-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      sourceCategory: fromCategory,
+      targetType: 'category',
+      targetGoalName: toName,
+      amount,
+      date: todayStr,
+      monthKey: state.currentMonth,
+      note: note || `Vaso comunicante: ${fromName} nivelou ${toName} (+R$ ${amount.toFixed(2)})`,
+    };
+
+    const newNotif: AppNotification = {
+      id: `notif-vc-${Date.now()}`,
+      title: 'Vasos Comunicantes Nivelados! ⚖️',
+      message: `R$ ${amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} de sobra em ${fromName} foram transferidos para equilibrar ${toName}. Sem culpa e sem neura!`,
+      timestamp: 'Agora mesmo',
+      type: 'success',
+      isRead: false,
+    };
+
+    setState(prev => ({
+      ...prev,
+      expenses: [debitExpense, creditExpense, ...prev.expenses],
+      surplusTransfers: [newTransfer, ...(prev.surplusTransfers || [])],
+      notifications: [newNotif, ...prev.notifications],
+    }));
+
+    triggerCelebration();
+  };
+
+  const coverExpenseDeficitWithShift = (shiftId: string, categoryKey: CategoryKey, amount: number) => {
+    if (amount <= 0) return;
+    const shift = (state.medicalShifts || []).find(s => s.id === shiftId);
+    if (!shift) return;
+    const catName = CATEGORIES_BASE[categoryKey]?.name || categoryKey;
+    const todayStr = new Date().toISOString().split('T')[0];
+
+    const offsetExpense: ExpenseItem = {
+      id: `exp-shift-offset-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`,
+      description: `Amortização com Plantão: ${shift.hospitalName}`,
+      amount: -amount,
+      category: categoryKey,
+      date: todayStr,
+      paidBy: shift.partner,
+      notes: `Amortização de excesso na categoria ${catName} utilizando rendimentos do plantão em ${shift.hospitalName} (${shift.dateWorked}).`,
+    };
+
+    const newTransfer: SurplusTransferRecord = {
+      id: `surplus-shift-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      sourceCategory: 'all_surplus',
+      targetType: 'shift_offset',
+      targetGoalName: `${shift.hospitalName} (${catName})`,
+      amount,
+      date: todayStr,
+      monthKey: state.currentMonth,
+      note: `Compensação direta com plantão médico: ${shift.hospitalName}`,
+    };
+
+    const newNotif: AppNotification = {
+      id: `notif-shift-cover-${Date.now()}`,
+      title: 'Excesso Amortizado com Plantão! 🩺✨',
+      message: `R$ ${amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} do excesso em ${catName} foram cobertos pelo plantão de ${shift.hospitalName}!`,
+      timestamp: 'Agora mesmo',
+      type: 'success',
+      isRead: false,
+    };
+
+    setState(prev => ({
+      ...prev,
+      expenses: [offsetExpense, ...prev.expenses],
+      medicalShifts: (prev.medicalShifts || []).map(s => {
+        if (s.id === shiftId) {
+          const currentNotes = s.notes ? `${s.notes} | ` : '';
+          return {
+            ...s,
+            notes: `${currentNotes}Amortizou R$ ${amount.toFixed(2)} em ${catName}`,
+          };
+        }
+        return s;
+      }),
+      surplusTransfers: [newTransfer, ...(prev.surplusTransfers || [])],
+      notifications: [newNotif, ...prev.notifications],
+    }));
+
+    triggerCelebration();
+  };
+
+  const distributeSurplusPercentages = (
+    allocations: {
+      targetType: 'goal' | 'protection' | 'freedom' | 'leisure';
+      targetGoalId?: string;
+      targetGoalName?: string;
+      percentage: number;
+      amount: number;
+    }[],
+    sourceCategory?: CategoryKey
+  ) => {
+    const validAllocations = allocations.filter(a => a.amount > 0);
+    if (validAllocations.length === 0) return;
+
+    const todayStr = new Date().toISOString().split('T')[0];
+    const totalAllocated = validAllocations.reduce((sum, a) => sum + a.amount, 0);
+
+    setState(prev => {
+      let nextProtAmount = prev.protectionCurrentAmount;
+      let nextProtInvested = prev.protectionTotalInvested;
+      let nextProtComplete = prev.isProtectionComplete;
+      let nextFreedomInvested = prev.freedomTotalInvested;
+      let nextPiggyBanks = [...prev.piggyBanks];
+      const newExpenses = [...prev.expenses];
+      const newTransfers = [...(prev.surplusTransfers || [])];
+
+      validAllocations.forEach(alloc => {
+        const destLabel = alloc.targetGoalName || (
+          alloc.targetType === 'protection' ? 'Reserva de Emergência' :
+          alloc.targetType === 'freedom' ? 'Bloco Liberdade' :
+          alloc.targetType === 'leisure' ? 'Recompensa Livre do Casal' : 'Cofrinho de Metas'
+        );
+
+        if (alloc.targetType === 'protection') {
+          nextProtAmount += alloc.amount;
+          nextProtInvested += alloc.amount;
+          nextProtComplete = nextProtAmount >= autoCalculatedProtectionTarget;
+        } else if (alloc.targetType === 'freedom') {
+          nextFreedomInvested += alloc.amount;
+        } else if (alloc.targetType === 'goal' && alloc.targetGoalId) {
+          nextPiggyBanks = nextPiggyBanks.map(g => {
+            if (g.id === alloc.targetGoalId) {
+              const nextCur = g.currentAmount + alloc.amount;
+              const nextInv = (g.totalInvested || g.currentAmount * 0.85) + alloc.amount;
+              return {
+                ...g,
+                currentAmount: nextCur,
+                totalInvested: nextInv,
+                completed: nextCur >= g.targetAmount,
+              };
+            }
+            return g;
+          });
+        }
+
+        const catKey = sourceCategory || 'lazer';
+        newExpenses.unshift({
+          id: `exp-dist-surplus-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`,
+          description: `Distribuição de Sobra: → ${destLabel} (${alloc.percentage}%)`,
+          amount: alloc.amount,
+          category: catKey,
+          date: todayStr,
+          paidBy: 'both',
+          notes: `Alocação percentual de sobra (${alloc.percentage}%) para ${destLabel}.`,
+        });
+
+        newTransfers.unshift({
+          id: `surplus-dist-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+          sourceCategory: sourceCategory || 'all_surplus',
+          targetType: alloc.targetType,
+          targetGoalId: alloc.targetGoalId,
+          targetGoalName: destLabel,
+          amount: alloc.amount,
+          date: todayStr,
+          monthKey: prev.currentMonth,
+          note: `Distribuição percentual (${alloc.percentage}%): ${destLabel}`,
+        });
+      });
+
+      const newNotif: AppNotification = {
+        id: `notif-dist-surplus-${Date.now()}`,
+        title: 'Distribuição de Sobras Consolidada! 🎉💎',
+        message: `R$ ${totalAllocated.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} foram distribuídos com sucesso conforme os percentuais escolhidos pelo casal!`,
+        timestamp: 'Agora mesmo',
+        type: 'success',
+        isRead: false,
+      };
+
+      return {
+        ...prev,
+        expenses: newExpenses,
+        protectionCurrentAmount: nextProtAmount,
+        protectionTotalInvested: nextProtInvested,
+        isProtectionComplete: nextProtComplete,
+        freedomTotalInvested: nextFreedomInvested,
+        piggyBanks: nextPiggyBanks,
+        surplusTransfers: newTransfers,
+        notifications: [newNotif, ...prev.notifications],
+      };
+    });
+
+    triggerCelebration();
+  };
+
   const dismissMonthSurplusNotification = (monthKey: string) => {
     setState(prev => ({
       ...prev,
@@ -4112,6 +4340,9 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
         // Direcionamento Seletivo de Sobras Orçamentárias
         surplusTransfers: state.surplusTransfers || [],
         allocateCategorySurplus,
+        reallocateCategoryBudget,
+        coverExpenseDeficitWithShift,
+        distributeSurplusPercentages,
         dismissMonthSurplusNotification,
         triggerMonthSurplusNotificationManually,
         // Guia Didático de Aportes Manuais & Confirmação Visual

@@ -1,101 +1,111 @@
-# Unificação e Integração Total: Hub do Casal x Investimentos & Extrato
+# Upgrade Inteligente & Funcional: Hub de Sobras, Excessos & Vasos Comunicantes
 
-Unificação completa e bidirecional dos dados de investimentos, reserva de emergência, desejos da wishlist e contas fixas do casal no aplicativo JUNTÔ. As abas **Investimentos** e **Hub do Casal** passarão a compartilhar uma fonte de dados única e sincronizada, garantindo que qualquer alteração em uma refletirá instantaneamente na outra.
+Transformação do módulo "Sobras & Excessos" em uma central viva e interativa para o casal, equipada com Simulador de Divisão Percentual Personalizada, projeção de antecipação de metas, transferência visual por Vasos Comunicantes, amortização de furos via Plantões Extras e recalibragem suave do ritmo diário.
 
 ---
 
-## Decisões Confirmadas do Usuário
+### User Review & Critical Decisions
 
 > [!IMPORTANT]
-> As escolhas a seguir foram confirmadas diretamente pelo usuário na fase de alinhamento:
+> As decisões abaixo foram confirmadas através das respostas do casal e estruturam toda a experiência deste upgrade:
 
-- **Unificação Total de Caixinhas & Metas**: As mesmas Caixinhas (`piggyBanks` e `coupleGoals`) serão utilizadas simultaneamente na aba *Investimentos* e no *Hub do Casal*. Aportes e retiradas feitos em qualquer uma das telas atualizam o saldo consolidado e mantêm a divisão de contribuição do casal (Ele x Ela).
-- **Integração dos Alertas de Contas Fixas com o Extrato**: Ao marcar uma conta fixa como paga no Hub do Casal, o sistema registrará automaticamente uma nova despesa no **Extrato de Transações**, vinculada à categoria correspondente e ao pagador designado.
-- **Intenções Estratégicas de Gasto na Wishlist e Caixinhas**: Botão direto na Lista de Desejos (Wishlist) e nos Cofrinhos para vincular ou converter um desejo diretamente em uma **Intenção Estratégica de Gasto** (Alocação Proativa de Reserva/Caixinha).
-
----
-
-## 1. Visão Geral e Conceito Central
-
-### O que esta mudança entrega
-- **Fonte Única da Verdade (`Single Source of Truth`)**: Eliminação de redundâncias. A aba *Investimentos* e a aba *Hub do Casal* operam sobre os mesmos objetos de estado no `FinanceContext`.
-- **Conexão Real com a Reserva de Emergência**: O painel de Reserva do Hub do Casal consumirá diretamente os valores reais do Bloco 1 (`protectionCurrentAmount` e `protectionTotalInvested`) e os alvos de meses definidos no perfil do casal.
-- **Fluxo Automático de Pagamento de Contas**: Marcar um boleto/fatura como pago atualiza o checklist e lança a saída no orçamento mensal instantaneamente.
-- **Wishlist -> Meta -> Intenção Estratégica**: Ciclo de vida completo do desejo do casal:
-  `Desejo na Wishlist` ➔ `Transformar em Meta/Caixinha` ➔ `Aportar` ➔ `Vincular Intenção Estratégica de Gasto` ao atingir a meta.
+- **Divisão das Sobras sob Medida**: Sliders percentuais interativos onde o casal decide livremente a proporção exata destinada para cada pote (Caixinhas/Metas, Aceleração da Reserva de Emergência, Recompensa Livre do Casal ou Amortização Futura).
+- **Tríade de Resolução de Excessos**: Disponibilização integrada de três mecanismos imediatos quando uma categoria estoura:
+  1. *Vasos Comunicantes*: transferir saldo de categorias que gastaram menos com 1 toque.
+  2. *Amortização por Plantão Extra*: vincular ganhos de plantões médicos recentes ou futuros para absorver o furo.
+  3. *Recalibragem Suave*: recalcular a média diária segura para os dias restantes do mês sem gerar estresse.
+- **Simulador Visual de Impacto**: Cálculo dinâmico em tempo real exibindo quantas semanas ou meses o casal antecipa a realização de seus sonhos ao direcionar as sobras para as caixinhas.
 
 ---
 
-## 2. Experiência do Usuário & Design Visual
+### 1. Overview & Core Concept
 
-### Fluxos Principais
-
-1. **Gestão Única de Caixinhas (Investimentos ⇄ Hub do Casal)**
-   - O usuário acessa a aba *Investimentos* ou o *Hub do Casal*.
-   - Ao criar uma nova Caixinha ou Meta, ela aparece em ambas as abas.
-   - No *Hub do Casal*, a Caixinha ganha visualização detalhada da participação individual (**Ele x Ela**), enquanto na aba *Investimentos* é exibida no contexto dos 3 Blocos de Segurança (Proteção, Objetivos, Liberdade).
-
-2. **Checklist Inteligente de Contas Fixas & Lançamento no Extrato**
-   - Na aba *Hub do Casal*, na seção *Alertas de Contas*, o usuário clica em **"Marcar Pago"**.
-   - O app pergunta/confirma a data e o método de pagamento e cria automaticamente uma transação na lista de `expenses`.
-   - Se desmarcado, o registro correspondente no extrato pode ser estornado ou atualizado.
-
-3. **Ciclo de Vida do Desejo (Wishlist)**
-   - Na Wishlist, botão **"Vincular Intenção Estratégica"** abre o modal de alocação de reserva pré-preenchido com o item desejado.
-   - Botão **"Transformar em Meta do Casal"** cria a Caixinha correspondente e atualiza o status para `convertido_meta`.
+- **O que faz**: Oferece ao casal médico um sistema proativo para lidar com a volatilidade da rotina. Em semanas com sobras orçamentárias, transforma o saldo positivo em aceleração tangível de metas com distribuição percentual escolhida a dedo. Em semanas sobrecarregadas com estouro de gastos, oferece três saídas funcionais, empáticas e sem culpa.
+- **Público-alvo**: O casal médico, integrando a rotina de plantões e a vida financeira compartilhada.
+- **Valor Principal**: Elimina a sensação de frustração ou cálculo manual. Dá visibilidade imediata ao impacto positivo de economizar e simplifica o reequilíbrio orçamentário.
 
 ---
 
-## 3. Decisões de Arquitetura & Modelo de Dados
+### 2. User Experience & Visual Design
+
+#### Fluxos Principais
+1. **Visão Geral do Hub de Sobras & Ritmo**:
+   - Hero com o balanço consolidado de sobras ativas vs. furos do mês, dias restantes e ritmo seguro diário.
+   - Indicador de estado de equilíbrio: "Ciclo com Sobra Ativa", "Ajuste Necessário" ou "Orçamento Equilibrado".
+
+2. **Simulador de Destinação Percentual de Sobras**:
+   - Sliders táteis e sintonizados (somando 100%):
+     - **Caixinha Prioritária / Wishlist** (ex: Viagem, Reforma, Casamento).
+     - **Reserva de Emergência** (aceleração do colchão de segurança).
+     - **Livre para Desfrute do Casal** (jantar especial, lazer sem culpa).
+     - **Fundo de Transição / Próximo Mês**.
+   - **Métrica de Antecipação de Sonhos**: cartão visual que projeta: *"Com este aporte de R$ X, vocês antecipam a meta [Viagem] em 24 dias!"*.
+   - Botão de execução: *"Consolidar Distribuição & Celebrar"*, acionando animação de confetti e histórico de auditoria.
+
+3. **Painel Inteligente de Resolução de Excessos (Quando houver categoria estourada)**:
+   - **Aba/Modal de Vasos Comunicantes**: Lista visual das categorias com folga (ex: Transporte com +R$ 220 de sobra) e botão direto de "Transferir para Categoria Estourada (ex: Mercado)". Mostra a animação fluida do nivelamento.
+   - **Compensação com Plantão Extra**: Lista os plantões médicos pendentes ou recém-realizados do casal para vincular como fonte de cobertura do furo com 1 clique.
+   - **Recalibrador Suave**: Exibe o impacto na média diária de gastos para os dias que faltam no mês, permitindo absorver o excesso diluído no tempo.
+
+4. **Histórico de Realocações & Transparência**:
+   - Registro datado de todas as transferências entre categorias e aportes derivados de sobras para manter total clareza.
+
+#### Estilo Visual & Diretrizes Frontend-Design
+- **Aparência**: Estilo contemporâneo e sofisticado, combinando ardósia neutra escura/clara (`bg-slate-900` / `bg-white`) com toques de verde esmeralda para sobras e âmbar caloroso para recalibragens.
+- **Tipografia**: Numerais em `tabular-nums` alinhados com precisão cirúrgica e fontes legíveis.
+- **Zero-Pill Discipline**: Metadados textuais limpos com separadores tipográficos (`·`), sem cápsulas estáticas ou bordas excessivas.
+
+---
+
+### 3. Key Product Decisions & Trade-Offs
+
+- **Decisão 1: Controle Percentual Dinâmico com Bloqueio de 100%**:
+  - *Abordagem*: Sliders interativos com ajuste proporcional inteligente para garantir que a soma dos destinos sempre seja 100% do valor da sobra selecionada.
+  - *Por que*: Atende com precisão ao desejo do usuário ("eu escolho quantos porcento vão para cada lugar") com total controle e facilidade táctil.
+- **Decisão 2: Tríade de Soluções de Excesso no mesmo componente**:
+  - *Abordagem*: Integrar Vasos Comunicantes, Abatimento por Plantão e Recalibragem de Ritmo em abas intuitivas no mesmo painel de resolução.
+  - *Por que*: Em semanas médicas atípicas, o casal tem flexibilidade para escolher a melhor saída em segundos.
+
+---
+
+### 4. Technical Architecture & Component Structure
 
 ```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                       FinanceContext (Global State)                         │
-│                                                                             │
-│ ┌─────────────────────────┐ ┌───────────────────────┐ ┌───────────────────┐ │
-│ │ piggyBanks &           │ │ protectionCurrentAmt │ │ expenses          │ │
-│ │ coupleGoals (Unified)   │ │ (Reserva do Bloco 1)  │ │ (Extrato do Mês)  │ │
-│ └────────────┬────────────┘ └───────────┬───────────┘ └─────────┬─────────┘ │
-└──────────────┼──────────────────────────┼───────────────────────┼───────────┘
-               │                          │                       │
-               ▼                          ▼                       ▼
-┌──────────────────────────────┐ ┌───────────────────────────────────────────┐
-│ GoalsScreen (Investimentos)  │ │         CoupleHubScreen (Hub)             │
-│                              │ │                                           │
-│  - Visão por 3 Blocos        │ │  - Divisão de Aportes Ele x Ela           │
-│  - Caixinhas Unificadas      │ │  - Reserva Real de Emergência             │
-│  - Guia de Aportes Mensais   │ │  - Wishlist ➔ Meta ➔ Intenção Estratégica │
-│                              │ │  - Alertas de Vencimento ➔ Extrato Auto  │
-└──────────────────────────────┘ └───────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────────────┐
+│                          WeeklySurplusHub                              │
+│                                                                        │
+│  ┌───────────────────────┐  ┌───────────────────────────────────────┐  │
+│  │   Hero & Status       │  │   Visual Metrics                      │  │
+│  │   · Sobras Ativas     │  │   · Dias Restantes                    │  │
+│  │   · Furos Detectados  │  │   · Ritmo Seguro Diário               │  │
+│  └───────────────────────┘  └───────────────────────────────────────┘  │
+│                                                                        │
+│  ┌──────────────────────────────────────────────────────────────────┐  │
+│  │ [SEÇÃO SOBRAS] Simulador de Alocação Percentual                  │  │
+│  │  - Sliders interativos: Metas / Reserva / Lazer / Próximo Mês    │  │
+│  │  - Projeção viva: "Antecipa meta em X dias"                      │  │
+│  │  - Ação: "Efetivar Distribuição de Sobras"                       │  │
+│  └──────────────────────────────────────────────────────────────────┘  │
+│                                                                        │
+│  ┌──────────────────────────────────────────────────────────────────┐  │
+│  │ [SEÇÃO EXCESSOS] Painel de Resolução Inteligente                 │  │
+│  │  ├─ Vasos Comunicantes: Transferência entre categorias           │  │
+│  │  ├─ Plantão Médico Extra: Cobertura direta do déficit            │  │
+│  │  └─ Recalibragem Suave: Rebalanceamento da média diária          │  │
+│  └──────────────────────────────────────────────────────────────────┘  │
+│                                                                        │
+│  ┌──────────────────────────────────────────────────────────────────┐  │
+│  │ Histórico de Realocações & Pacing Semanal de Comida              │  │
+│  └──────────────────────────────────────────────────────────────────┘  │
+└────────────────────────────────────────────────────────────────────────┘
 ```
 
-### Mapeamento das Entidades Unificadas
-
-1. **`SavingsPiggyBank` & `CoupleGoal`**:
-   - Mapeamento bidirecional no helper do context ou fusão de tipos de modo que todas as caixinhas criadas em *Investimentos* sejam refletidas como metas no *Hub do Casal* com divisão padrão de 50/50 quando a divisão não for especificada.
-
-2. **Reserva de Emergência Bloco 1 (`protectionCurrentAmount`)**:
-   - Conectada diretamente ao indicador do Hub do Casal. Operações de depósito/resgate no Bloco 1 sincronizam em tempo real no dashboard do casal.
-
-3. **Contas Fixas ➔ Extrato de Despesas**:
-   - Ação de pagamento adiciona item na lista de `expenses` com `assignedTo`, `category` e `paidBy`.
-
----
-
-## 4. Plano de Execução em Etapas
-
-1. **Ajustes de Tipos & Mapeadores no Contexto (`src/types/finance.ts` & `src/context/FinanceContext.tsx`)**:
-   - Adicionar helpers para criar/sincronizar caixinhas entre `piggyBanks` e `coupleGoals`.
-   - Adicionar handler no context `markFixedBillPaid(billId, paymentDetails)` que atualiza o status do alerta e insere no extrato `expenses`.
-
-2. **Atualização da tela `GoalsScreen.tsx` (Investimentos)**:
-   - Exibir indicadores de divisão do casal nas Caixinhas e atalho para o *Hub do Casal*.
-
-3. **Atualização da tela `CoupleHubScreen.tsx` (Hub do Casal)**:
-   - Conectar os cofrinhos do Hub diretamente à lista unificada `piggyBanks` do context.
-   - Conectar a Reserva de Emergência do Hub aos valores reais de `protectionCurrentAmount`.
-   - Adicionar botão **"Vincular Intenção Estratégica"** na Wishlist.
-   - Conectar a ação de pagamento de contas para criar a transação automática no Extrato.
-
-4. **Verificação & Compilação**:
-   - Executar `compile_applet` e `lint_applet` para garantir compilação limpa sem erros.
+#### Mapeamento de Estado e Funções:
+- Atualização em `FinanceContext.tsx`:
+  - `reallocateCategoryBudget(fromCategory, toCategory, amount)`: transfere saldo entre categorias para a mecânica de vasos comunicantes.
+  - `coverExpenseDeficitWithShift(shiftId, categoryKey, amount)`: vincula plantão médico para amortizar estouro de categoria.
+  - `distributeSurplusPercentages(allocations: { targetType: string; targetId?: string; percentage: number; amount: number }[])`: distribui as sobras selecionadas para caixinhas, reserva ou saldo livre.
+- Refatoração dos componentes:
+  - `src/components/WeeklySurplusHub.tsx`: tela principal com o novo simulador percentual e painel de vasos comunicantes.
+  - `src/components/CommunicatingVesselsModal.tsx` / subcomponente dedicado para visualização fluida de transferência.
+  - `src/components/SurplusAllocationModal.tsx`: atualização para sincronizar com os novos controles percentuais.

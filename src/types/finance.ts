@@ -319,8 +319,8 @@ export interface AppNotification {
 
 export interface SurplusTransferRecord {
   id: string;
-  sourceCategory: CategoryKey;
-  targetType: 'protection' | 'goal' | 'freedom';
+  sourceCategory: CategoryKey | 'all_surplus';
+  targetType: 'protection' | 'goal' | 'freedom' | 'category' | 'shift_offset' | 'leisure';
   targetGoalId?: string;
   targetGoalName: string;
   amount: number;
@@ -415,6 +415,9 @@ export interface BankImportedTransaction {
   direction: 'credit' | 'debit';
   owner: PaidBy;
   status: 'pending' | 'expense' | 'income' | 'internal_transfer';
+  category?: CategoryKey;
+  subcategory?: string;
+  matchedRule?: string;
 }
 
 export interface AppState {
@@ -551,7 +554,9 @@ export interface PushNotificationSettings {
   permissionStatus: 'default' | 'granted' | 'denied';
   statementReminderEnabled?: boolean;
   lastStatementReminderAt?: string;
-  dailyTriageEnabled: boolean; // 17:30
+  dailyTriageEnabled: boolean; // 18:00
+  lunchReminderEnabled?: boolean; // 13:00 almoço
+  lastLunchReminderAt?: string;
   weeklySummaryEnabled: boolean; // Domingos 18:00
   monthlySummaryEnabled: boolean; // Último dia do mês 19:00
   categoryAlertsEnabled: boolean; // Tetos de 80% e 100%
