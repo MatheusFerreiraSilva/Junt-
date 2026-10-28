@@ -41,7 +41,7 @@ type SubTab = 'goals' | 'wishlist' | 'fire' | 'dreams' | 'bills' | 'profile';
 export const CoupleHubScreen: React.FC = () => {
   const {
     state,
-    updateState,
+    updateCoupleHub,
     addPiggyBank,
     depositToGoal,
     depositToProtection,
@@ -164,206 +164,17 @@ export const CoupleHubScreen: React.FC = () => {
       }
     });
 
-    // Default seeds if empty
-    if (unifiedMap.size === 0) {
-      return [
-        {
-          id: 'cg-1',
-          title: 'Viagem para a Grécia',
-          category: 'viagem',
-          emoji: '🏛️',
-          targetAmount: 35000,
-          currentAmount: 18500,
-          partner1Contribution: 9500,
-          partner2Contribution: 9000,
-          monthlyPlannedDeposit: 2000,
-          deadlineDate: '2027-06',
-          isCompleted: false,
-          history: [
-            {
-              id: 'h1',
-              contributor: 'partner1',
-              contributorName: p1Name,
-              amount: 1000,
-              date: '2026-10-01',
-              type: 'deposit',
-              note: 'Aporte pós plantão',
-            },
-            {
-              id: 'h2',
-              contributor: 'partner2',
-              contributorName: p2Name,
-              amount: 1000,
-              date: '2026-10-02',
-              type: 'deposit',
-              note: 'Aporte mensal',
-            },
-          ],
-          createdAt: '2026-01-15',
-        },
-        {
-          id: 'cg-2',
-          title: 'Entrada do Novo Apartamento',
-          category: 'imovel',
-          emoji: '🏙️',
-          targetAmount: 150000,
-          currentAmount: 64000,
-          partner1Contribution: 34000,
-          partner2Contribution: 30000,
-          monthlyPlannedDeposit: 5000,
-          deadlineDate: '2028-12',
-          isCompleted: false,
-          history: [],
-          createdAt: '2026-02-01',
-        },
-        {
-          id: 'cg-3',
-          title: 'Reforma da Cozinha Gourmet',
-          category: 'reforma',
-          emoji: '🍳',
-          targetAmount: 22000,
-          currentAmount: 14500,
-          partner1Contribution: 7250,
-          partner2Contribution: 7250,
-          monthlyPlannedDeposit: 1500,
-          deadlineDate: '2026-12',
-          isCompleted: false,
-          history: [],
-          createdAt: '2026-03-10',
-        },
-      ];
-    }
-
     return Array.from(unifiedMap.values());
   }, [state.piggyBanks, state.coupleGoals, p1Name, p2Name]);
 
   // Wishlist list
-  const wishlist: CoupleWishlistItem[] = useMemo(() => {
-    if (state.coupleWishlist && state.coupleWishlist.length > 0) return state.coupleWishlist;
-    return [
-      {
-        id: 'cw-1',
-        title: 'Robô Aspirador Inteligente LiDAR',
-        category: 'moradia',
-        emoji: '🤖',
-        estimatedPrice: 3200,
-        priority: 'alta',
-        requestedBy: 'both',
-        notes: 'Praticidade para limpezas diárias pós plantão',
-        status: 'desejo',
-        createdAt: '2026-09-10',
-      },
-      {
-        id: 'cw-2',
-        title: 'Máquina de Café Espresso Profissional',
-        category: 'comida',
-        emoji: '☕',
-        estimatedPrice: 2800,
-        priority: 'media',
-        requestedBy: 'partner1',
-        notes: 'Reduz gastos diários com cafeterias no hospital',
-        status: 'desejo',
-        createdAt: '2026-09-15',
-      },
-      {
-        id: 'cw-3',
-        title: 'Projetor 4K para Sala de Cinema',
-        category: 'lazer',
-        emoji: '🍿',
-        estimatedPrice: 4500,
-        priority: 'baixa',
-        requestedBy: 'partner2',
-        status: 'desejo',
-        createdAt: '2026-10-01',
-      },
-    ];
-  }, [state.coupleWishlist]);
+  const wishlist: CoupleWishlistItem[] = state.coupleWishlist || [];
 
   // Fixed Bills
-  const fixedBills: FixedBillAlert[] = useMemo(() => {
-    if (state.coupleFixedBills && state.coupleFixedBills.length > 0) return state.coupleFixedBills;
-    return [
-      {
-        id: 'fb-1',
-        title: 'Aluguel / Condomínio do Apê',
-        category: 'moradia',
-        amount: 4200,
-        dueDay: 5,
-        assignedPayer: 'both',
-        autoPay: true,
-        status: 'paid',
-        lastPaidMonth: '2026-10',
-        isRecurring: true,
-      },
-      {
-        id: 'fb-2',
-        title: 'Conta de Energia & Gás',
-        category: 'moradia',
-        amount: 480,
-        dueDay: 10,
-        assignedPayer: 'partner1',
-        autoPay: false,
-        status: 'paid',
-        lastPaidMonth: '2026-10',
-        isRecurring: true,
-      },
-      {
-        id: 'fb-3',
-        title: 'Plano de Saúde Familiar',
-        category: 'protecao',
-        amount: 1850,
-        dueDay: 15,
-        assignedPayer: 'partner2',
-        autoPay: true,
-        status: 'pending',
-        isRecurring: true,
-      },
-      {
-        id: 'fb-4',
-        title: 'Internet Fibra 1GB & Streamings',
-        category: 'lazer',
-        amount: 320,
-        dueDay: 20,
-        assignedPayer: 'both',
-        autoPay: false,
-        status: 'pending',
-        isRecurring: true,
-      },
-      {
-        id: 'fb-5',
-        title: 'Seguro do Veículo',
-        category: 'transporte',
-        amount: 650,
-        dueDay: 25,
-        assignedPayer: 'partner1',
-        autoPay: true,
-        status: 'pending',
-        isRecurring: true,
-      },
-    ];
-  }, [state.coupleFixedBills]);
+  const fixedBills: FixedBillAlert[] = state.coupleFixedBills || [];
 
   // Dream Simulations
-  const dreams: DreamSimulation[] = useMemo(() => {
-    if (state.dreamSimulations && state.dreamSimulations.length > 0) return state.dreamSimulations;
-    return [
-      {
-        id: 'ds-1',
-        title: 'Casa de Praia na Riviera',
-        emoji: '🏖️',
-        totalCost: 650000,
-        downPayment: 120000,
-        monthlySavings: 4500,
-        expectedAnnualYieldPct: 8.5,
-        inflationAnnualPct: 4.0,
-        monthsToAchieve: 84,
-        estimatedCompletionDate: '2033-10',
-        partner1SharePct: 50,
-        partner2SharePct: 50,
-        createdAt: '2026-05-01',
-      },
-    ];
-  }, [state.dreamSimulations]);
+  const dreams: DreamSimulation[] = state.dreamSimulations || [];
 
   // =========================================================================
   // LINKED EMERGENCY RESERVE & FIRE METRICS
@@ -384,7 +195,7 @@ export const CoupleHubScreen: React.FC = () => {
         ? monthlyFixedExpensesAvg
         : totalExpensesThisMonth > 0
         ? totalExpensesThisMonth
-        : 12000;
+        : 0;
 
     // Reserve months coverage (Protection Reserve / Monthly Expenses)
     const emergencyReserveMonthsCurrent =
@@ -395,11 +206,11 @@ export const CoupleHubScreen: React.FC = () => {
 
     // FIRE Rule of 300x
     const fireTargetNetWorth = monthlyCoupleExpenses * 300;
-    const fireProgressPct = Math.min(100, Math.round((currentNetWorth / fireTargetNetWorth) * 100));
+    const fireProgressPct = Math.min(100, (fireTargetNetWorth > 0 ? Math.round((currentNetWorth / fireTargetNetWorth) * 100) : 0));
 
     // Monthly investment pace
     const monthlyPlannedGoals = goals.reduce((sum, g) => sum + g.monthlyPlannedDeposit, 0);
-    const monthlyInvestmentPace = monthlyPlannedGoals > 0 ? monthlyPlannedGoals : 4000;
+    const monthlyInvestmentPace = monthlyPlannedGoals;
 
     // Years to FIRE
     const annualYield = (state.profile.expectedYieldAnnual || 6.5) / 100;
@@ -490,7 +301,7 @@ export const CoupleHubScreen: React.FC = () => {
     };
 
     const updatedGoals = [...goals, newGoal];
-    updateState({ coupleGoals: updatedGoals });
+    updateCoupleHub({ coupleGoals: updatedGoals });
     setIsGoalModalOpen(false);
     setGoalForm({
       title: '',
@@ -558,7 +369,7 @@ export const CoupleHubScreen: React.FC = () => {
       return g;
     });
 
-    updateState({ coupleGoals: updatedGoals });
+    updateCoupleHub({ coupleGoals: updatedGoals });
     setIsContributionModalOpen(false);
     setSelectedGoalId(null);
     setContributionForm({ amount: '', contributor: 'both', note: '' });
@@ -584,7 +395,7 @@ export const CoupleHubScreen: React.FC = () => {
     };
 
     const updated = [...wishlist, newItem];
-    updateState({ coupleWishlist: updated });
+    updateCoupleHub({ coupleWishlist: updated });
     setIsWishlistModalOpen(false);
     setWishlistForm({
       title: '',
@@ -634,7 +445,7 @@ export const CoupleHubScreen: React.FC = () => {
       w.id === item.id ? { ...w, status: 'convertido_meta' as const, convertedGoalId: newGoal.id } : w
     );
 
-    updateState({ coupleGoals: updatedGoals, coupleWishlist: updatedWishlist });
+    updateCoupleHub({ coupleGoals: updatedGoals, coupleWishlist: updatedWishlist });
     setActiveTab('goals');
   };
 
@@ -657,7 +468,7 @@ export const CoupleHubScreen: React.FC = () => {
     };
 
     const updatedIntents = [...(state.strategicIntents || []), newIntent];
-    updateState({ strategicIntents: updatedIntents });
+    updateCoupleHub({ strategicIntents: updatedIntents });
 
     setIsIntentModalOpen(false);
     setSelectedWishlistForIntent(null);
@@ -666,7 +477,7 @@ export const CoupleHubScreen: React.FC = () => {
   // Delete Wishlist Item
   const handleDeleteWishlistItem = (id: string) => {
     const updated = wishlist.filter((w) => w.id !== id);
-    updateState({ coupleWishlist: updated });
+    updateCoupleHub({ coupleWishlist: updated });
   };
 
   // =========================================================================
@@ -713,7 +524,7 @@ export const CoupleHubScreen: React.FC = () => {
       updatedExpenses = updatedExpenses.filter((e) => !e.description.includes(targetBill.title));
     }
 
-    updateState({ coupleFixedBills: updatedBills, expenses: updatedExpenses });
+    updateCoupleHub({ coupleFixedBills: updatedBills, expenses: updatedExpenses });
   };
 
   // Create Bill
@@ -734,7 +545,7 @@ export const CoupleHubScreen: React.FC = () => {
     };
 
     const updated = [...fixedBills, newBill];
-    updateState({ coupleFixedBills: updated });
+    updateCoupleHub({ coupleFixedBills: updated });
     setIsBillModalOpen(false);
     setBillForm({
       title: '',
@@ -786,7 +597,7 @@ export const CoupleHubScreen: React.FC = () => {
     };
 
     const updated = [...dreams, newDream];
-    updateState({ dreamSimulations: updated });
+    updateCoupleHub({ dreamSimulations: updated });
     setIsDreamModalOpen(false);
     setDreamForm({
       title: '',
@@ -820,7 +631,7 @@ export const CoupleHubScreen: React.FC = () => {
             </h1>
 
             <p className="text-sm text-slate-300 font-medium leading-relaxed">
-              Metas e Caixinhas 100% unificadas com a aba Investimentos, Reserva de Emergência do Bloco 1, Wishlist interativa com Intenções Estratégicas e lançamentos automáticos no Extrato.
+              Um lugar para cuidar das metas, combinar prioridades e planejar a próxima etapa de vocês.
             </p>
           </div>
 
@@ -951,6 +762,7 @@ export const CoupleHubScreen: React.FC = () => {
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+            {!goals.length && <div className="col-span-full py-12 px-6 border border-dashed border-slate-300 dark:border-slate-700 rounded-2xl text-center"><p className="text-base font-semibold text-slate-800 dark:text-slate-100">O próximo sonho pode começar pequeno.</p><p className="text-sm text-slate-500 mt-2 max-w-sm mx-auto leading-relaxed">Crie uma meta com o valor e o prazo que fazem sentido para vocês.</p></div>}
             {goals.map((goal) => {
               const progressPct = Math.min(100, Math.round((goal.currentAmount / goal.targetAmount) * 100));
               const p1Pct = goal.currentAmount > 0 ? Math.round((goal.partner1Contribution / goal.currentAmount) * 100) : 50;
@@ -1074,6 +886,7 @@ export const CoupleHubScreen: React.FC = () => {
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+            {!wishlist.length && <div className="col-span-full py-12 px-6 border border-dashed border-slate-300 dark:border-slate-700 rounded-2xl text-center"><p className="text-base font-semibold text-slate-800 dark:text-slate-100">O que vocês querem fazer acontecer?</p><p className="text-sm text-slate-500 mt-2 max-w-sm mx-auto leading-relaxed">Anotem uma vontade e conversem sobre a prioridade antes da compra.</p></div>}
             {wishlist.map((item) => {
               const requesterLabel =
                 item.requestedBy === 'partner1' ? p1Name : item.requestedBy === 'partner2' ? p2Name : 'Casal';
@@ -1225,7 +1038,7 @@ export const CoupleHubScreen: React.FC = () => {
               <div className="text-2xl font-black text-[#111318] dark:text-white">
                 R$ {fireMetrics.fireTargetNetWorth.toLocaleString('pt-BR')}
               </div>
-              <p className="text-[11px] text-slate-500 font-medium">300x o gasto mensal (Regra dos 4%)</p>
+              <p className="text-[11px] text-slate-500 font-medium">Hipótese ilustrativa: 300 meses do gasto registrado</p>
             </div>
 
             {/* Card 4: Tempo Estimado */}
@@ -1235,10 +1048,10 @@ export const CoupleHubScreen: React.FC = () => {
                 <span>Tempo para FIRE</span>
               </div>
               <div className="text-2xl font-black text-[#111318] dark:text-white">
-                {fireMetrics.estimatedYearsToFIRE} Anos
+                {fireMetrics.monthlyCoupleExpenses > 0 && fireMetrics.monthlyInvestmentPace > 0 ? fireMetrics.estimatedYearsToFIRE + ' anos' : 'Faltam dados'}
               </div>
               <p className="text-[11px] text-slate-500 font-medium">
-                Pace de aportes: R$ {fireMetrics.monthlyInvestmentPace.toLocaleString('pt-BR')}/mês
+                Aportes planejados: R$ {fireMetrics.monthlyInvestmentPace.toLocaleString('pt-BR')}/mês
               </p>
             </div>
           </div>
@@ -1251,7 +1064,7 @@ export const CoupleHubScreen: React.FC = () => {
                   Aportar na Reserva de Emergência do Casal (Bloco 1)
                 </h3>
                 <p className="text-xs text-slate-500 font-medium">
-                  Aportes diretos sincronizam instantaneamente no painel de Proteção da aba Investimentos
+                  O aporte também aparece na reserva em Investimentos após a confirmação.
                 </p>
               </div>
 
@@ -1308,6 +1121,7 @@ export const CoupleHubScreen: React.FC = () => {
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {!dreams.length && <div className="col-span-full py-12 px-6 border border-dashed border-slate-300 dark:border-slate-700 rounded-2xl text-center"><p className="text-base font-semibold text-slate-800 dark:text-slate-100">Ainda há espaço para novos planos.</p><p className="text-sm text-slate-500 mt-2 max-w-sm mx-auto leading-relaxed">Simule um objetivo com seus próprios valores, sem alterar o orçamento.</p></div>}
             {dreams.map((dream) => {
               const years = Number((dream.monthsToAchieve / 12).toFixed(1));
 
@@ -1395,7 +1209,8 @@ export const CoupleHubScreen: React.FC = () => {
 
           <div className="clay-card p-6 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl space-y-4">
             <div className="divide-y divide-slate-100 dark:divide-slate-800">
-              {fixedBills.map((bill) => {
+              {!fixedBills.length && <div className="col-span-full py-12 px-6 border border-dashed border-slate-300 dark:border-slate-700 rounded-2xl text-center"><p className="text-base font-semibold text-slate-800 dark:text-slate-100">Nenhuma conta fixa registrada.</p><p className="text-sm text-slate-500 mt-2 max-w-sm mx-auto leading-relaxed">Cadastrem os vencimentos para dividir as responsabilidades do mês.</p></div>}
+            {fixedBills.map((bill) => {
                 const isPaid = bill.status === 'paid';
                 const payerLabel =
                   bill.assignedPayer === 'partner1'

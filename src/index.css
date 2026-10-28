@@ -562,3 +562,60 @@ input::placeholder {
 }
 
 
+
+/* Juntô: an editorial welcome, with a quiet paper-and-forest palette. */
+.welcome-page { min-height: 100dvh; background: #f7f5ef; color: #233c32; }
+.welcome-header { max-width: 1280px; margin: auto; height: 98px; padding: 0 48px; display: flex; align-items: center; justify-content: space-between; gap: 24px; border-bottom: 1px solid #dedfd4; }
+.welcome-tagline { color: #748074; font-size: 12px; }
+.welcome-text-button { display: flex; align-items: center; gap: 12px; font-size: 13px; font-weight: 600; padding: 12px 0; }
+.welcome-main { max-width: 1280px; padding: 66px 48px 54px; margin: auto; display: grid; grid-template-columns: minmax(0,1.35fr) minmax(330px,1fr); gap: 84px; align-items: center; }
+.welcome-eyebrow { font-size: 10px; letter-spacing: .15em; font-weight: 700; display: flex; align-items: center; gap: 9px; color: #627467; }
+.welcome-eyebrow > span { width: 6px; height: 6px; border-radius: 100%; background: #859d70; }
+.welcome-story h1 { font-family: Georgia, 'Times New Roman', serif; font-weight: 400; font-size: clamp(36px,4.3vw,59px); line-height: 1.12; letter-spacing: -.045em; margin: 23px 0 20px; }
+.welcome-story h1 span { color: #7c8d70; }
+.welcome-intro { max-width: 410px; color: #68756a; font-size: 14px; line-height: 1.8; }
+.welcome-photo { margin-top: 32px; position: relative; height: 248px; overflow: hidden; border-radius: 5px 56px 5px 5px; }
+.welcome-photo > img { width: 100%; height: 100%; object-fit: cover; object-position: center 48%; }
+.welcome-photo-note { position: absolute; bottom: 17px; left: 17px; display: flex; align-items: center; gap: 12px; padding: 13px 17px; background: #f9f8f0f2; border-radius: 3px; font-size: 11px; line-height: 1.6; }
+.welcome-photo-note strong { font-weight: 600; }
+.welcome-features { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 21px; margin-top: 28px; }
+.welcome-features svg { color: #71876a; margin-bottom: 10px; stroke-width: 1.5; }
+.welcome-features strong { font-size: 11px; display: block; font-weight: 600; }
+.welcome-features p { font-size: 10px; line-height: 1.65; color: #788076; margin-top: 5px; }
+.welcome-access { padding-top: 8px; }
+.welcome-access-card { background: #fffefa; border: 1px solid #e1e3d9; border-radius: 12px; padding: 34px 35px; box-shadow: 0 12px 35px -25px #31413245; }
+.welcome-access-symbol { height: 43px; width: 43px; display: grid; place-items: center; border: 1px solid #d7ddcf; border-radius: 50%; font-family: Georgia, serif; font-size: 29px; font-style: italic; margin-bottom: 23px; background: #eef1e8; }
+.welcome-access h2 { font-family: Georgia, serif; font-weight: 400; font-size: 28px; letter-spacing: -.03em; margin-top: 10px; }
+.welcome-access-description { color: #7b8177; font-size: 11px; line-height: 1.7; margin-top: 9px; }
+.welcome-form { display: grid; gap: 17px; margin-top: 27px; }
+.welcome-form label { display: block; margin-bottom: 7px; font-size: 11px; font-weight: 600; }
+.welcome-form input { min-height: 46px; border: 1px solid #d9ddd1; background: #fffefa; border-radius: 6px; padding: 11px 13px; width: 100%; font-size: 13px; color: #233c32; }
+.welcome-form input::placeholder { color: #899084 !important; }
+.welcome-form input:focus { outline: 2px solid #6a8669; outline-offset: 2px; }
+.welcome-password { position: relative; }
+.welcome-password input { padding-right: 46px; }
+.welcome-password button { position: absolute; right: 2px; top: 2px; width: 42px; height: 42px; display: grid; place-items: center; color: #8b9288; }
+.welcome-submit { min-height: 47px; border-radius: 6px; background: #284b3b; color: white; display: flex; align-items: center; justify-content: center; gap: 14px; font-size: 12px; font-weight: 600; margin-top: 3px; transition: background .15s; }
+.welcome-submit:hover { background: #1c392c; }
+.welcome-page button:disabled { opacity: .6; cursor: wait; }
+.welcome-page button:not(:disabled) { cursor: pointer; }
+.welcome-error { background: #fff0e9; border: 1px solid #eacbbd; color: #8a3929; padding: 10px; border-radius: 6px; font-size: 12px; line-height: 1.6; }
+.welcome-divider { display: flex; align-items: center; gap: 13px; color: #899084; font-size: 10px; margin: 21px 0; }
+.welcome-divider span { height: 1px; background: #e6e7df; flex: 1; }
+.welcome-google { width: 100%; min-height: 45px; border: 1px solid #d9ddd1; border-radius: 6px; display: flex; align-items: center; justify-content: center; gap: 11px; font-size: 12px; }
+.welcome-google:hover { background: #f3f4ec; }
+.welcome-mode { font-size: 11px; color: #80877d; text-align: center; margin-top: 23px; }
+.welcome-mode button { font-weight: 600; color: #284b3b; margin-left: 4px; text-decoration: underline; text-underline-offset: 3px; }
+.welcome-preview { display: flex; gap: 9px; align-items: center; justify-content: center; margin: 23px auto 0; font-size: 12px; font-weight: 600; }
+.welcome-preview-note { font-size: 10px; color: #7b8378; text-align: center; margin-top: 8px; }
+.welcome-footer { max-width: 1184px; margin: 0 auto; border-top: 1px solid #dedfd4; padding: 22px 0; display: flex; justify-content: space-between; gap: 16px; font-size: 10px; color: #858b80; }
+@media (max-width: 1000px) { .welcome-main { gap: 38px; padding: 46px 30px; } .welcome-header { padding: 0 30px; } .welcome-access-card { padding: 29px 25px; } .welcome-footer { margin: 0 30px; } .welcome-tagline { display: none; } }
+@media (max-width: 720px) { .welcome-header { height: 76px; padding: 0 22px; } .welcome-main { grid-template-columns: 1fr; padding: 35px 22px; gap: 33px; max-width: 520px; } .welcome-story h1 { font-size: 43px; margin-top: 18px; } .welcome-photo { height: 190px; margin-top: 25px; } .welcome-features { gap: 15px; } .welcome-access { padding-top: 0; } .welcome-access-card { padding: 28px 25px; } .welcome-footer { margin: 0 22px; flex-direction: column; gap: 6px; } .welcome-access-symbol { display: none; } }
+/* Calmer depth on everyday financial surfaces; motion belongs to actions. */
+.clay-card { border-radius: 20px; box-shadow: 0 3px 12px -7px rgba(34,50,40,.14); }
+.clay-card:hover { transform: none; box-shadow: 0 3px 12px -7px rgba(34,50,40,.14); }
+.dark .clay-card, .dark .clay-card:hover { box-shadow: 0 3px 12px -7px rgba(0,0,0,.4); }
+.floating-dark-bar { box-shadow: 0 8px 25px -12px rgba(17,19,24,.4); }
+.floating-magic-button { background: #d6e1bc; box-shadow: 0 4px 12px -5px rgba(17,19,24,.3); }
+input, select, textarea { scroll-margin-block: 100px; }
+@media (max-width: 640px) { input:not([type='checkbox']):not([type='radio']):not([type='range']), select, textarea { font-size: max(16px, 1em); } }

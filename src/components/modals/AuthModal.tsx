@@ -19,6 +19,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onOpenAIO
     signInWithGoogle,
     joinCoupleWithInviteCode,
     signOutUser,
+    generateNewInviteCode,
   } = useFinance();
 
   const [mode, setMode] = useState<'login' | 'signup' | 'join'>('signup');
@@ -68,11 +69,11 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onOpenAIO
         await signInWithEmail(email, password);
       } else if (mode === 'join') {
         if (!inviteCodeInput) {
-          setErrorMsg('Digite o Código do Casal de 6 dígitos.');
+          setErrorMsg('Digite o código de convite do seu par.');
           setLoading(false);
           return;
         }
-        await joinCoupleWithInviteCode(inviteCodeInput.trim().toUpperCase());
+        await joinCoupleWithInviteCode(inviteCodeInput.trim());
       }
       onClose();
     } catch (err: any) {
@@ -140,8 +141,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onOpenAIO
                       <span className="text-[10px] font-extrabold uppercase text-slate-400 tracking-wider block">
                         Código do Casal (Para Conectar Outro Celular)
                       </span>
-                      <span className="text-xl font-black text-emerald-600 dark:text-emerald-400 font-display tracking-widest block my-0.5">
-                        {coupleAccount.inviteCode}
+                      <span className="text-xs break-all font-semibold text-emerald-600 dark:text-emerald-400 font-mono block my-0.5">
+                        {coupleAccount.inviteCode || 'Nenhum convite ativo'}
                       </span>
                     </div>
 
@@ -154,8 +155,9 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onOpenAIO
                     </button>
                   </div>
 
+                  <button className="btn-outline w-full" onClick={async () => { try { await generateNewInviteCode(); } catch (cause) { setErrorMsg(cause instanceof Error ? cause.message : 'Não foi possível gerar o convite.'); } }}><RefreshCw size={15} />Gerar novo convite</button>
                   <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-normal">
-                    💡 Instale o app no celular do seu par ou entre no computador, crie a conta dele(a) e digite este código de 6 dígitos para sincronizarem em tempo real.
+                    💡 Instale o app no celular do seu par ou entre no computador, crie a conta dele(a) e digite este código de convite para sincronizarem em tempo real.
                   </p>
                 </div>
               )}
@@ -299,15 +301,15 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onOpenAIO
                   </label>
                   <input
                     type="text"
-                    maxLength={6}
+                    maxLength={128}
                     placeholder="Ex: AB12CD"
                     value={inviteCodeInput}
-                    onChange={e => setInviteCodeInput(e.target.value.toUpperCase())}
+                    onChange={e => setInviteCodeInput(e.target.value)}
                     className="w-full px-4 py-3 rounded-2xl bg-slate-50 dark:bg-slate-800 border text-center font-black text-xl tracking-widest font-display text-emerald-600 dark:text-emerald-400 uppercase"
                     required
                   />
                   <p className="text-[11px] text-slate-400 text-center">
-                    Peça o código de 6 dígitos que aparece na tela do celular do seu par.
+                    Peça o código de convite que aparece na tela do celular do seu par.
                   </p>
                 </div>
               )}

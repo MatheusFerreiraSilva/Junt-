@@ -1,5 +1,9 @@
+import { installmentInMonth } from '../utils/installmentMoney';
 import React, { createContext, useContext, useState, useEffect, useMemo, useCallback, useRef, ReactNode } from 'react';
 import confetti from 'canvas-confetti';
+import { applyShiftAllocation, undoShiftAllocations, migrateLegacyShiftAllocations } from '../utils/shiftReconciliation';
+import { authenticatedApi } from '../lib/authenticatedApi';
+import { ENTITY_FIELDS, migrateEntities, subscribeEntities, saveEntities, rebaseEntities, conflictAwareBaseline, type EntityState } from '../lib/entitySync';
 import {
   onAuthStateChanged,
   signInWithEmailAndPassword,
@@ -21,6 +25,7 @@ import {
 import { auth, db } from '../lib/firebase';
 import {
   AppState,
+  BankImportedTransaction,
   CategoryKey,
   CategoryInfo,
   ExpenseItem,
@@ -37,7 +42,6 @@ import {
   UserAuthProfile,
   CoupleAccountData,
   PluggyBankConnection,
-  PluggyCredentials,
   CategoryKeywordRule,
   DetectedSubscription,
   FiscalProfile,
@@ -249,60 +253,21 @@ export const ACCENT_THEMES: Record<
   },
 };
 
-/**
- * Couple IDs are unguessable so Firestore rules can safely allow `get` by ID
- * while still requiring membership. Older couples used `couple-${Date.now()}`.
- */
-function makeCoupleId(): string {
-  const uuid =
-    typeof globalThis.crypto !== 'undefined' &&
-    typeof globalThis.crypto.randomUUID === 'function'
-      ? globalThis.crypto.randomUUID()
-      : `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-  return `couple-${uuid}`;
-}
-
-/**
- * Creates the public invite lookup document. The invite code is the secret;
- * only `coupleId` is stored here, never financial data.
- */
-async function writeInviteDoc(code: string, coupleId: string, uid: string) {
-  await setDoc(doc(db, 'coupleInvites', code), {
-    coupleId,
-    createdAt: new Date().toISOString(),
-    createdBy: uid,
-  });
-}
-
-const STORAGE_KEY = 'junto_app_financeiro_state_v4';
+const STORAGE_KEY = 'junto_app_financeiro_state_v5';
+const cacheKey = (uid?: string) => STORAGE_KEY + ':' + (uid || 'local');
+type CoupleSession = { couple: CoupleAccountData; profile: UserAuthProfile };
 
 const INITIAL_STATE: AppState = {
   profile: {
     partner1Name: 'Você',
-    partner1Specialty: 'Sua Profissão',
+    partner1Specialty: '',
     partner2Name: 'Aguardando Par...',
-    partner2Specialty: 'Profissão do Par',
+    partner2Specialty: '',
     city: 'Brasil',
     partner1Income: 0,
     partner2Income: 0,
-    partner1Fiscal: {
-      crmNumber: '',
-      crmState: 'SP',
-      workType: 'cnpj',
-      cpfTaxNumber: '123.456.789-00',
-      cnpjNumber: '12.345.678/0001-90',
-      cnpjCompanyName: 'Serviços Médicos LTDA',
-      cnpjTaxRate: 6,
-      accountingMonthlyCost: 350,
-    },
-    partner2Fiscal: {
-      crmNumber: '',
-      crmState: 'SP',
-      workType: 'cpf',
-      cpfTaxNumber: '987.654.321-99',
-    },
     emergencyReserveMonthsTarget: 10,
-    expectedYieldAnnual: 6.5,
+    expectedYieldAnnual: 0,
     streakMonths: 0,
     themeMode: 'light',
     accentTheme: 'emerald',
@@ -337,25 +302,9 @@ const INITIAL_STATE: AppState = {
   piggyBanks: [],
   linkedAccounts: [],
   pluggyAccounts: [],
-  pluggyCredentials: {
-    partner1ClientId: '',
-    partner1ClientSecret: '',
-    partner1Cpf: '',
-    partner2ClientId: '',
-    partner2ClientSecret: '',
-    partner2Cpf: '',
-  },
   keywordRules: DEFAULT_KEYWORD_RULES,
   detectedSubscriptions: [],
-  incomeSourceRules: DEFAULT_MEDICAL_SOURCE_RULES.map((r, i) => ({
-    id: `rule-src-${i}`,
-    sourceName: r.sourceName,
-    sourceTaxNumber: r.sourcePattern,
-    classification: r.classification,
-    customTaxRate: r.defaultTaxRate,
-    partner: 'both',
-    createdAt: new Date().toISOString(),
-  })),
+  incomeSourceRules: [],
   pendingConfirmations: [],
   alertRules: [
     { id: 'rule-1', title: 'Avisar quando categoria atingir 80% do teto', type: 'category_limit', enabled: true },
@@ -374,17 +323,17 @@ const INITIAL_STATE: AppState = {
   monthlyDepositGuides: {},
   completedMonthDeposits: {},
   pushSettings: DEFAULT_PUSH_SETTINGS,
-  medicalShifts: getSampleMedicalShifts(new Date().toISOString().slice(0, 7)),
+  medicalShifts: [],
   medicalShiftPresets: DEFAULT_SHIFT_PRESETS,
-  hospitalMappingRules: DEFAULT_HOSPITAL_MAPPING_RULES,
+  hospitalMappingRules: [],
   appMode: 'casal',
   collegeModeData: {
     active: false,
     courseName: 'Medicina',
-    currentSemester: 5,
+    currentSemester: 1,
     totalSemesters: 12,
-    monthlyStipend: 600,
-    totalInvestedInCollege: 1420,
+    monthlyStipend: 0,
+    totalInvestedInCollege: 0,
     studentName: 'Estudante',
   },
   strategicIntents: [],
@@ -517,9 +466,10 @@ export interface FinanceContextType {
   displayedTotalSpent: number;
   displayedRemaining: number;
 
+  updateCoupleHub: (updates: Pick<Partial<AppState>, 'coupleGoals' | 'coupleWishlist' | 'coupleFixedBills' | 'dreamSimulations' | 'strategicIntents' | 'expenses'>) => void;
+
   // Meu Pluggy & Open Finance
   pluggyAccounts: PluggyBankConnection[];
-  pluggyCredentials: PluggyCredentials;
   keywordRules: CategoryKeywordRule[];
   detectedSubscriptions: DetectedSubscription[];
   incomeSourceRules: IncomeSourceRule[];
@@ -538,8 +488,9 @@ export interface FinanceContextType {
   updatePluggyAccount: (id: string, updates: Partial<PluggyBankConnection>) => void;
   addPluggyAccount: (account: Omit<PluggyBankConnection, 'id'>) => void;
   removePluggyAccount: (id: string) => void;
-  updatePluggyCredentials: (creds: Partial<PluggyCredentials>) => void;
   syncPluggyData: () => Promise<void>;
+  importStatement: (items: BankImportedTransaction[]) => void;
+  reviewBankTransaction: (id: string, classification: 'expense' | 'income' | 'internal_transfer', category?: CategoryKey) => void;
   updateKeywordRules: (rules: CategoryKeywordRule[]) => void;
   addKeywordRule: (rule: Omit<CategoryKeywordRule, 'id'>) => void;
   removeKeywordRule: (id: string) => void;
@@ -599,7 +550,8 @@ export interface FinanceContextType {
   addMedicalShift: (shift: Omit<MedicalShift, 'id'>) => void;
   updateMedicalShift: (id: string, updates: Partial<MedicalShift>) => void;
   deleteMedicalShift: (id: string) => void;
-  reconcileShiftWithIncome: (shiftId: string, incomeId: string, rememberHospitalRule?: boolean) => void;
+  reconcileShiftWithIncome: (shiftId: string, incomeId: string, rememberHospitalRule?: boolean, amount?: number) => void;
+  undoShiftReconciliation: (shiftId: string) => void;
   markShiftAsReceivedDirectly: (shiftId: string, actualDate?: string, createIncomeRecord?: boolean) => void;
   addShiftPreset: (preset: Omit<MedicalShiftPreset, 'id'>) => void;
   deleteShiftPreset: (id: string) => void;
@@ -678,146 +630,129 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
   const [userProfile, setUserProfile] = useState<UserAuthProfile | null>(null);
   const [coupleAccount, setCoupleAccount] = useState<CoupleAccountData | null>(null);
   const [isCloudSynced, setIsCloudSynced] = useState(false);
+  const [isHydratingCloud, setIsHydratingCloud] = useState(Boolean(auth.currentUser));
+  const [cloudLoadError, setCloudLoadError] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<'couple' | 'partner1' | 'partner2'>('couple');
 
-  const [state, setState] = useState<AppState>(() => {
+  const [state, setState] = useState<AppState>(INITIAL_STATE);
+  useEffect(() => {
+    // Remove exposed credentials while preserving the old financial backup.
+    // That unscoped backup is never automatically assigned to a signed-in UID.
     try {
-      const saved = localStorage.getItem(STORAGE_KEY);
+      const oldKey = 'junto_app_financeiro_state_v4';
+      const saved = localStorage.getItem(oldKey);
       if (saved) {
-        const parsed = JSON.parse(saved);
-
-        // Sanitize any legacy sample data from previous iterations
-        const hasLegacySampleData =
-          parsed.expenses?.some((e: any) => e.description?.includes('Jardins') || e.description?.includes('Fasano') || e.description?.includes('Santa Luzia')) ||
-          parsed.incomes?.some((i: any) => i.description?.includes('Dra. Bia') || i.description?.includes('Dr. Lucas')) ||
-          parsed.pluggyAccounts?.some((p: any) => p.id === 'plug-1' || p.id === 'plug-2' || p.id === 'plug-3');
-
-        const alertRules = (parsed.alertRules || INITIAL_STATE.alertRules).map((r: SpendingAlertRule) => {
-          if (r.type === 'parcel_limit' || r.id === 'rule-3') {
-            return {
-              ...r,
-              title: 'Avisar se parcelas de consumo passarem de 20% da renda',
-            };
-          }
-          return r;
-        });
-
-        if (hasLegacySampleData) {
-          return {
-            ...INITIAL_STATE,
-            ...parsed,
-            profile: {
-              ...INITIAL_STATE.profile,
-              ...(parsed.profile || {}),
-              partner1Income: parsed.profile?.partner1Income === 14000 ? 0 : (parsed.profile?.partner1Income ?? 0),
-              partner2Income: parsed.profile?.partner2Income === 16000 ? 0 : (parsed.profile?.partner2Income ?? 0),
-            },
-            expenses: [],
-            incomes: [],
-            installments: [],
-            piggyBanks: [],
-            pluggyAccounts: [],
-            linkedAccounts: [],
-            detectedSubscriptions: [],
-            notifications: [],
-            alertRules,
-            protectionCurrentAmount: 0,
-            protectionTotalInvested: 0,
-            freedomTotalInvested: 0,
-          };
+        const legacy = JSON.parse(saved);
+        if (Object.prototype.hasOwnProperty.call(legacy, 'pluggyCredentials')) {
+          delete legacy.pluggyCredentials;
+          localStorage.setItem(oldKey, JSON.stringify(legacy));
         }
-
-        return {
-          ...INITIAL_STATE,
-          ...parsed,
-          profile: { ...INITIAL_STATE.profile, ...(parsed.profile || {}) },
-          pluggyAccounts: parsed.pluggyAccounts || [],
-          pluggyCredentials: parsed.pluggyCredentials || INITIAL_STATE.pluggyCredentials,
-          keywordRules: parsed.keywordRules || INITIAL_STATE.keywordRules,
-          detectedSubscriptions: parsed.detectedSubscriptions || [],
-          linkedAccounts: parsed.linkedAccounts || [],
-          alertRules,
-          notifications: parsed.notifications || [],
-        };
       }
-    } catch (e) {
-      console.warn('Failed to load state from localStorage', e);
-    }
-    return INITIAL_STATE;
-  });
+    } catch { console.warn('Não foi possível remover as credenciais do cache legado.'); }
+  }, []);
+  const sessionUid = useRef<string | null>(null);
+  const [cacheOwner, setCacheOwner] = useState<string | null>(null);
+  const [cacheCoupleId, setCacheCoupleId] = useState<string | null>(null);
+  const sessionGeneration = useRef(0);
+  const entityBaseline = useRef<EntityState>({});
+  const stateRef = useRef(state);
+  stateRef.current = state;
+  const entityReady = useRef(false);
+  const entityListener = useRef<(() => void) | null>(null);
+  const coupleListener = useRef<(() => void) | null>(null);
+  const loadCache = (uid?: string, coupleId?: string): AppState => {
+    try {
+      const saved = localStorage.getItem(cacheKey(uid));
+      if (saved) {
+        const envelope = JSON.parse(saved);
+        if (envelope.version !== 1 || envelope.coupleId !== (coupleId || null)) return { ...INITIAL_STATE };
+        entityBaseline.current = envelope.baseline || {};
+        const parsed = envelope.state;
+        if (!parsed || typeof parsed !== 'object') return { ...INITIAL_STATE };
+        delete parsed.pluggyCredentials;
+        return { ...INITIAL_STATE, ...parsed, profile: { ...INITIAL_STATE.profile, ...parsed.profile } };
+      }
+    } catch { console.warn('Não foi possível recuperar o cache desta conta.'); }
+    return { ...INITIAL_STATE };
+  };
 
   const [isSyncingBanks, setIsSyncingBanks] = useState(false);
 
   useEffect(() => {
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+      if (cacheOwner !== sessionUid.current) return;
+      localStorage.setItem(cacheKey(cacheOwner || undefined), JSON.stringify({ version: 1, coupleId: cacheCoupleId, state, baseline: entityBaseline.current }));
     } catch (e) {
       console.warn('Failed to save to localStorage', e);
     }
-  }, [state]);
+  }, [state, cacheOwner, cacheCoupleId]);
 
   const isRemoteSync = useRef(false);
-  const inviteBackfillRef = useRef<string | null>(null);
+
 
   // Auth Listener & Realtime Cloud Synchronization
   useEffect(() => {
-    let unsubCouple: (() => void) | null = null;
+    let disposed = false;
 
-    const unsubAuth = onAuthStateChanged(auth, async (user) => {
+    const handleAuth = async (user: User | null) => {
+      const generation = ++sessionGeneration.current;
+      coupleListener.current?.();
+      coupleListener.current = null;
+      entityListener.current?.();
+      entityListener.current = null;
+      entityReady.current = false;
+      entityBaseline.current = {};
+      sessionUid.current = user?.uid || null;
+      setCacheOwner(null);
+      setUserProfile(null);
+      setCoupleAccount(null);
+      setIsCloudSynced(false);
+      setCloudLoadError(null);
+      setIsHydratingCloud(Boolean(user));
+      setCacheCoupleId(null);
+      setState(user ? { ...INITIAL_STATE } : loadCache());
       setCurrentUser(user);
       if (user) {
         try {
           const userDocRef = doc(db, 'users', user.uid);
           const userSnap = await getDoc(userDocRef);
+          if (disposed || generation !== sessionGeneration.current) return;
           if (userSnap.exists()) {
             const profileData = userSnap.data() as UserAuthProfile;
             setUserProfile(profileData);
+            setState(loadCache(user.uid, profileData.coupleId));
+            setCacheCoupleId(profileData.coupleId || null);
+            setCacheOwner(user.uid);
 
             if (profileData.coupleId) {
               const coupleRef = doc(db, 'couples', profileData.coupleId);
-              unsubCouple = onSnapshot(coupleRef, (cSnap) => {
+              coupleListener.current = onSnapshot(coupleRef, (cSnap) => {
+                if (disposed || generation !== sessionGeneration.current) return;
                 if (cSnap.exists()) {
                   const cData = cSnap.data();
 
-                  // Backfill member UIDs for couples created before the
-                  // security hardening. This lets us tighten Firestore rules
-                  // without locking existing users out.
-                  const shouldBackfillPartner1 =
-                    !cData.partner1Uid && profileData.partnerRole === 'partner1';
-                  const shouldBackfillPartner2 =
-                    !cData.partner2Uid && profileData.partnerRole === 'partner2';
-
-                  if (shouldBackfillPartner1 || shouldBackfillPartner2) {
-                    void updateDoc(coupleRef, {
-                      ...(shouldBackfillPartner1
-                        ? { partner1Uid: user.uid }
-                        : {}),
-                      ...(shouldBackfillPartner2
-                        ? { partner2Uid: user.uid }
-                        : {}),
-                    }).catch((err) =>
-                      console.warn('Could not backfill couple member UIDs:', err)
-                    );
-                  }
-
-                  const currentCoupleId = cData.id || profileData.coupleId;
-
-                  // Create the public invite lookup doc once per session for
-                  // the partner who owns the invite code. This also migrates
-                  // couples created before coupleInvites existed.
-                  if (
-                    profileData.partnerRole === 'partner1' &&
-                    cData.inviteCode &&
-                    inviteBackfillRef.current !== currentCoupleId
-                  ) {
-                    inviteBackfillRef.current = currentCoupleId;
-                    void writeInviteDoc(
-                      cData.inviteCode,
-                      currentCoupleId,
-                      user.uid
-                    ).catch((err) =>
-                      console.warn('Could not backfill couple invite doc:', err)
-                    );
+                  // Membership is assigned by the authenticated backend only.
+                  if ((cData.partner1Uid !== user.uid && cData.partner2Uid !== user.uid) || cData.departedMembers?.[user.uid]) { setCloudLoadError('O vínculo desta conta precisa ser validado pelo responsável do sistema.'); return; }
+                  if (!entityListener.current) {
+                    const legacy = Object.fromEntries(ENTITY_FIELDS.map(field => [field, Array.isArray(cData[field]) ? cData[field] : []])) as EntityState;
+                    // Mark listener creation immediately to avoid duplicate migrations.
+                    entityListener.current = () => {};
+                    void migrateEntities(db, profileData.coupleId, legacy, () => !disposed && generation === sessionGeneration.current && auth.currentUser?.uid === user.uid).then(() => {
+                      if (disposed || generation !== sessionGeneration.current) return;
+                      entityListener.current = subscribeEntities(db, profileData.coupleId, (remote, confirmed) => {
+                        if (generation !== sessionGeneration.current) return;
+                        const previous = entityBaseline.current;
+                        entityBaseline.current = Object.fromEntries(ENTITY_FIELDS.map(field => [field,
+                          conflictAwareBaseline(previous[field] || [], (stateRef.current[field] || []) as unknown as import('../lib/entitySync').SyncEntity[], remote[field] || [])
+                        ])) as EntityState;
+                        entityReady.current = true;
+                        setState(prev => ({ ...prev, ...Object.fromEntries(ENTITY_FIELDS.map(field => [field,
+                          rebaseEntities(previous[field] || [], prev[field] as unknown as import('../lib/entitySync').SyncEntity[] || [], remote[field] || [])
+                        ])) }));
+                        setIsHydratingCloud(false);
+                        setIsCloudSynced(confirmed);
+                      }, () => { setIsCloudSynced(false); setCloudLoadError('Não foi possível acessar os registros. Verifique sua conexão e as permissões da conta.'); });
+                    }).catch(() => { entityListener.current = null; setIsCloudSynced(false); setCloudLoadError('Não foi possível carregar os registros. Seu cache foi preservado. Verifique a conexão e tente novamente.'); });
                   }
 
                   setCoupleAccount({
@@ -837,18 +772,14 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
                     ...prev,
                     profile: {
                       ...prev.profile,
+                      partner1Career: cData.partner1Career || prev.profile.partner1Career,
+                      partner2Career: cData.partner2Career || prev.profile.partner2Career,
                       partner1Name: cData.partner1Name || prev.profile.partner1Name,
                       partner2Name: cData.partner2Name || prev.profile.partner2Name,
                       partner1Income: cData.partner1Income !== undefined ? cData.partner1Income : (prev.profile.partner1Income ?? 0),
                       partner2Income: cData.partner2Income !== undefined ? cData.partner2Income : (prev.profile.partner2Income ?? 0),
                       investmentsPercentage: cData.investmentsPercentage !== undefined ? cData.investmentsPercentage : (prev.profile.investmentsPercentage ?? 20),
                     },
-                    expenses: Array.isArray(cData.expenses) ? cData.expenses : prev.expenses,
-                    incomes: Array.isArray(cData.incomes) ? cData.incomes : prev.incomes,
-                    pluggyAccounts: Array.isArray(cData.pluggyAccounts) ? cData.pluggyAccounts : prev.pluggyAccounts,
-                    pluggyCredentials: cData.pluggyCredentials ? { ...prev.pluggyCredentials, ...cData.pluggyCredentials } : prev.pluggyCredentials,
-                    installments: Array.isArray(cData.installments) ? cData.installments : prev.installments,
-                    piggyBanks: Array.isArray(cData.piggyBanks) ? cData.piggyBanks : prev.piggyBanks,
                     categoryPercentages: cData.categoryPercentages || prev.categoryPercentages,
                     categoryFloors: cData.categoryFloors || prev.categoryFloors,
                     protectionCurrentAmount: cData.protectionCurrentAmount !== undefined ? cData.protectionCurrentAmount : prev.protectionCurrentAmount,
@@ -860,12 +791,12 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
                     surplusTransfers: Array.isArray(cData.surplusTransfers) ? cData.surplusTransfers : prev.surplusTransfers,
                     dismissedSurplusMonths: Array.isArray(cData.dismissedSurplusMonths) ? cData.dismissedSurplusMonths : prev.dismissedSurplusMonths,
                   }));
-                }
-              });
-            }
-          }
-          setIsCloudSynced(true);
+                } else { setCloudLoadError('O espaço financeiro desta conta não foi encontrado.'); }
+              }, () => { setIsCloudSynced(false); setCloudLoadError('Não foi possível abrir este casal. Verifique a conexão e o vínculo da sua conta.'); });
+            } else { setIsHydratingCloud(false); }
+          } else { setIsHydratingCloud(false); }
         } catch (err) {
+          setCloudLoadError('Não foi possível carregar sua conta. Verifique a conexão.');
           console.warn('Firestore initial sync note:', err);
         }
       } else {
@@ -879,36 +810,64 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
           isAnonymous: true,
         } as any));
       }
-    });
+    };
+    const unsubAuth = onAuthStateChanged(auth, handleAuth);
+    const membershipChanged = () => { void handleAuth(auth.currentUser); };
+    window.addEventListener('junto-membership-changed', membershipChanged);
 
     return () => {
       unsubAuth();
-      if (unsubCouple) unsubCouple();
+      window.removeEventListener('junto-membership-changed', membershipChanged);
+      disposed = true;
+      ++sessionGeneration.current;
+      coupleListener.current?.();
+      coupleListener.current = null;
+      entityListener.current?.();
+      entityListener.current = null;
     };
   }, []);
 
+  // Independent entity writes must never be skipped by a metadata snapshot.
+  useEffect(() => {
+    if (!coupleAccount?.id || !currentUser || !entityReady.current) return;
+    const generation = sessionGeneration.current;
+    const baseline = entityBaseline.current;
+    const current = Object.fromEntries(ENTITY_FIELDS.map(field => [field, state[field] || []])) as unknown as EntityState;
+    const timer = setTimeout(async () => {
+      if (generation !== sessionGeneration.current || auth.currentUser?.uid !== currentUser.uid) return;
+      try {
+        setIsCloudSynced(false);
+        await saveEntities(db, coupleAccount.id, baseline, current, () => generation === sessionGeneration.current && auth.currentUser?.uid === currentUser.uid);
+        if (generation === sessionGeneration.current) setIsCloudSynced(true);
+      } catch (error) {
+        if (generation === sessionGeneration.current) setIsCloudSynced(false);
+        console.warn('Não foi possível salvar os registros. Alterações locais preservadas.', error);
+      }
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [coupleAccount?.id, currentUser?.uid, state.expenses, state.incomes, state.installments, state.piggyBanks, state.strategicIntents, state.medicalShifts, state.shiftIncomeAllocations, state.bankImportedTransactions, state.medicalShiftPresets, state.hospitalMappingRules, state.incomeSourceRules, state.pendingConfirmations, state.linkedAccounts, state.detectedSubscriptions, state.keywordRules, state.coupleGoals, state.coupleWishlist, state.coupleFixedBills, state.dreamSimulations, state.pluggyAccounts]);
+
   // Realtime Cloud Persistence: Save shared couple state to Firestore (debounced)
   useEffect(() => {
-    if (!coupleAccount?.id) return;
+    if (!coupleAccount?.id || !currentUser || currentUser.uid !== sessionUid.current || !entityReady.current) return;
     if (isRemoteSync.current) {
       isRemoteSync.current = false;
       return;
     }
 
+    const generation = sessionGeneration.current;
     const timer = setTimeout(async () => {
+      if (generation !== sessionGeneration.current || auth.currentUser?.uid !== currentUser.uid) return;
+      setIsCloudSynced(false);
       try {
         const coupleRef = doc(db, 'couples', coupleAccount.id);
         await setDoc(
           coupleRef,
           {
-            expenses: state.expenses,
-            incomes: state.incomes,
-            pluggyAccounts: state.pluggyAccounts,
-            pluggyCredentials: state.pluggyCredentials,
-            installments: state.installments,
-            piggyBanks: state.piggyBanks,
             categoryPercentages: state.categoryPercentages,
             categoryFloors: state.categoryFloors,
+            partner1Career: state.profile.partner1Career || null,
+            partner2Career: state.profile.partner2Career || null,
             partner1Income: state.profile.partner1Income,
             partner2Income: state.profile.partner2Income,
             partner1Name: state.profile.partner1Name,
@@ -922,13 +881,14 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
             completedMonthDeposits: state.completedMonthDeposits || {},
             surplusTransfers: state.surplusTransfers || [],
             dismissedSurplusMonths: state.dismissedSurplusMonths || [],
-            strategicIntents: state.strategicIntents || [],
             updatedAt: new Date().toISOString(),
             lastUpdatedBy: currentUser?.uid || 'user',
           },
           { merge: true }
         );
+        if (generation === sessionGeneration.current) setIsCloudSynced(true);
       } catch (err) {
+        setIsCloudSynced(false);
         console.warn('Failed to sync couple state to Firestore', err);
       }
     }, 800);
@@ -939,11 +899,12 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
     state.expenses,
     state.incomes,
     state.pluggyAccounts,
-    state.pluggyCredentials,
     state.installments,
     state.piggyBanks,
     state.categoryPercentages,
     state.categoryFloors,
+    state.profile.partner1Career,
+    state.profile.partner2Career,
     state.profile.partner1Income,
     state.profile.partner2Income,
     state.profile.partner1Name,
@@ -958,420 +919,52 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
     state.surplusTransfers,
     state.dismissedSurplusMonths,
     state.strategicIntents,
+    state.medicalShifts,
+    state.coupleGoals,
+    state.coupleWishlist,
+    state.coupleFixedBills,
+    state.dreamSimulations,
     currentUser?.uid,
   ]);
 
-  const generateNewInviteCode = async (): Promise<string> => {
-    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-    let code = '';
-    for (let i = 0; i < 6; i++) {
-      code += chars.charAt(Math.floor(Math.random() * chars.length));
-    }
-
-    if (coupleAccount?.id) {
-      const oldCode = coupleAccount.inviteCode;
-      const uid = currentUser?.uid || 'unknown';
-      try {
-        await writeInviteDoc(code, coupleAccount.id, uid);
-        const coupleRef = doc(db, 'couples', coupleAccount.id);
-        await updateDoc(coupleRef, { inviteCode: code });
-        if (oldCode && oldCode !== code) {
-          await deleteDoc(doc(db, 'coupleInvites', oldCode)).catch((err) =>
-            console.warn('Could not remove old invite doc:', err)
-          );
-        }
-      } catch (err) {
-        console.warn('Could not generate new invite code:', err);
-        throw err;
-      }
-      setCoupleAccount(prev => (prev ? { ...prev, inviteCode: code } : null));
-    }
-    return code;
+  const installCoupleSession = (result: CoupleSession) => {
+    coupleListener.current?.();
+    setCacheOwner(null);
+    setState({ ...INITIAL_STATE, profile: { ...INITIAL_STATE.profile, partner1Name: result.couple.partner1Name, partner2Name: result.couple.partner2Name } });
+    setUserProfile(result.profile);
+    setCoupleAccount(result.couple);
+    // Reattach the listener without logging out or sharing another account's cache.
+    window.dispatchEvent(new Event('junto-membership-changed'));
   };
 
-  const signUpWithEmail = async (
-    emailVal: string,
-    passVal: string,
-    displayNameVal: string,
-    partner1NameVal: string,
-    partner2NameVal: string
-  ) => {
-    const cred = await createUserWithEmailAndPassword(auth, emailVal, passVal);
-    const uid = cred.user.uid;
-    const coupleId = makeCoupleId();
-    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-    let inviteCode = '';
-    for (let i = 0; i < 6; i++) {
-      inviteCode += chars.charAt(Math.floor(Math.random() * chars.length));
-    }
+  const generateNewInviteCode = async (): Promise<string> => {
+    const result = await authenticatedApi<{ inviteCode: string }>('/api/couples/invite', { coupleId: coupleAccount?.id });
+    setCoupleAccount(prev => prev ? { ...prev, inviteCode: result.inviteCode } : null);
+    return result.inviteCode;
+  };
 
-    const newCouple = {
-      id: coupleId,
-      inviteCode,
-      partner1Uid: uid,
-      partner1Name: displayNameVal || partner1NameVal || 'Seu Nome',
-      partner2Name: 'Aguardando Par...',
-      partner1Income: 0,
-      partner2Income: 0,
-      createdAt: new Date().toISOString(),
-    };
-
-    await setDoc(doc(db, 'couples', coupleId), newCouple);
-    await writeInviteDoc(inviteCode, coupleId, uid).catch((err) =>
-      console.warn('Could not create couple invite doc:', err)
-    );
-
-    const newProfile: UserAuthProfile = {
-      uid,
-      email: emailVal,
-      displayName: displayNameVal || partner1NameVal || 'Seu Nome',
-      coupleId,
-      partnerRole: 'partner1',
-    };
-
-    await setDoc(doc(db, 'users', uid), newProfile);
-
-    setUserProfile(newProfile);
-    setCoupleAccount({
-      id: coupleId,
-      inviteCode,
-      partner1Name: newCouple.partner1Name,
-      partner2Name: newCouple.partner2Name,
-      partner1Income: newCouple.partner1Income,
-      partner2Income: newCouple.partner2Income,
-      createdAt: newCouple.createdAt,
-    });
-
-    // Clear and initialize standard state to clean slate
-    setState(prev => ({
-      ...prev,
-      profile: {
-        ...prev.profile,
-        partner1Name: newProfile.displayName,
-        partner1Specialty: 'Profissão / Especialidade',
-        partner2Name: 'Aguardando Par...',
-        partner2Specialty: 'Aguardando Par...',
-        partner1Income: 0,
-        partner2Income: 0,
-        streakMonths: 0,
-      },
-      categoryPercentages: prev.categoryPercentages || INITIAL_STATE.categoryPercentages,
-      categoryFloors: {
-        moradia: 0,
-        comida: 0,
-        lazer: 0,
-        protecao: 0,
-        profissional: 0,
-        investimentos: 0,
-      },
-      keywordRules: prev.keywordRules || DEFAULT_KEYWORD_RULES,
-      expenses: [],
-      incomes: [],
-      installments: [],
-      piggyBanks: [],
-      linkedAccounts: [],
-      pluggyAccounts: [],
-      detectedSubscriptions: [],
-      pluggyCredentials: {
-        partner1ClientId: '',
-        partner1ClientSecret: '',
-        partner1Cpf: '',
-        partner2ClientId: '',
-        partner2ClientSecret: '',
-        partner2Cpf: '',
-      },
-      notifications: [
-        {
-          id: `notif-welcome-${Date.now()}`,
-          title: 'Bem-vindo ao JUNTÔ! 🎉',
-          message: 'Seu cadastro individual está pronto. Adicione seus primeiros ganhos e gastos, ou faça a fusão com seu par para unificar orçamentos!',
-          timestamp: 'Agora mesmo',
-          type: 'success',
-          isRead: false,
-        }
-      ],
-      protectionCurrentAmount: 0,
-      protectionTotalInvested: 0,
-      protectionYieldAccumulated: 0,
-      isProtectionComplete: false,
-      freedomTotalInvested: 0,
-      freedomYieldAccumulated: 0,
-    }));
-
-    setIsCloudSynced(true);
+  const signUpWithEmail = async (emailVal: string, passVal: string, displayNameVal: string, partner1NameVal: string, partner2NameVal: string) => {
+    await createUserWithEmailAndPassword(auth, emailVal, passVal);
+    installCoupleSession(await authenticatedApi<CoupleSession>('/api/couples', { displayName: displayNameVal || partner1NameVal, partner1Name: partner1NameVal, partner2Name: partner2NameVal }));
   };
 
   const signInWithEmail = async (emailVal: string, passVal: string) => {
-    await signInWithEmailAndPassword(auth, emailVal, passVal);
+    const cred = await signInWithEmailAndPassword(auth, emailVal, passVal);
+    const snap = await getDoc(doc(db, 'users', cred.user.uid));
+    if (!snap.exists() || !snap.data().coupleId) installCoupleSession(await authenticatedApi<CoupleSession>('/api/couples', { displayName: cred.user.displayName || 'Você' }));
   };
 
   const signInWithGoogle = async () => {
-    const provider = new GoogleAuthProvider();
-    const cred = await signInWithPopup(auth, provider);
-    const uid = cred.user.uid;
-    const emailVal = cred.user.email || '';
-    const displayNameVal = cred.user.displayName || 'Usuário Juntô';
-
-    // Check if user profile already exists
-    const userRef = doc(db, 'users', uid);
-    const userSnap = await getDoc(userRef);
-
-    if (!userSnap.exists()) {
-      // User is registering for the first time with Google!
-      // Create a new couple space
-      const coupleId = makeCoupleId();
-      const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-      let inviteCode = '';
-      for (let i = 0; i < 6; i++) {
-        inviteCode += chars.charAt(Math.floor(Math.random() * chars.length));
-      }
-
-      const newCouple = {
-        id: coupleId,
-        inviteCode,
-        partner1Uid: uid,
-        partner1Name: displayNameVal,
-        partner2Name: 'Aguardando Par...',
-        partner1Income: 0,
-        partner2Income: 0,
-        createdAt: new Date().toISOString(),
-      };
-
-      await setDoc(doc(db, 'couples', coupleId), newCouple);
-      await writeInviteDoc(inviteCode, coupleId, uid).catch((err) =>
-        console.warn('Could not create couple invite doc:', err)
-      );
-
-      const newProfile: UserAuthProfile = {
-        uid,
-        email: emailVal,
-        displayName: displayNameVal,
-        coupleId,
-        partnerRole: 'partner1',
-      };
-
-      await setDoc(doc(db, 'users', uid), newProfile);
-
-      setUserProfile(newProfile);
-      setCoupleAccount({
-        id: coupleId,
-        inviteCode,
-        partner1Name: newCouple.partner1Name,
-        partner2Name: newCouple.partner2Name,
-        partner1Income: newCouple.partner1Income,
-        partner2Income: newCouple.partner2Income,
-        createdAt: newCouple.createdAt,
-      });
-
-      // Clear and initialize standard state to clean slate
-      setState(prev => ({
-        ...prev,
-        profile: {
-          ...prev.profile,
-          partner1Name: displayNameVal,
-          partner1Specialty: 'Profissão / Especialidade',
-          partner2Name: 'Aguardando Par...',
-          partner2Specialty: 'Aguardando Par...',
-          partner1Income: 0,
-          partner2Income: 0,
-          streakMonths: 0,
-        },
-        categoryPercentages: prev.categoryPercentages || INITIAL_STATE.categoryPercentages,
-        categoryFloors: {
-          moradia: 0,
-          comida: 0,
-          lazer: 0,
-          protecao: 0,
-          profissional: 0,
-          investimentos: 0,
-        },
-        keywordRules: prev.keywordRules || DEFAULT_KEYWORD_RULES,
-        expenses: [],
-        incomes: [],
-        installments: [],
-        piggyBanks: [],
-        linkedAccounts: [],
-        pluggyAccounts: [],
-        detectedSubscriptions: [],
-        pluggyCredentials: {
-          partner1ClientId: '',
-          partner1ClientSecret: '',
-          partner1Cpf: '',
-          partner2ClientId: '',
-          partner2ClientSecret: '',
-          partner2Cpf: '',
-        },
-        notifications: [
-          {
-            id: `notif-welcome-${Date.now()}`,
-            title: 'Bem-vindo ao JUNTÔ! 🎉',
-            message: 'Seu cadastro individual está pronto. Adicione seus primeiros ganhos e gastos, ou faça a fusão com seu par para unificar orçamentos!',
-            timestamp: 'Agora mesmo',
-            type: 'success',
-            isRead: false,
-          }
-        ],
-        protectionCurrentAmount: 0,
-        protectionTotalInvested: 0,
-        protectionYieldAccumulated: 0,
-        isProtectionComplete: false,
-        freedomTotalInvested: 0,
-        freedomYieldAccumulated: 0,
-      }));
-
-      setIsCloudSynced(true);
-    } else {
-      // User already exists! Settle auth state (listener will handle load)
-      const uData = userSnap.data() as UserAuthProfile;
-      setUserProfile(uData);
-      setIsCloudSynced(true);
+    const cred = await signInWithPopup(auth, new GoogleAuthProvider());
+    const snap = await getDoc(doc(db, 'users', cred.user.uid));
+    if (!snap.exists() || !snap.data().coupleId) {
+      installCoupleSession(await authenticatedApi<CoupleSession>('/api/couples', { displayName: cred.user.displayName || 'Você' }));
     }
   };
 
   const joinCoupleWithInviteCode = async (codeVal: string) => {
-    const cleanCode = codeVal.trim().toUpperCase();
-    if (!cleanCode || cleanCode.length < 4) {
-      throw new Error('Por favor, insira o código de 6 dígitos do seu par.');
-    }
-
-    let user = currentUser;
-    if (!user) {
-      try {
-        const anonCred = await signInAnonymously(auth);
-        user = anonCred.user;
-        setCurrentUser(anonCred.user);
-      } catch (authErr) {
-        console.warn('Anonymous auth note:', authErr);
-        throw new Error(
-          'Não foi possível autenticar. Faça login para entrar com um código.'
-        );
-      }
-    }
-
-    // The invite code is the secret. The lookup document only contains the
-    // coupleId, never financial data, and cannot be listed.
-    const inviteSnap = await getDoc(doc(db, 'coupleInvites', cleanCode));
-    if (!inviteSnap.exists()) {
-      throw new Error(
-        'Código inválido ou expirado. Peça ao seu par para gerar um novo código no app.'
-      );
-    }
-
-    const coupleId = inviteSnap.data().coupleId as string;
-    if (!coupleId) {
-      throw new Error('Convite inválido. Peça um novo código ao seu par.');
-    }
-
-    const partnerName =
-      user.displayName || state.profile.partner1Name || 'Par Conectado';
-    const previousCoupleId = userProfile?.coupleId || '';
-
-    const updatedProfile: UserAuthProfile = {
-      uid: user.uid,
-      email: user.email || '',
-      displayName: partnerName,
-      coupleId,
-      partnerRole: 'partner2',
-    };
-
-    // Membership is required before reading the couple document, so we link
-    // the profile first. If the couple cannot be joined, we restore it below.
-    await setDoc(doc(db, 'users', user.uid), updatedProfile, { merge: true });
-    setUserProfile(updatedProfile);
-
-    try {
-      const coupleRef = doc(db, 'couples', coupleId);
-      const coupleSnap = await getDoc(coupleRef);
-      if (!coupleSnap.exists()) {
-        throw new Error(
-          'O casal não foi encontrado. Peça um novo código ao seu par.'
-        );
-      }
-
-      const coupleData = coupleSnap.data();
-
-      if (
-        coupleData.partner2Uid &&
-        coupleData.partner2Uid !== user.uid
-      ) {
-        throw new Error(
-          'Este casal já está completo. Peça ao seu par para gerar um novo código.'
-        );
-      }
-
-      await updateDoc(coupleRef, {
-        partner2Name: partnerName,
-        partner2Uid: user.uid,
-      });
-
-      setCoupleAccount({
-        id: coupleId,
-        inviteCode: coupleData.inviteCode,
-        partner1Name: coupleData.partner1Name,
-        partner2Name: partnerName,
-        partner1Income:
-          coupleData.partner1Income !== undefined
-            ? coupleData.partner1Income
-            : 0,
-        partner2Income:
-          coupleData.partner2Income !== undefined
-            ? coupleData.partner2Income
-            : 0,
-        createdAt: coupleData.createdAt || new Date().toISOString(),
-      });
-
-      // Sync shared data from the couple doc into state
-      setState((prev) => ({
-        ...prev,
-        profile: {
-          ...prev.profile,
-          partner1Name:
-            coupleData.partner1Name || prev.profile.partner1Name,
-          partner2Name: partnerName,
-          partner1Income:
-            coupleData.partner1Income !== undefined
-              ? coupleData.partner1Income
-              : prev.profile.partner1Income,
-          partner2Income:
-            coupleData.partner2Income !== undefined
-              ? coupleData.partner2Income
-              : prev.profile.partner2Income,
-        },
-        expenses: Array.isArray(coupleData.expenses)
-          ? coupleData.expenses
-          : prev.expenses,
-        incomes: Array.isArray(coupleData.incomes)
-          ? coupleData.incomes
-          : prev.incomes,
-        pluggyAccounts: Array.isArray(coupleData.pluggyAccounts)
-          ? coupleData.pluggyAccounts
-          : prev.pluggyAccounts,
-        pluggyCredentials: coupleData.pluggyCredentials
-          ? { ...prev.pluggyCredentials, ...coupleData.pluggyCredentials }
-          : prev.pluggyCredentials,
-        installments: Array.isArray(coupleData.installments)
-          ? coupleData.installments
-          : prev.installments,
-        piggyBanks: Array.isArray(coupleData.piggyBanks)
-          ? coupleData.piggyBanks
-          : prev.piggyBanks,
-      }));
-
-      setIsCloudSynced(true);
-    } catch (err) {
-      // Roll back the profile link if the couple was not joinable.
-      await setDoc(
-        doc(db, 'users', user.uid),
-        { coupleId: previousCoupleId },
-        { merge: true }
-      ).catch(() =>
-        console.warn('Could not restore previous coupleId after failed join')
-      );
-      setUserProfile((prev) =>
-        prev ? { ...prev, coupleId: previousCoupleId } : null
-      );
-      throw err;
-    }
+    if (!auth.currentUser) throw new Error('Faça login para aceitar o convite.');
+    installCoupleSession(await authenticatedApi<CoupleSession>('/api/couples/join', { inviteCode: codeVal.trim() }));
   };
 
   const signInAsGuest = async () => {
@@ -1390,20 +983,39 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
   };
 
   const unlinkCouple = async () => {
-    if (currentUser) {
-      const userRef = doc(db, 'users', currentUser.uid);
-      await updateDoc(userRef, { coupleId: '' });
-      setUserProfile(prev => prev ? { ...prev, coupleId: '' } : null);
-      setCoupleAccount(null);
-    }
+    await authenticatedApi('/api/couples/leave', { coupleId: coupleAccount?.id });
+    ++sessionGeneration.current;
+    coupleListener.current?.();
+    coupleListener.current = null;
+    entityListener.current?.();
+    entityListener.current = null;
+    entityReady.current = false;
+    entityBaseline.current = {};
+    entityListener.current?.();
+    entityListener.current = null;
+    entityReady.current = false;
+    setUserProfile(prev => prev ? { ...prev, coupleId: '' } : null);
+    setCoupleAccount(null);
+    setState({ ...INITIAL_STATE });
+    setIsCloudSynced(false);
   };
 
   const signOutUser = async () => {
-    await signOut(auth);
+    ++sessionGeneration.current;
+    sessionUid.current = null;
+    coupleListener.current?.();
+    coupleListener.current = null;
+    entityListener.current?.();
+    entityListener.current = null;
+    entityReady.current = false;
+    entityBaseline.current = {};
+    setCacheOwner(null);
+    setState({ ...INITIAL_STATE });
     setCurrentUser(null);
     setUserProfile(null);
     setCoupleAccount(null);
     setIsCloudSynced(false);
+    await signOut(auth);
   };
 
   // Apply dark mode class to document
@@ -1463,7 +1075,7 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
   const bonusShiftCalculation = useMemo(() => {
     const curMonthIncomes = state.incomes.filter(i => i.date && i.date.startsWith(state.currentMonth));
     const curMonthTotal = curMonthIncomes.reduce((sum, inc) => sum + (inc.amount || 0), 0);
-    const baseline = declaredProfileIncome > 0 ? declaredProfileIncome : (dynamicIncomeAnalysis.threeMonthsAverage > 0 ? dynamicIncomeAnalysis.threeMonthsAverage : activeLifeTier.minIncome);
+    const baseline = declaredProfileIncome > 0 ? declaredProfileIncome : (dynamicIncomeAnalysis.threeMonthsAverage > 0 ? dynamicIncomeAnalysis.threeMonthsAverage : 0);
     return calculateBonusShift50_50(curMonthTotal > 0 ? curMonthTotal : totalIncome, baseline);
   }, [state.incomes, state.currentMonth, declaredProfileIncome, dynamicIncomeAnalysis.threeMonthsAverage, activeLifeTier.minIncome, totalIncome]);
 
@@ -1537,8 +1149,8 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
   }, [activeInstallments]);
 
   const totalActiveInstallmentsAmountMonth = useMemo(() => {
-    return cardConsumptionInstallments.reduce((sum, item) => sum + item.installmentAmount, 0);
-  }, [cardConsumptionInstallments]);
+    return cardConsumptionInstallments.reduce((sum, item) => sum + installmentInMonth(item, state.currentMonth), 0);
+  }, [cardConsumptionInstallments, state.currentMonth]);
 
   const nextMonthCommittedInstallmentsAmount = useMemo(() => {
     return state.installments
@@ -1546,8 +1158,8 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
         if (!inst.active) return false;
         return inst.paidInstallmentsCount < inst.installmentsCount;
       })
-      .reduce((sum, item) => sum + item.installmentAmount, 0);
-  }, [state.installments]);
+      .reduce((sum, item) => sum + installmentInMonth(item, getNextMonth(state.currentMonth)), 0);
+  }, [state.installments, state.currentMonth]);
 
   // Teto de comprometimento oficial de até 20% da renda líquida do casal
   const installmentLimitPercentage = 20;
@@ -1612,7 +1224,7 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
       if (res[inst.category]) {
         const alreadyInExpenses = currentMonthExpenses.some(e => e.installmentId === inst.id);
         if (!alreadyInExpenses) {
-          res[inst.category].spent += inst.installmentAmount;
+          res[inst.category].spent += installmentInMonth(inst, state.currentMonth);
         }
       }
     });
@@ -1625,7 +1237,7 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
     });
 
     return res;
-  }, [state.categoryPercentages, totalIncome, currentMonthExpenses, activeInstallments, activeLifeTier, bonusShiftCalculation]);
+  }, [state.categoryPercentages, totalIncome, currentMonthExpenses, activeInstallments, activeLifeTier, bonusShiftCalculation, state.currentMonth]);
 
   const blownCategories = useMemo(() => {
     return (Object.keys(categoriesSpending) as CategoryKey[]).filter(k => categoriesSpending[k].isOver);
@@ -2035,11 +1647,11 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
   const addPluggyAccount = (account: Omit<PluggyBankConnection, 'id'>) => {
     const newAcc: PluggyBankConnection = {
       ...account,
-      id: `plug-${Date.now()}`,
+      id: 'pluggy-account:' + account.accountId,
     };
     setState(prev => ({
       ...prev,
-      pluggyAccounts: [...(prev.pluggyAccounts || []), newAcc],
+      pluggyAccounts: [...(prev.pluggyAccounts || []).filter(a => a.accountId !== account.accountId), newAcc],
     }));
   };
 
@@ -2050,149 +1662,54 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
     }));
   };
 
-  const updatePluggyCredentials = (creds: Partial<PluggyCredentials>) => {
-    setState(prev => ({
-      ...prev,
-      pluggyCredentials: {
-        ...(prev.pluggyCredentials || {}),
-        ...creds,
-      },
-    }));
+  const syncPluggyData = async () => {
+    const userId = auth.currentUser?.uid;
+    const itemIds = [...new Set((state.pluggyAccounts || []).filter(a => a.appOwner === userProfile?.partnerRole).map(a => a.itemId).filter(Boolean))];
+    if (!itemIds.length) throw new Error('Conecte uma instituição antes de sincronizar.');
+    setIsSyncingBanks(true);
+    try {
+      for (const itemId of itemIds) {
+        const result = await authenticatedApi<{ source: string; simulated: boolean; transactions: Array<{ id: string; accountId: string; amount: number; date: string; description: string; type: string }> }>('/api/bank-sync/fetch', { itemId });
+        if (result.simulated || result.source !== 'pluggy') throw new Error('A sincronização real está indisponível.');
+        if (auth.currentUser?.uid !== userId) return;
+        setState(prev => {
+          const imported: BankImportedTransaction[] = [...(prev.bankImportedTransactions || [])];
+          for (const transaction of result.transactions || []) {
+            if (!transaction.id || !transaction.accountId || !Number.isFinite(transaction.amount)) continue;
+            const id = transaction.id;
+            if (imported.some(e => e.id === id) || prev.expenses.some(e => e.id === id) || prev.incomes.some(i => i.id === id)) continue;
+            const account = prev.pluggyAccounts.find(a => a.accountId === transaction.accountId);
+            const owner: PaidBy = account?.owner || userProfile?.partnerRole || 'both';
+            const amount = Math.round(Math.abs(transaction.amount) * 100) / 100;
+            const date = transaction.date.slice(0, 10);
+            if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || amount <= 0) continue;
+            imported.push({ id, itemId, accountId: transaction.accountId, amount, date, description: transaction.description || 'Lançamento bancário', direction: transaction.type === 'CREDIT' ? 'credit' : 'debit', owner, status: 'pending' });
+          }
+          return { ...prev, bankImportedTransactions: imported, pluggyAccounts: prev.pluggyAccounts.map(a => a.itemId === itemId ? { ...a, lastSynced: new Date().toISOString(), status: 'connected' as const } : a) };
+        });
+      }
+    } catch (error) {
+      setState(prev => ({ ...prev, pluggyAccounts: prev.pluggyAccounts.map(a => itemIds.includes(a.itemId) ? { ...a, status: 'error' as const } : a) }));
+      throw error;
+    } finally { setIsSyncingBanks(false); }
   };
 
-  const syncPluggyData = async () => {
-    setIsSyncingBanks(true);
-    await new Promise(r => setTimeout(r, 1200));
-
-    const nowStr = `Hoje às ${new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`;
-    
-    // Simulate detecting a hospital payment if none currently pending
-    let queuedConfirmation: PendingIncomeConfirmation | null = null;
-    const hasPending = (state.pendingConfirmations || []).length > 0;
-    if (!hasPending) {
-      queuedConfirmation = {
-        id: `conf-plug-${Date.now()}`,
-        amount: 8500,
-        sourceName: 'Hospital Sírio-Libanês SP',
-        sourceTaxNumber: '61.532.644/0001-15',
-        date: new Date().toISOString().split('T')[0],
-        recipient: 'partner1',
-        suggestedClassification: 'pj_gross',
-      };
-    }
-
+  const importStatement = (items: BankImportedTransaction[]) => setState(prev => {
+    const existing = new Set((prev.bankImportedTransactions || []).map(item => item.id));
+    return { ...prev, bankImportedTransactions: [...(prev.bankImportedTransactions || []), ...items.filter(item => !existing.has(item.id) && !prev.expenses.some(e => e.id === item.id) && !prev.incomes.some(i => i.id === item.id))] };
+  });
+  const reviewBankTransaction = (id: string, classification: 'expense' | 'income' | 'internal_transfer', category: CategoryKey = 'lazer') => {
     setState(prev => {
-      const nextExpenses = [...prev.expenses];
-      let nextIntents = [...(prev.strategicIntents || [])];
-      let nextProtAmount = prev.protectionCurrentAmount;
-      let nextProtInvested = prev.protectionTotalInvested;
-      let nextPiggyBanks = [...prev.piggyBanks];
-      const autoReconciledNotifs: AppNotification[] = [];
-
-      // Auto-reconciliation engine: match pending intents against un-reconciled expenses
-      const pendingIntents = nextIntents.filter(i => i.status === 'pending');
-      pendingIntents.forEach(intent => {
-        const matchedExpenseIndex = nextExpenses.findIndex(e => {
-          if (e.reconciledWithIntent || e.strategicIntentId) return false;
-          // Matching criterion: amounts within 3% or description contains core words of intent title
-          const amountDiff = Math.abs(e.amount - intent.estimatedAmount);
-          const amountMatch = intent.estimatedAmount > 0 && amountDiff / intent.estimatedAmount <= 0.05;
-          const words = intent.title.toLowerCase().split(/\s+/).filter(w => w.length > 3);
-          const descLower = e.description.toLowerCase();
-          const titleMatch = words.some(w => descLower.includes(w));
-          return amountMatch || titleMatch;
-        });
-
-        if (matchedExpenseIndex !== -1) {
-          const matchedExp = nextExpenses[matchedExpenseIndex];
-          const isExcluded = intent.targetSource !== 'month_budget';
-
-          // Apply balance deductions
-          if (intent.targetSource === 'reserve_excess') {
-            nextProtAmount = Math.max(0, nextProtAmount - matchedExp.amount);
-            nextProtInvested = Math.max(0, nextProtInvested - matchedExp.amount);
-          } else if (intent.targetSource === 'piggy_bank' && intent.targetGoalId) {
-            nextPiggyBanks = nextPiggyBanks.map(g => {
-              if (g.id === intent.targetGoalId) {
-                const nextCur = Math.max(0, g.currentAmount - matchedExp.amount);
-                return { ...g, currentAmount: nextCur, completed: nextCur >= g.targetAmount };
-              }
-              return g;
-            });
-          }
-
-          nextExpenses[matchedExpenseIndex] = {
-            ...matchedExp,
-            category: intent.category,
-            fundingSource: intent.targetSource,
-            fundingGoalId: intent.targetGoalId,
-            fundingGoalName: intent.targetGoalName,
-            strategicIntentId: intent.id,
-            isExcludedFromMonthlyBudget: isExcluded,
-            triageDone: true,
-            reconciledWithIntent: true,
-          };
-
-          nextIntents = nextIntents.map(i =>
-            i.id === intent.id ? { ...i, status: 'matched' as const, matchedExpenseId: matchedExp.id } : i
-          );
-
-          autoReconciledNotifs.push({
-            id: `notif-auto-recon-${Date.now()}-${intent.id}`,
-            title: 'Reconciliação Automática Pluggy! 🎯✨',
-            message: `A compra "${matchedExp.description}" (R$ ${matchedExp.amount.toLocaleString('pt-BR')}) bateu com a intenção prévia "${intent.title}" e foi blindada do orçamento mensal da casa.`,
-            timestamp: 'Agora mesmo',
-            type: 'success',
-            isRead: false,
-          });
-        }
-      });
-
-      return {
-        ...prev,
-        expenses: nextExpenses,
-        strategicIntents: nextIntents,
-        protectionCurrentAmount: nextProtAmount,
-        protectionTotalInvested: nextProtInvested,
-        isProtectionComplete: nextProtAmount >= autoCalculatedProtectionTarget,
-        piggyBanks: nextPiggyBanks,
-        pluggyAccounts: (prev.pluggyAccounts || []).map(acc => ({
-          ...acc,
-          lastSynced: nowStr,
-          status: 'connected',
-        })),
-        pendingConfirmations: queuedConfirmation
-          ? [queuedConfirmation, ...(prev.pendingConfirmations || [])]
-          : prev.pendingConfirmations,
-        notifications: [
-          ...autoReconciledNotifs,
-          {
-            id: `notif-sync-${Date.now()}`,
-            title: 'Meu Pluggy Sincronizado ✅',
-            message: `Contas PF e PJ de ${prev.profile.partner1Name} e ${prev.profile.partner2Name} atualizadas. Transferências internas filtradas e protegidas.`,
-            timestamp: 'Agora mesmo',
-            type: 'success',
-            isRead: false,
-          },
-          ...(queuedConfirmation
-            ? [
-                {
-                  id: `notif-deposit-${Date.now()}`,
-                  title: 'Confirmação de Recebimento Ativa 🔔',
-                  message: `Detectamos R$ 8.500,00 de ${queuedConfirmation.sourceName}. Toque para classificar como PF ou PJ.`,
-                  timestamp: 'Agora mesmo',
-                  type: 'alert' as const,
-                  isRead: false,
-                },
-              ]
-            : []),
-          ...prev.notifications,
-        ],
-      };
+      const transaction = prev.bankImportedTransactions?.find(t => t.id === id);
+      if (!transaction || transaction.status !== 'pending') return prev;
+      const expenses = [...prev.expenses];
+      const incomes = [...prev.incomes];
+      if (classification === 'income' && transaction.direction !== 'credit') throw new Error('Um débito não pode ser classificado como receita.');
+      if (classification === 'expense' && transaction.direction !== 'debit') throw new Error('Um crédito não pode ser classificado como despesa.');
+      if (classification === 'income' && !incomes.some(i => i.id === id)) incomes.push({ id, amount: transaction.amount, date: transaction.date, description: transaction.description, recipient: transaction.owner, type: 'outro' });
+      if (classification === 'expense' && !expenses.some(e => e.id === id)) expenses.push({ id, amount: transaction.amount, date: transaction.date, description: transaction.description, paidBy: transaction.owner, category, triageDone: true });
+      return { ...prev, expenses, incomes, bankImportedTransactions: prev.bankImportedTransactions!.map(t => t.id === id ? { ...t, status: classification } : t) };
     });
-
-    setIsSyncingBanks(false);
-    triggerCelebration();
   };
 
   const updateFiscalProfile = (partner: 'partner1' | 'partner2', fiscal: Partial<FiscalProfile>) => {
@@ -2655,7 +2172,7 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
         });
       }
 
-      const updatedExpenses = prev.expenses.map(e => {
+      const updatedExpenses: ExpenseItem[] = prev.expenses.map(e => {
         if (e.id === expenseId) {
           return {
             ...e,
@@ -2757,7 +2274,7 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
         });
       }
 
-      const updatedExpenses = prev.expenses.map(e => {
+      const updatedExpenses: ExpenseItem[] = prev.expenses.map(e => {
         if (e.id === expenseId) {
           return {
             ...e,
@@ -2820,10 +2337,13 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
   };
 
   const deleteIncome = (id: string) => {
-    setState(prev => ({
-      ...prev,
-      incomes: prev.incomes.filter(i => i.id !== id),
-    }));
+    setState(prev => {
+      const allocated = (prev.shiftIncomeAllocations || []).find(ledger => ledger.id === id);
+      if (allocated && Object.keys(allocated.allocations).length > 0 || prev.medicalShifts?.some(shift => shift.linkedIncomeId === id)) {
+        return { ...prev, notifications: [{ id: 'linked-income:' + id, title: 'Recebimento vinculado a plantões', message: 'Desfaça a conciliação dos plantões antes de excluir este recebimento.', timestamp: 'Agora', type: 'alert' as const, isRead: false }, ...prev.notifications.filter(n => n.id !== 'linked-income:' + id)] };
+      }
+      return { ...prev, incomes: prev.incomes.filter(i => i.id !== id) };
+    });
   };
 
   const addInstallment = (
@@ -3070,39 +2590,34 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
   };
 
   const updateMedicalShift = (id: string, updates: Partial<MedicalShift>) => {
-    setState(prev => ({
-      ...prev,
-      medicalShifts: (prev.medicalShifts || []).map(s => (s.id === id ? { ...s, ...updates } : s)),
-    }));
+    setState(prev => {
+      const shift = prev.medicalShifts?.find(s => s.id === id);
+      const linked = prev.shiftIncomeAllocations?.some(ledger => (ledger.allocations[id] || 0) > 0) || Boolean(shift?.linkedIncomeId);
+      if (linked && ['partner', 'grossAmount', 'netAmount', 'dateWorked', 'executionStatus', 'status', 'linkedIncomeId'].some(key => Object.prototype.hasOwnProperty.call(updates, key) && JSON.stringify(updates[key as keyof MedicalShift]) !== JSON.stringify(shift?.[key as keyof MedicalShift]))) {
+        return { ...prev, notifications: [{ id: 'shift-edit:' + id, title: 'Plantão com recebimento conciliado', message: 'Desfaça a conciliação antes de alterar os dados financeiros ou a execução deste plantão.', timestamp: 'Agora', type: 'alert' as const, isRead: false }, ...prev.notifications.filter(n => n.id !== 'shift-edit:' + id)] };
+      }
+      return { ...prev, medicalShifts: (prev.medicalShifts || []).map(s => s.id === id ? { ...s, ...updates, id: s.id } : s) };
+    });
   };
 
   const deleteMedicalShift = (id: string) => {
-    setState(prev => ({
-      ...prev,
-      medicalShifts: (prev.medicalShifts || []).filter(s => s.id !== id),
-    }));
+    setState(prev => {
+      const shift = prev.medicalShifts?.find(s => s.id === id);
+      const linked = prev.shiftIncomeAllocations?.some(ledger => (ledger.allocations[id] || 0) > 0) || Boolean(shift?.linkedIncomeId);
+      if (linked) return { ...prev, notifications: [{ id: 'shift-delete:' + id, title: 'Plantão com recebimento conciliado', message: 'Desfaça a conciliação antes de excluir este plantão. O depósito bancário será preservado.', timestamp: 'Agora', type: 'alert' as const, isRead: false }, ...prev.notifications.filter(n => n.id !== 'shift-delete:' + id)] };
+      return { ...prev, medicalShifts: (prev.medicalShifts || []).filter(s => s.id !== id) };
+    });
   };
 
-  const reconcileShiftWithIncome = (shiftId: string, incomeId: string, rememberHospitalRule?: boolean) => {
+  const reconcileShiftWithIncome = (shiftId: string, incomeId: string, rememberHospitalRule?: boolean, amount?: number) => {
     setState(prev => {
       const targetIncome = prev.incomes.find(i => i.id === incomeId);
       const targetShift = (prev.medicalShifts || []).find(s => s.id === shiftId);
       if (!targetShift) return prev;
 
-      const updatedShifts = (prev.medicalShifts || []).map(s => {
-        if (s.id === shiftId) {
-          return {
-            ...s,
-            status: 'received' as const,
-            actualPayDate: targetIncome?.date || new Date().toISOString().split('T')[0],
-            netAmount: targetIncome?.amount || s.grossAmount,
-            linkedIncomeId: incomeId,
-            linkedIncomeDescription: targetIncome?.description,
-          };
-        }
-        return s;
-      });
-
+      if (!targetIncome) return prev;
+      const allocation = applyShiftAllocation(prev.medicalShifts || [], prev.incomes, migrateLegacyShiftAllocations(prev.medicalShifts || [], prev.incomes, prev.shiftIncomeAllocations || []), shiftId, incomeId, amount);
+      const updatedShifts = allocation.shifts;
       let updatedRules = prev.hospitalMappingRules || DEFAULT_HOSPITAL_MAPPING_RULES;
       if (rememberHospitalRule && targetIncome) {
         const cleanDesc = targetIncome.description.replace(/^(TED|DOC|PIX|TRANSF|CRED)\s+/i, '').trim();
@@ -3129,6 +2644,7 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
       return {
         ...prev,
         medicalShifts: updatedShifts,
+        shiftIncomeAllocations: allocation.ledgers,
         hospitalMappingRules: updatedRules,
         notifications: [notif, ...prev.notifications],
       };
@@ -3136,47 +2652,27 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
     triggerCelebration();
   };
 
+  const undoShiftReconciliation = (shiftId: string) => {
+    setState(prev => {
+      const result = undoShiftAllocations(prev.medicalShifts || [], migrateLegacyShiftAllocations(prev.medicalShifts || [], prev.incomes, prev.shiftIncomeAllocations || []), shiftId);
+      return { ...prev, medicalShifts: result.shifts, shiftIncomeAllocations: result.ledgers };
+    });
+  };
+
   const markShiftAsReceivedDirectly = (shiftId: string, actualDate?: string, createIncomeRecord?: boolean) => {
     setState(prev => {
-      const targetShift = (prev.medicalShifts || []).find(s => s.id === shiftId);
-      if (!targetShift) return prev;
-
-      const payDate = actualDate || new Date().toISOString().split('T')[0];
-      let newIncomes = prev.incomes;
-      let linkedId: string | undefined = undefined;
-
-      if (createIncomeRecord) {
-        const incomeItem: IncomeItem = {
-          id: `inc-shift-${Date.now()}`,
-          description: `Plantão ${targetShift.hospitalName} (${targetShift.durationHours}h)`,
-          amount: targetShift.grossAmount,
-          date: payDate,
-          recipient: targetShift.partner === 'partner1' ? 'partner1' : 'partner2',
-          type: 'extra',
-        };
-        newIncomes = [incomeItem, ...prev.incomes];
-        linkedId = incomeItem.id;
-      }
-
-      const updatedShifts = (prev.medicalShifts || []).map(s => {
-        if (s.id === shiftId) {
-          return {
-            ...s,
-            status: 'received' as const,
-            actualPayDate: payDate,
-            linkedIncomeId: linkedId,
-          };
-        }
-        return s;
-      });
-
-      return {
-        ...prev,
-        incomes: newIncomes,
-        medicalShifts: updatedShifts,
-      };
+      const shift = prev.medicalShifts?.find(s => s.id === shiftId);
+      if (!shift || shift.status === 'received' || !createIncomeRecord) return prev;
+      const date = actualDate || [new Date().getFullYear(), String(new Date().getMonth() + 1).padStart(2, '0'), String(new Date().getDate()).padStart(2, '0')].join('-');
+      const ledgers = migrateLegacyShiftAllocations(prev.medicalShifts || [], prev.incomes, prev.shiftIncomeAllocations || []);
+      const receivedCents = ledgers.reduce((sum, entry) => sum + (entry.allocations[shift.id] || 0), 0);
+      const remaining = Math.max(0, Math.round((shift.netAmount ?? shift.grossAmount) * 100) - receivedCents) / 100;
+      if (remaining <= 0) return prev;
+      const income: IncomeItem = { id: 'income-shift:' + shift.id, description: 'Plantão ' + shift.hospitalName, amount: remaining, date, recipient: shift.partner, type: 'extra' };
+      const incomes = prev.incomes.some(i => i.id === income.id) ? prev.incomes : [...prev.incomes, income];
+      const result = applyShiftAllocation(prev.medicalShifts || [], incomes, ledgers, shiftId, income.id);
+      return { ...prev, incomes, medicalShifts: result.shifts, shiftIncomeAllocations: result.ledgers };
     });
-    triggerCelebration();
   };
 
   const addShiftPreset = (preset: Omit<MedicalShiftPreset, 'id'>) => {
@@ -4086,14 +3582,6 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
       isProtectionComplete: false,
       freedomTotalInvested: 0,
       freedomYieldAccumulated: 0,
-      pluggyCredentials: {
-        partner1ClientId: '',
-        partner1ClientSecret: '',
-        partner1Cpf: '',
-        partner2ClientId: '',
-        partner2ClientSecret: '',
-        partner2Cpf: '',
-      },
     }));
 
     if (coupleAccount?.id) {
@@ -4132,8 +3620,8 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
         courseName: prev.collegeModeData?.courseName || 'Medicina',
         currentSemester: prev.collegeModeData?.currentSemester || 5,
         totalSemesters: prev.collegeModeData?.totalSemesters || 12,
-        monthlyStipend: prev.collegeModeData?.monthlyStipend || 600,
-        totalInvestedInCollege: prev.collegeModeData?.totalInvestedInCollege || 1420,
+        monthlyStipend: prev.collegeModeData?.monthlyStipend ?? 0,
+        totalInvestedInCollege: prev.collegeModeData?.totalInvestedInCollege ?? 0,
         ...prev.collegeModeData,
         ...data,
       },
@@ -4159,8 +3647,8 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
           courseName: prev.collegeModeData?.courseName || 'Medicina',
           currentSemester: nextSem,
           totalSemesters: total,
-          monthlyStipend: prev.collegeModeData?.monthlyStipend || 600,
-          totalInvestedInCollege: prev.collegeModeData?.totalInvestedInCollege || 1420,
+          monthlyStipend: prev.collegeModeData?.monthlyStipend ?? 0,
+          totalInvestedInCollege: prev.collegeModeData?.totalInvestedInCollege ?? 0,
           ...prev.collegeModeData,
         },
       };
@@ -4176,8 +3664,8 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
         courseName: prev.collegeModeData?.courseName || 'Medicina',
         currentSemester: prev.collegeModeData?.currentSemester || 5,
         totalSemesters: prev.collegeModeData?.totalSemesters || 12,
-        monthlyStipend: prev.collegeModeData?.monthlyStipend || 600,
-        totalInvestedInCollege: (prev.collegeModeData?.totalInvestedInCollege || 1420) + amount,
+        monthlyStipend: prev.collegeModeData?.monthlyStipend ?? 0,
+        totalInvestedInCollege: (prev.collegeModeData?.totalInvestedInCollege ?? 0) + amount,
         ...prev.collegeModeData,
       },
     }));
@@ -4197,7 +3685,7 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
         origin: { y: 0.5 },
       });
 
-      const updatedIncome = newMonthlyIncome > 0 ? newMonthlyIncome : prev.profile.partner1Income || 12000;
+      const updatedIncome = Number.isFinite(newMonthlyIncome) && newMonthlyIncome >= 0 ? newMonthlyIncome : prev.profile.partner1Income || 0;
 
       return {
         ...prev,
@@ -4212,8 +3700,8 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
           courseName: prev.collegeModeData?.courseName || 'Medicina',
           currentSemester: prev.collegeModeData?.totalSemesters || 12,
           totalSemesters: prev.collegeModeData?.totalSemesters || 12,
-          monthlyStipend: prev.collegeModeData?.monthlyStipend || 600,
-          totalInvestedInCollege: prev.collegeModeData?.totalInvestedInCollege || 1420,
+          monthlyStipend: prev.collegeModeData?.monthlyStipend ?? 0,
+          totalInvestedInCollege: prev.collegeModeData?.totalInvestedInCollege ?? 0,
           migrationCompleted: true,
         },
       };
@@ -4221,7 +3709,11 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
   };
 
   const clearIncomes = () => {
-    setState(prev => ({ ...prev, incomes: [] }));
+    setState(prev => {
+      const linkedIds = new Set((prev.shiftIncomeAllocations || []).filter(ledger => Object.keys(ledger.allocations).length > 0).map(ledger => ledger.id));
+      for (const shift of prev.medicalShifts || []) if (shift.linkedIncomeId) linkedIds.add(shift.linkedIncomeId);
+      return { ...prev, incomes: prev.incomes.filter(income => linkedIds.has(income.id)) };
+    });
   };
 
   const reallocateReserveExcess = (
@@ -4598,9 +4090,9 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
         displayedExpenses,
         displayedTotalSpent,
         displayedRemaining,
+        updateCoupleHub: (updates) => setState(prev => ({ ...prev, ...updates })),
         // Pluggy & Open finance
         pluggyAccounts: state.pluggyAccounts || INITIAL_STATE.pluggyAccounts!,
-        pluggyCredentials: state.pluggyCredentials || INITIAL_STATE.pluggyCredentials!,
         keywordRules: state.keywordRules || DEFAULT_KEYWORD_RULES,
         detectedSubscriptions: state.detectedSubscriptions || INITIAL_STATE.detectedSubscriptions!,
         incomeSourceRules: state.incomeSourceRules || INITIAL_STATE.incomeSourceRules!,
@@ -4643,8 +4135,9 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
         updatePluggyAccount,
         addPluggyAccount,
         removePluggyAccount,
-        updatePluggyCredentials,
         syncPluggyData,
+        importStatement,
+        reviewBankTransaction,
         updateKeywordRules,
         addKeywordRule,
         removeKeywordRule,
@@ -4699,6 +4192,7 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
         updateMedicalShift,
         deleteMedicalShift,
         reconcileShiftWithIncome,
+        undoShiftReconciliation,
         markShiftAsReceivedDirectly,
         addShiftPreset,
         deleteShiftPreset,
@@ -4706,7 +4200,7 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
         removeHospitalMappingRule,
       }}
     >
-      {children}
+      {isHydratingCloud ? <main className="min-h-screen flex items-center justify-center p-6 bg-stone-50"><section className="max-w-md text-center" role="status" aria-live="polite"><h1 className="text-xl font-semibold text-stone-900">{cloudLoadError ? 'Vamos recuperar sua conexão' : 'Abrindo o plano de vocês'}</h1><p className="mt-3 text-stone-600">{cloudLoadError || 'Carregando os registros desta conta com segurança.'}</p>{cloudLoadError && <button className="mt-5 rounded-xl bg-emerald-800 px-5 py-3 text-white" onClick={() => window.dispatchEvent(new Event('junto-membership-changed'))}>Tentar novamente</button>}<button className="mt-5 ml-3 px-4 py-3 text-stone-600" onClick={() => void signOutUser()}>Sair</button></section></main> : children}
     </FinanceContext.Provider>
   );
 };

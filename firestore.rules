@@ -1,72 +1,79 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    function isAuthenticated() {
-      return request.auth != null;
+    function signedIn() { return request.auth != null; }
+    function member(data) {
+      return signedIn() && (!('departedMembers' in data) || !(request.auth.uid in data.departedMembers) || data.departedMembers[request.auth.uid] != true) && (data.partner1Uid == request.auth.uid || data.partner2Uid == request.auth.uid);
     }
-
-    function userDocPath(uid) {
-      return /databases/$(database)/documents/users/$(uid);
+    function memberOf(coupleId) {
+      return signedIn() && exists(/databases/$(database)/documents/couples/$(coupleId))
+        && member(get(/databases/$(database)/documents/couples/$(coupleId)).data);
     }
-
-    function couplePath(coupleId) {
-      return /databases/$(database)/documents/couples/$(coupleId);
+    function safeDisplayName(data) {
+      return !('displayName' in data) || (data.displayName is string && data.displayName.size() <= 80);
     }
-
-    function myCoupleId() {
-      return isAuthenticated() && exists(userDocPath(request.auth.uid))
-        ? get(userDocPath(request.auth.uid)).data.coupleId
-        : null;
+    function validRecord(field, record) {
+      return record is map && record.id is string && record.id.size() > 0 && record.id.size() <= 1024
+        && !record.keys().hasAny(['pluggyCredentials', 'clientSecret', 'apiKey', 'accessToken'])
+        && (!(field in ['expenses', 'incomes', 'bankImportedTransactions']) ||
+          (record.amount is number && record.amount >= 0 && record.amount <= 90071992547409))
+        && (!('paidBy' in record) || record.paidBy in ['partner1', 'partner2', 'both'])
+        && (!('recipient' in record) || record.recipient in ['partner1', 'partner2', 'both']);
     }
-
-    // Used for subcollections and invite docs: reads the parent couple.
-    function isCoupleMemberById(coupleId) {
-      return isAuthenticated() && (
-        myCoupleId() == coupleId ||
-        (exists(couplePath(coupleId)) &&
-          (get(couplePath(coupleId)).data.partner1Uid == request.auth.uid ||
-           get(couplePath(coupleId)).data.partner2Uid == request.auth.uid))
-      );
+    function validEntity(data) {
+      return data.keys().hasOnly(['field', 'record', 'deleted', 'schemaVersion'])
+        && data.keys().hasAll(['field', 'record', 'deleted', 'schemaVersion'])
+        && data.field in ['expenses', 'incomes', 'installments', 'piggyBanks', 'strategicIntents', 'medicalShifts', 'shiftIncomeAllocations', 'bankImportedTransactions', 'medicalShiftPresets', 'hospitalMappingRules', 'incomeSourceRules', 'pendingConfirmations', 'linkedAccounts', 'detectedSubscriptions', 'keywordRules', 'coupleGoals', 'coupleWishlist', 'coupleFixedBills', 'dreamSimulations', 'pluggyAccounts']
+        && data.schemaVersion == 1 && data.deleted is bool
+        && ((data.deleted && data.record == null) || (!data.deleted && validRecord(data.field, data.record)));
     }
-
-    // Used for the couple document itself: avoids get() on the same doc.
-    function isCoupleMemberResource(coupleId) {
-      return isAuthenticated() && (
-        myCoupleId() == coupleId ||
-        resource.data.partner1Uid == request.auth.uid ||
-        resource.data.partner2Uid == request.auth.uid
-      );
+    function safeAmount(data, key) {
+      return !(key in data) || (data[key] is number && data[key] >= 0 && data[key] <= 90071992547409);
     }
-
-    // User profile matching auth uid
-    match /users/{userId} {
-      allow read, write: if isAuthenticated() && request.auth.uid == userId;
+    function validMetadata(data) {
+      return safeAmount(data, 'partner1Income') && safeAmount(data, 'partner2Income')
+        && safeAmount(data, 'protectionCurrentAmount') && safeAmount(data, 'protectionTotalInvested')
+        && safeAmount(data, 'freedomTotalInvested')
+        && (!('investmentsPercentage' in data) || (data.investmentsPercentage is number && data.investmentsPercentage >= 0 && data.investmentsPercentage <= 100))
+        && (!('partner1Name' in data) || (data.partner1Name is string && data.partner1Name.size() <= 80))
+        && (!('partner2Name' in data) || (data.partner2Name is string && data.partner2Name.size() <= 80))
+        && (!('isProtectionComplete' in data) || data.isProtectionComplete is bool);
     }
-
-    // Couple shared document. No list(): invite lookup goes through
-    // coupleInvites/{code} so a client cannot enumerate couples.
+    match /users/{uid} {
+      allow get: if signedIn() && request.auth.uid == uid;
+      // Association and roles are assigned transactionally by the authenticated server.
+      allow create: if signedIn() && request.auth.uid == uid
+        && request.resource.data.keys().hasOnly(['uid', 'email', 'displayName'])
+        && request.resource.data.uid == uid && safeDisplayName(request.resource.data)
+        && (!('email' in request.resource.data) || (request.resource.data.email is string && request.resource.data.email.size() <= 320));
+      allow update: if signedIn() && request.auth.uid == uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['displayName'])
+        && safeDisplayName(request.resource.data);
+    }
     match /couples/{coupleId} {
-      allow get: if isCoupleMemberResource(coupleId);
-      allow create: if isAuthenticated() &&
-        request.resource.data.partner1Uid == request.auth.uid;
-      allow update, delete: if isCoupleMemberResource(coupleId);
-
-      match /{allChildren=**} {
-        allow read, write: if isCoupleMemberById(coupleId);
+      allow get: if member(resource.data);
+      allow update: if member(resource.data) && validMetadata(request.resource.data)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'categoryPercentages', 'categoryFloors', 'partner1Career', 'partner2Career',
+          'partner1Income', 'partner2Income', 'partner1Name', 'partner2Name', 'investmentsPercentage',
+          'protectionCurrentAmount', 'protectionTotalInvested', 'isProtectionComplete',
+          'freedomTotalInvested', 'monthlyDepositGuides', 'completedMonthDeposits',
+          'surplusTransfers', 'dismissedSurplusMonths', 'updatedAt', 'lastUpdatedBy'
+        ])
+        && !request.resource.data.keys().hasAny(['pluggyCredentials']);
+      // Creation, membership changes and deletion are server-only operations.
+      match /entities/{entityId} {
+        allow read: if memberOf(coupleId);
+        allow create: if memberOf(coupleId) && validEntity(request.resource.data);
+        allow update: if memberOf(coupleId) && validEntity(request.resource.data)
+          && request.resource.data.field == resource.data.field
+          && (resource.data.deleted || request.resource.data.deleted || request.resource.data.record.id == resource.data.record.id);
+        // Deletions are tombstones, preventing legacy arrays from resurrecting records.
+        allow delete: if false;
       }
     }
-
-    // Public invite lookup: the 6-char code is the secret. Only coupleId is
-    // stored here. Any authenticated user with the code can read the mapping,
-    // but only couple members can create/update/delete it.
-    match /coupleInvites/{inviteCode} {
-      allow get: if isAuthenticated();
-      allow create: if isAuthenticated() &&
-        request.resource.data.coupleId is string &&
-        isCoupleMemberById(request.resource.data.coupleId);
-      allow update, delete: if isAuthenticated() &&
-        isCoupleMemberById(resource.data.coupleId);
-      // No list: codes cannot be enumerated.
-    }
+    // Invite hashes, provider tokens, item ownership and rate-limit records are server-only.
+    match /coupleInvites/{code} { allow read, write: if false; }
+    match /{document=**} { allow read, write: if false; }
   }
 }

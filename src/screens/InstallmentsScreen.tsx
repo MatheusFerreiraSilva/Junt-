@@ -1,3 +1,4 @@
+import { installmentInMonth, remainingInstallmentValue } from '../utils/installmentMoney';
 import React, { useState } from 'react';
 import {
   CreditCard,
@@ -67,7 +68,7 @@ export const InstallmentsScreen: React.FC<InstallmentsScreenProps> = ({
     activeInstallments.forEach(inst => {
       const remainingPayments = inst.installmentsCount - inst.paidInstallmentsCount;
       if (remainingPayments > idx) {
-        committed += inst.installmentAmount;
+        committed += installmentInMonth(inst, monthKey);
       }
     });
 
@@ -417,7 +418,7 @@ export const InstallmentsScreen: React.FC<InstallmentsScreenProps> = ({
           <span className="text-xs font-extrabold text-slate-700 dark:text-slate-300 px-3 py-1 rounded-full bg-slate-100 dark:bg-slate-800">
             Total Devedor Restante: {formatCurrency(
               activeInstallments.reduce(
-                (sum, i) => sum + (i.installmentsCount - i.paidInstallmentsCount) * i.installmentAmount,
+                (sum, i) => sum + remainingInstallmentValue(i),
                 0
               )
             )}
@@ -439,7 +440,7 @@ export const InstallmentsScreen: React.FC<InstallmentsScreenProps> = ({
             {sortedActiveInstallments.map(item => {
               const cat = CATEGORIES_BASE[item.category];
               const remainingCount = item.installmentsCount - item.paidInstallmentsCount;
-              const remainingTotal = remainingCount * item.installmentAmount;
+              const remainingTotal = remainingInstallmentValue(item);
               const progressPct = Math.min(
                 100,
                 Math.round((item.paidInstallmentsCount / item.installmentsCount) * 100)

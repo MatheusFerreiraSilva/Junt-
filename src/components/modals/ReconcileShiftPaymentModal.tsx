@@ -1,3 +1,4 @@
+import { useDialogFocus } from '../../hooks/useDialogFocus';
 import React, { useState } from 'react';
 import {
   X,
@@ -27,7 +28,6 @@ export const ReconcileShiftPaymentModal: React.FC<ReconcileShiftPaymentModalProp
 }) => {
   const {
     state,
-    incomes = [],
     hospitalMappingRules = [],
     reconcileShiftWithIncome,
     markShiftAsReceivedDirectly,
@@ -40,20 +40,27 @@ export const ReconcileShiftPaymentModal: React.FC<ReconcileShiftPaymentModalProp
       : state.profile.partner2Name;
 
   const [selectedIncomeId, setSelectedIncomeId] = useState<string>('');
+  const [allocationAmount, setAllocationAmount] = useState('');
+  const [error, setError] = useState('');
   const [actualReceivedDate, setActualReceivedDate] = useState<string>(
-    new Date().toISOString().split('T')[0]
+    new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().split('T')[0]
   );
   const [rememberPattern, setRememberPattern] = useState<boolean>(true);
   const [mode, setMode] = useState<'open_finance' | 'direct'>('open_finance');
+
+  const dialogRef = useDialogFocus(isOpen, onClose);
 
   if (!isOpen || !shift) return null;
 
   const { exactMatches, probableMatches } = findMatchingBankIncomesForShift(
     shift,
-    incomes,
+    state.incomes,
     hospitalMappingRules
   );
-  const allMatches = [...exactMatches, ...probableMatches.filter(p => !exactMatches.some(e => e.id === p.id))];
+  const suggested = [...exactMatches, ...probableMatches.filter(p => !exactMatches.some(e => e.id === p.id))];
+  const allMatches = [...suggested, ...state.incomes.filter(income => income.amount > 0 && !suggested.some(match => match.id === income.id))];
+  const alreadyAllocated = (state.shiftIncomeAllocations || []).reduce((sum, ledger) => sum + (ledger.allocations[shift.id] || 0), 0) / 100;
+  const pendingAmount = Math.max(0, (shift.netAmount ?? shift.grossAmount) - alreadyAllocated);
 
   const handleSelectIncome = (incomeId: string, date: string) => {
     setSelectedIncomeId(incomeId);
@@ -61,16 +68,21 @@ export const ReconcileShiftPaymentModal: React.FC<ReconcileShiftPaymentModalProp
   };
 
   const handleConfirm = () => {
+    setError('');
+    try {
     if (mode === 'open_finance' && selectedIncomeId) {
-      reconcileShiftWithIncome(shift.id, selectedIncomeId, rememberPattern);
-    } else {
+      const value = allocationAmount ? Number(allocationAmount.replace(',', '.')) : undefined;
+      if (value !== undefined && (!Number.isFinite(value) || value <= 0 || value > pendingAmount)) { setError('Informe um valor positivo até o saldo pendente.'); return; }
+      reconcileShiftWithIncome(shift.id, selectedIncomeId, rememberPattern, value);
+    } else if (mode === 'direct' && actualReceivedDate) {
       markShiftAsReceivedDirectly(shift.id, actualReceivedDate, true);
     }
     onClose();
+    } catch (cause) { setError(cause instanceof Error ? cause.message : 'Não foi possível confirmar o recebimento.'); }
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm overflow-y-auto">
+    <div ref={dialogRef} role="dialog" aria-modal="true" aria-label="Confirmar recebimento de plantão" tabIndex={-1} className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm overflow-y-auto">
       <div className="bg-[#FAF7F2] dark:bg-[#111318] text-slate-800 dark:text-slate-100 rounded-[28px] max-w-lg w-full p-6 sm:p-7 shadow-2xl border border-stone-200 dark:border-stone-800 my-8">
         {/* Header */}
         <div className="flex items-center justify-between pb-3 border-b border-stone-200 dark:border-stone-800">
@@ -89,6 +101,7 @@ export const ReconcileShiftPaymentModal: React.FC<ReconcileShiftPaymentModalProp
           </div>
           <button
             onClick={onClose}
+            aria-label="Fechar"
             className="p-1.5 rounded-full hover:bg-stone-200 dark:hover:bg-stone-800 text-stone-500"
           >
             <X className="w-5 h-5" />
@@ -110,9 +123,9 @@ export const ReconcileShiftPaymentModal: React.FC<ReconcileShiftPaymentModalProp
               </p>
             </div>
             <div className="text-right">
-              <span className="text-xs text-stone-400">Valor Estimado</span>
+              <span className="text-xs text-stone-400">Saldo a receber</span>
               <p className="font-extrabold text-base text-stone-900 dark:text-white">
-                {formatCurrency(shift.grossAmount)}
+                {formatCurrency(pendingAmount)}
               </p>
             </div>
           </div>
@@ -151,10 +164,10 @@ export const ReconcileShiftPaymentModal: React.FC<ReconcileShiftPaymentModalProp
           <div className="mt-4 space-y-3">
             <div className="flex items-center justify-between">
               <span className="text-xs font-semibold text-stone-600 dark:text-stone-300">
-                Entradas Bancárias Sugeridas:
+                Receitas disponíveis para vincular:
               </span>
               <span className="text-[11px] text-teal-600 dark:text-teal-400 font-medium">
-                Sincronizadas via Pluggy
+                Registradas no seu extrato
               </span>
             </div>
 
@@ -194,7 +207,7 @@ export const ReconcileShiftPaymentModal: React.FC<ReconcileShiftPaymentModalProp
                           ) : null}
                         </div>
                         <p className="text-[11px] text-stone-500">
-                          Data: {new Date(inc.date + 'T12:00:00').toLocaleDateString('pt-BR')} • {inc.type === 'salary' ? 'Salário/Contrato' : 'Renda Extra'}
+                          Data: {new Date(inc.date + 'T12:00:00').toLocaleDateString('pt-BR')} • {inc.type === 'salario' ? 'Salário/Contrato' : 'Renda Extra'}
                         </p>
                       </div>
                       <div className="text-right">
@@ -247,11 +260,13 @@ export const ReconcileShiftPaymentModal: React.FC<ReconcileShiftPaymentModalProp
             </div>
             <p className="text-[11px] text-stone-500">
               Ao confirmar a baixa manual, o plantão será marcado como recebido e uma entrada no valor de{' '}
-              <strong>{formatCurrency(shift.grossAmount)}</strong> será lançada no seu extrato.
+              <strong>{formatCurrency(pendingAmount)}</strong> será lançada no seu extrato.
             </p>
           </div>
         )}
 
+        {mode === 'open_finance' && selectedIncomeId && <div className="mt-4"><label htmlFor="shift-allocation-amount" className="block text-xs font-semibold mb-2">Valor deste recebimento para o plantão (R$)</label><input id="shift-allocation-amount" type="number" min="0.01" max={pendingAmount} step="0.01" placeholder="Automático até o saldo pendente" value={allocationAmount} onChange={event => setAllocationAmount(event.target.value)} className="w-full min-h-11 px-3 rounded-xl border border-stone-200 dark:border-stone-700 bg-transparent" /><p className="text-[11px] text-stone-500 mt-2">Um depósito pode pagar vários plantões. Só o valor alocado é abatido deste saldo, sem criar outra receita.</p></div>}
+        {error && <p role="alert" className="mt-4 p-3 rounded-xl text-xs text-rose-800 bg-rose-50 dark:text-rose-200 dark:bg-rose-950/40">{error}</p>}
         {/* Action Buttons */}
         <div className="flex items-center justify-end gap-3 pt-4 mt-4 border-t border-stone-200 dark:border-stone-800">
           <button
@@ -264,7 +279,7 @@ export const ReconcileShiftPaymentModal: React.FC<ReconcileShiftPaymentModalProp
           <button
             type="button"
             onClick={handleConfirm}
-            disabled={mode === 'open_finance' && allMatches.length > 0 && !selectedIncomeId}
+            disabled={(mode === 'open_finance' && !selectedIncomeId) || (mode === 'direct' && !actualReceivedDate)}
             className={`px-5 py-2.5 rounded-xl text-xs font-bold text-white transition-all flex items-center gap-1.5 shadow-md ${
               mode === 'open_finance' && allMatches.length > 0 && !selectedIncomeId
                 ? 'bg-stone-400 cursor-not-allowed opacity-60'

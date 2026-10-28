@@ -1,17 +1,8 @@
 import React, { useState, useRef, useEffect } from 'react';
-import {
-  Send,
-  X,
-  Sparkles,
-  ChevronLeft,
-  Bot,
-  User,
-  Zap,
-  BrainCircuit,
-  RotateCcw,
-  MessageSquare,
-} from 'lucide-react';
+import { Send, X } from 'lucide-react';
 import { useFinance } from '../context/FinanceContext';
+import { authenticatedApi } from '../lib/authenticatedApi';
+import { useDialogFocus } from '../hooks/useDialogFocus';
 import { formatCurrency } from '../utils/formatters';
 
 interface ChatMessage {
@@ -42,22 +33,13 @@ export const GeminiChatDrawer: React.FC<GeminiChatDrawerProps> = ({ isOpen, onCl
     {
       id: 'welcome',
       role: 'model',
-      text: `Oi, ${state.profile.partner1Name} e ${state.profile.partner2Name}! Sou a inteligência do **Junto**, o parceiro e conselheiro de vocês.
-
-Olhei como está o mês do casal em ${state.profile.city || 'nossa cidade'}:
-• Entradas juntos: **${formatCurrency(totalIncome)}/mês**
-• Quanto ainda podemos gastar sem preocupação: **${formatCurrency(Math.max(0, remainingToSpendThisMonth))}**
-• Cartão e parcelas do mês: **${installmentCommitmentPercentage}%** da renda (o ideal é manter abaixo de 15%!)
-• Dinheiro guardado nos cofrinhos: **${formatCurrency(totalSavedInPiggyBanks)}**
-
-Estamos juntos para cuidar do descanso, plantões, viagens e futuro de vocês com muita leveza. Do que vocês gostariam de falar hoje?`,
+      text: 'Oi! Posso ajudar a entender o mês e pensar nos próximos planos. Vou usar apenas os dados registrados no Juntô. As respostas são sugestões: nenhuma conversa altera seu dinheiro ou seus lançamentos.',
       timestamp: 'Agora',
     },
   ]);
 
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [selectedModel, setSelectedModel] = useState<'gemini-3.5-flash' | 'gemini-3.1-pro-preview' | 'gemini-3.1-flash-lite'>('gemini-3.5-flash');
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const scrollToBottom = () => {
@@ -81,13 +63,15 @@ Estamos juntos para cuidar do descanso, plantões, viagens e futuro de vocês co
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [isOpen, onClose]);
 
+  const dialogRef = useDialogFocus(isOpen, onClose);
+
   if (!isOpen) return null;
 
   const quickPrompts = [
-    'Como equilibrar os plantões e a renda que varia?',
+    'Quanto precisamos guardar para as provas de residência?',
     'Vale a pena quitar parcelas agora?',
     'Como podemos guardar mais para viagens e descanso?',
-    'Como fazer o dinheiro dos cofrinhos trabalhar sozinho?',
+    'Como planejar uma mudança sem comprometer a reserva?',
   ];
 
   const handleSend = async (userText?: string) => {
@@ -107,18 +91,16 @@ Estamos juntos para cuidar do descanso, plantões, viagens e futuro de vocês co
     setIsLoading(true);
 
     try {
-      const response = await fetch('/api/gemini/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+      const data = await authenticatedApi<{ reply: string }>('/api/gemini/chat', {
           messages: updatedMessages.map(m => ({ role: m.role, text: m.text })),
-          model: selectedModel,
           context: {
             partner1Name: state.profile.partner1Name,
             partner1Specialty: state.profile.partner1Specialty,
             partner2Name: state.profile.partner2Name,
             partner2Specialty: state.profile.partner2Specialty,
             city: state.profile.city,
+            partner1CareerStage: state.profile.partner1Career?.stage || 'não informada',
+            partner2CareerStage: state.profile.partner2Career?.stage || 'não informada',
             totalIncomeFormatted: formatCurrency(totalIncome),
             totalSpentFormatted: formatCurrency(totalSpentThisMonth),
             remainingFormatted: formatCurrency(remainingToSpendThisMonth),
@@ -127,13 +109,7 @@ Estamos juntos para cuidar do descanso, plantões, viagens e futuro de vocês co
             installmentCommitmentPct: installmentCommitmentPercentage,
             savedTotalFormatted: formatCurrency(totalSavedInPiggyBanks),
           },
-        }),
-      });
-
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.error || 'Erro na resposta');
-      }
+        }, AbortSignal.timeout(30000));
 
       const botMessage: ChatMessage = {
         id: 'bot-' + Date.now(),
@@ -143,13 +119,13 @@ Estamos juntos para cuidar do descanso, plantões, viagens e futuro de vocês co
       };
 
       setMessages(prev => [...prev, botMessage]);
-    } catch (err: any) {
+    } catch (err: unknown) {
       setMessages(prev => [
         ...prev,
         {
           id: 'bot-err-' + Date.now(),
           role: 'model',
-          text: `Desculpe, tive uma oscilação momentânea: ${err.message}. Continuem firmes nas metas do casal!`,
+          text: `Desculpe, tive uma oscilação momentânea: ${err instanceof Error ? err.message : 'Não foi possível obter uma resposta'}. Continuem firmes nas metas do casal!`,
           timestamp: 'Agora',
         },
       ]);
@@ -159,7 +135,7 @@ Estamos juntos para cuidar do descanso, plantões, viagens e futuro de vocês co
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center sm:justify-end bg-slate-950/60 backdrop-blur-sm animate-in fade-in duration-200">
+    <div ref={dialogRef} role="dialog" aria-modal="true" aria-label="Assistente Juntô" tabIndex={-1} className="fixed inset-0 z-50 flex items-end sm:items-center justify-center sm:justify-end bg-slate-950/60 backdrop-blur-sm animate-in fade-in duration-200">
       {/* Click outside to close overlay */}
       <div className="absolute inset-0" onClick={onClose} />
 
@@ -174,10 +150,10 @@ Estamos juntos para cuidar do descanso, plantões, viagens e futuro de vocês co
             <div className="min-w-0">
               <div className="flex items-center gap-1.5 flex-wrap">
                 <h3 className="font-extrabold text-slate-900 dark:text-white text-sm truncate">
-                  Dr. Finanças
+                  Assistente Juntô
                 </h3>
                 <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 shrink-0">
-                  Conselheiro
+                  Planejamento
                 </span>
               </div>
               <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate hidden sm:block">
@@ -188,17 +164,7 @@ Estamos juntos para cuidar do descanso, plantões, viagens e futuro de vocês co
 
           {/* Actions: Model Switcher & Prominent Close Button */}
           <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
-            {/* Model Switcher Dropdown (compact on mobile) */}
-            <select
-              value={selectedModel}
-              onChange={e => setSelectedModel(e.target.value as any)}
-              className="text-[10px] sm:text-xs font-bold py-1.5 px-2 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-none focus:outline-none max-w-[90px] sm:max-w-none truncate"
-              title="Escolher modelo Gemini"
-            >
-              <option value="gemini-3.5-flash">Flash</option>
-              <option value="gemini-3.1-pro-preview">Pro</option>
-              <option value="gemini-3.1-flash-lite">Lite</option>
-            </select>
+
 
             {/* Desktop & Mobile Top Close Button (Prominent touch target, never disappears) */}
             <button
@@ -249,13 +215,14 @@ Estamos juntos para cuidar do descanso, plantões, viagens e futuro de vocês co
               <span className="w-8 h-8 rounded-2xl bg-rose-100 dark:bg-rose-950/40 text-rose-600 flex items-center justify-center text-sm shrink-0 animate-pulse">
                 ✨
               </span>
-              <span className="animate-pulse font-medium">Dr. Finanças está analisando os dados do casal...</span>
+              <span className="animate-pulse font-medium">Assistente Juntô está analisando os dados do casal...</span>
             </div>
           )}
 
           <div ref={messagesEndRef} />
         </div>
 
+        <p className="px-5 py-2 text-[10px] leading-relaxed text-slate-500 border-t border-slate-100 dark:border-slate-800">Ao enviar, sua mensagem e um resumo financeiro são processados pelo Gemini, serviço externo de IA. Evite dados de pacientes e informações clínicas.</p>
         {/* Quick prompt suggestions */}
         <div className="px-4 py-2.5 bg-slate-50/90 dark:bg-slate-950/70 border-t border-slate-100 dark:border-slate-800 overflow-x-auto no-scrollbar flex items-center gap-2">
           {quickPrompts.map(prompt => (
@@ -277,7 +244,7 @@ Estamos juntos para cuidar do descanso, plantões, viagens e futuro de vocês co
             value={input}
             onChange={e => setInput(e.target.value)}
             onKeyDown={e => e.key === 'Enter' && handleSend()}
-            placeholder="Pergunte ao Dr. Finanças..."
+            placeholder="Pergunte ao Assistente Juntô..."
             className="flex-1 px-4 py-2.5 sm:py-3 text-xs sm:text-sm rounded-2xl bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white border-none focus:outline-none focus:ring-2 focus:ring-emerald-500 placeholder:text-slate-400"
           />
           <button

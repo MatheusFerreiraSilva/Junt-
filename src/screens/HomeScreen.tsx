@@ -274,6 +274,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
   if (state.appMode === 'faculdade') {
     return (
       <div className="space-y-6 pb-20">
+      <header className="pt-2 pb-1"><p className="text-[10px] tracking-[0.16em] font-semibold uppercase text-slate-500 mb-2">O cotidiano de vocês</p><h1 className="text-3xl sm:text-4xl text-slate-900 dark:text-white" style={{ fontFamily: 'Georgia, serif', fontWeight: 400, letterSpacing: '-0.04em' }}>Um mês de cada vez.</h1><p className="text-sm text-slate-500 mt-2 leading-relaxed">Veja o que entrou, cuide dos próximos gastos e abra espaço para os seus planos.</p></header>
         <MonthSelector />
         <CollegeModeView onOpenExpenseModal={() => onOpenExpenseModal()} />
       </div>
@@ -384,14 +385,14 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                 <div>
                   <div className="flex items-center gap-2 flex-wrap">
                     <h3 className="font-black text-sm sm:text-base text-slate-900 dark:text-white font-display">
-                      Notificação de Sobras Orçamentárias
+                      Espaço no orçamento
                     </h3>
                     <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-emerald-200 dark:bg-emerald-900 text-emerald-900 dark:text-emerald-200">
-                      Fechamento do Mês
+                      Planejamento do mês
                     </span>
                   </div>
                   <p className="text-xs text-slate-700 dark:text-slate-300 mt-0.5">
-                    Parabéns casal! Sobrou um total de <strong>{formatCurrency(totalSurplus)}</strong> no orçamento deste mês.
+                    Há um total de <strong>{formatCurrency(totalSurplus)}</strong> ainda não utilizado no orçamento. Confira as contas pendentes antes de fazer um aporte.
                   </p>
                 </div>
               </div>

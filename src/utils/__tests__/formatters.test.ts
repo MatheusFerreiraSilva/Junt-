@@ -24,6 +24,8 @@ describe('formatters', () => {
 
   it('formats human durations in Portuguese', () => {
     expect(formatHumanDuration(0)).toBe('Meta alcançada 🎉');
+    expect(formatHumanDuration(Infinity)).toBe('Defina um aporte para calcular o prazo');
+    expect(formatHumanDuration(NaN)).toBe('Defina um aporte para calcular o prazo');
     expect(formatHumanDuration(1)).toBe('1 mês');
     expect(formatHumanDuration(14)).toBe('1 ano e 2 meses');
     expect(formatHumanDuration(24)).toBe('2 anos');

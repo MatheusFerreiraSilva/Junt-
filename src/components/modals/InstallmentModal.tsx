@@ -1,3 +1,4 @@
+import { useDialogFocus } from '../../hooks/useDialogFocus';
 import React, { useState } from 'react';
 import { X, ArrowRight, ArrowLeft, Check, Sparkles, AlertTriangle } from 'lucide-react';
 import { useFinance, CATEGORIES_BASE } from '../../context/FinanceContext';
@@ -28,6 +29,8 @@ export const InstallmentModal: React.FC<InstallmentModalProps> = ({ isOpen, onCl
   const [splitPartner1Pct, setSplitPartner1Pct] = useState<number>(50);
   const [bankName, setBankName] = useState<string>('Itaú Personalité');
   const [successCelebration, setSuccessCelebration] = useState(false);
+
+  const dialogRef = useDialogFocus(isOpen, onClose);
 
   if (!isOpen) return null;
 
@@ -113,7 +116,7 @@ export const InstallmentModal: React.FC<InstallmentModalProps> = ({ isOpen, onCl
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/60 backdrop-blur-sm animate-in fade-in duration-200">
+    <div ref={dialogRef} role="dialog" aria-modal="true" aria-label="Registrar parcelamento" tabIndex={-1} className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/60 backdrop-blur-sm animate-in fade-in duration-200">
       {/* Click outside backdrop */}
       <div className="absolute inset-0" onClick={handleClose} />
 

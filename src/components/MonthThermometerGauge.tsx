@@ -1,7 +1,7 @@
 import React from 'react';
-import { ChevronRight, Sparkles, TrendingUp, ShieldCheck, AlertCircle } from 'lucide-react';
+import { ChevronRight } from 'lucide-react';
 import { formatCurrency } from '../utils/formatters';
-import { LifeTier } from '../utils/incomeTiersEngine';
+import { LifeTierInfo } from '../types/finance';
 
 interface MonthThermometerGaugeProps {
   totalIncome: number;
@@ -11,7 +11,7 @@ interface MonthThermometerGaugeProps {
   daysRemaining: number;
   safeDailyLimit: number;
   isOverBudget: boolean;
-  activeLifeTier: LifeTier;
+  activeLifeTier: LifeTierInfo;
   streakMonths: number;
   onOpenRaioX: () => void;
 }
@@ -75,7 +75,7 @@ export const MonthThermometerGauge: React.FC<MonthThermometerGaugeProps> = ({
       onClick={onOpenRaioX}
       role="button"
       tabIndex={0}
-      onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && onOpenRaioX()}
+      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpenRaioX(); } }}
       aria-label="Abrir Raio-X do Orçamento do Mês"
       className="clay-card p-6 sm:p-8 cursor-pointer relative overflow-hidden group select-none transition-all duration-300"
     >
@@ -226,7 +226,7 @@ export const MonthThermometerGauge: React.FC<MonthThermometerGaugeProps> = ({
             </div>
             <p className="text-xs text-slate-600 dark:text-slate-400 mt-1 font-medium">
               {isOverBudget
-                ? 'Plantões puxados exigem mais delivery e conforto. A gente recalibra juntos sem neura!'
+                ? 'Vale rever os próximos gastos e ajustar o plano do mês, juntos.'
                 : `De um total de ${formatCurrency(totalIncome)} planejado para este mês.`}
             </p>
           </div>

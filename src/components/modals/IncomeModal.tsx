@@ -1,3 +1,4 @@
+import { useDialogFocus } from '../../hooks/useDialogFocus';
 import React, { useState } from 'react';
 import { X, ArrowRight, ArrowLeft, Check, Sparkles } from 'lucide-react';
 import { useFinance } from '../../context/FinanceContext';
@@ -18,6 +19,8 @@ export const IncomeModal: React.FC<IncomeModalProps> = ({ isOpen, onClose, defau
   const [incomeType, setIncomeType] = useState<'salario' | 'bonus' | 'extra' | 'restituicao' | 'outro'>('salario');
   const [description, setDescription] = useState<string>('');
   const [successCelebration, setSuccessCelebration] = useState(false);
+
+  const dialogRef = useDialogFocus(isOpen, onClose);
 
   if (!isOpen) return null;
 
@@ -82,7 +85,7 @@ export const IncomeModal: React.FC<IncomeModalProps> = ({ isOpen, onClose, defau
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/60 backdrop-blur-sm animate-in fade-in duration-200">
+    <div ref={dialogRef} role="dialog" aria-modal="true" aria-label="Registrar receita" tabIndex={-1} className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/60 backdrop-blur-sm animate-in fade-in duration-200">
       {/* Click outside backdrop */}
       <div className="absolute inset-0" onClick={handleClose} />
 

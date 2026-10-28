@@ -1,3 +1,4 @@
+import { remainingInstallmentValue } from '../utils/installmentMoney';
 import React, { useState, useMemo } from 'react';
 import {
   X,
@@ -66,7 +67,7 @@ export const AdvanceInstallmentModal: React.FC<AdvanceInstallmentModalProps> = (
   // Total required
   const totalAdvanceAmount = useMemo(() => {
     if (!currentInst) return 0;
-    return installmentsToAdvance * currentInst.installmentAmount;
+    return remainingInstallmentValue(currentInst, installmentsToAdvance);
   }, [currentInst, installmentsToAdvance]);
 
   // Available amounts from each source
@@ -270,7 +271,7 @@ export const AdvanceInstallmentModal: React.FC<AdvanceInstallmentModalProps> = (
                 >
                   <span className="text-xs font-bold block">{num}x Parcela{num > 1 ? 's' : ''}</span>
                   <span className="text-[11px] opacity-90 tabular-nums">
-                    {formatCurrency(num * currentInst.installmentAmount)}
+                    {formatCurrency(remainingInstallmentValue(currentInst, num))}
                   </span>
                 </button>
               ))}
@@ -287,7 +288,7 @@ export const AdvanceInstallmentModal: React.FC<AdvanceInstallmentModalProps> = (
               >
                 <span className="text-xs font-bold block">Quitar Todas! 🎉</span>
                 <span className="text-[11px] opacity-90 tabular-nums">
-                  {remainingInstallmentsCount}x ({formatCurrency(remainingInstallmentsCount * currentInst.installmentAmount)})
+                  {remainingInstallmentsCount}x ({formatCurrency(remainingInstallmentValue(currentInst))})
                 </span>
               </button>
             </div>
