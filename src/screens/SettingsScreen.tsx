@@ -1,59 +1,11 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import {
-  Users,
-  DollarSign,
-  PieChart,
-  Shield,
-  AlertTriangle,
-  CheckCircle2,
-  AlertCircle,
-  Award,
-  Sparkles,
-  RefreshCw,
-  Sliders,
-  TrendingUp,
-  Save,
-  Check,
-  X,
-  ChevronDown,
-  RotateCcw,
-  Trash2,
-  Info,
-  Lock,
-  Sun,
-  Moon,
-  Palette,
-  CreditCard,
-  Building,
-  Key,
-  Calendar,
-  Smartphone,
-  Tag,
-  Plus,
-  Bell,
-  Search,
-  ExternalLink,
-  ShieldAlert,
-  Clock,
-  HelpCircle,
-  Copy,
-  Link2,
-  Eye,
-  EyeOff,
-  UserCheck,
-  CheckSquare,
-} from 'lucide-react';
+import { Users, DollarSign, AlertTriangle, CheckCircle2, Sparkles, RefreshCw, Save, Check, X, RotateCcw, Trash2, Palette, Building, Smartphone, Tag, Plus, Bell, Copy } from 'lucide-react';
 import { useFinance, CATEGORIES_BASE, ACCENT_THEMES } from '../context/FinanceContext';
-import {
-  CategoryKey,
-  AccentTheme,
-  PluggyBankConnection,
-  CategoryKeywordRule,
-  LifeTierInfo,
-  LifeTierKey,
-} from '../types/finance';
-import { getLifeTier, LIFE_TIERS } from '../utils/incomeTiersEngine';
+import { CategoryKey, AccentTheme, LifeTierInfo } from '../types/finance';
+import { getLifeTier } from '../utils/incomeTiersEngine';
 import { formatCurrency } from '../utils/formatters';
+import { BankSyncModal } from '../components/BankSyncModal';
+import { MedicalCareerSettings } from '../components/MedicalCareerSettings';
 import { PWAInstallButton } from '../components/PWAInstallButton';
 import {
   getCurrentMonthlyReviewSchedule,
@@ -74,28 +26,6 @@ interface ProposedRebalance {
 }
 
 type SettingsTab = 'geral' | 'contas' | 'cores' | 'regras' | 'pwa' | 'casal' | 'dados';
-
-interface BankBrand {
-  id: string;
-  name: string;
-  logo: string;
-  colorHex: string;
-  bgClass: string;
-  borderClass: string;
-  textClass: string;
-  defaultCpf: string;
-}
-
-const BANK_BRANDS: BankBrand[] = [
-  { id: 'nubank', name: 'Nubank', logo: '🟣', colorHex: '#8A05BE', bgClass: 'bg-purple-500/10 dark:bg-purple-950/30', borderClass: 'border-purple-300 dark:border-purple-800/80', textClass: 'text-purple-700 dark:text-purple-300', defaultCpf: '123.456.789-00' },
-  { id: 'itau', name: 'Itaú Personalité', logo: '🟠', colorHex: '#EC7000', bgClass: 'bg-amber-500/10 dark:bg-amber-950/30', borderClass: 'border-amber-300 dark:border-amber-800/80', textClass: 'text-amber-700 dark:text-amber-300', defaultCpf: '987.654.321-99' },
-  { id: 'btg', name: 'BTG Pactual', logo: '🔵', colorHex: '#002C5B', bgClass: 'bg-blue-500/10 dark:bg-blue-950/30', borderClass: 'border-blue-300 dark:border-blue-800/80', textClass: 'text-blue-700 dark:text-blue-300', defaultCpf: '123.456.789-00' },
-  { id: 'bradesco', name: 'Bradesco Prime', logo: '🔴', colorHex: '#CC092F', bgClass: 'bg-rose-500/10 dark:bg-rose-950/30', borderClass: 'border-rose-300 dark:border-rose-800/80', textClass: 'text-rose-700 dark:text-rose-300', defaultCpf: '987.654.321-99' },
-  { id: 'santander', name: 'Santander Select', logo: '🟥', colorHex: '#EC0000', bgClass: 'bg-red-500/10 dark:bg-red-950/30', borderClass: 'border-red-300 dark:border-red-800/80', textClass: 'text-red-700 dark:text-red-300', defaultCpf: '123.456.789-00' },
-  { id: 'inter', name: 'Banco Inter', logo: '🍊', colorHex: '#FF7A00', bgClass: 'bg-orange-500/10 dark:bg-orange-950/30', borderClass: 'border-orange-300 dark:border-orange-800/80', textClass: 'text-orange-700 dark:text-orange-300', defaultCpf: '987.654.321-99' },
-  { id: 'bb', name: 'Banco do Brasil', logo: '🟡', colorHex: '#FCFC30', bgClass: 'bg-yellow-500/10 dark:bg-yellow-950/30', borderClass: 'border-yellow-300 dark:border-yellow-800/80', textClass: 'text-yellow-700 dark:text-yellow-300', defaultCpf: '123.456.789-00' },
-  { id: 'xp', name: 'XP Investimentos', logo: '🖤', colorHex: '#000000', bgClass: 'bg-slate-500/10 dark:bg-slate-900/30', borderClass: 'border-slate-300 dark:border-slate-800', textClass: 'text-slate-700 dark:text-slate-300', defaultCpf: '987.654.321-99' },
-];
 
 export const SettingsScreen: React.FC = () => {
   const {
@@ -129,11 +59,9 @@ export const SettingsScreen: React.FC = () => {
     isCustomizedPercentages: isCustomInContext,
     // Pluggy & Accounts
     pluggyAccounts,
-    pluggyCredentials,
     updatePluggyAccount,
     addPluggyAccount,
     removePluggyAccount,
-    updatePluggyCredentials,
     syncPluggyData,
     isSyncingBanks,
     // Keyword Rules & Subscriptions
@@ -242,40 +170,7 @@ export const SettingsScreen: React.FC = () => {
   const [showDataTools, setShowDataTools] = useState(false);
   const [saveSuccessMsg, setSaveSuccessMsg] = useState(false);
 
-  // Meu Pluggy & Open Finance Credentials State
-  const [p1PluggyClientId, setP1PluggyClientId] = useState(pluggyCredentials.partner1ClientId || '');
-  const [p1PluggySecret, setP1PluggySecret] = useState(pluggyCredentials.partner1ClientSecret || '');
-  const [p1PluggyCpf, setP1PluggyCpf] = useState(pluggyCredentials.partner1Cpf || '');
-
-  const [p2PluggyClientId, setP2PluggyClientId] = useState(pluggyCredentials.partner2ClientId || '');
-  const [p2PluggySecret, setP2PluggySecret] = useState(pluggyCredentials.partner2ClientSecret || '');
-  const [p2PluggyCpf, setP2PluggyCpf] = useState(pluggyCredentials.partner2Cpf || '');
-
-  // ==========================================
-  // MEU PLUGGY HIGH-FIDELITY WIDGET STATE
-  // ==========================================
   const [isAddingAccount, setIsAddingAccount] = useState(false);
-  const [pluggyStep, setPluggyStep] = useState<1 | 2 | 3 | 4>(1);
-  const [selectedBank, setSelectedBank] = useState<BankBrand | null>(null);
-  const [pluggyCpf, setPluggyCpf] = useState('');
-  const [pluggyPassword, setPluggyPassword] = useState('');
-  const [showPassword, setShowPassword] = useState(false);
-  const [pluggyAgencia, setPluggyAgencia] = useState('');
-  const [pluggyAccountNum, setPluggyAccountNum] = useState('');
-  const [consentCheck, setConsentCheck] = useState(true);
-  const [consentMonthsCheck, setConsentCheckMonths] = useState(true);
-  const [syncStatus, setSyncStatus] = useState('');
-  const [syncProgress, setSyncProgress] = useState(0);
-
-  // Discovered Accounts Simulation
-  const [discoveredAccounts, setDiscoveredAccounts] = useState<{
-    id: string;
-    name: string;
-    type: 'corrente' | 'cartao' | 'investimento';
-    balance: number;
-    owner: 'partner1' | 'partner2' | 'both';
-    accountType: 'individual' | 'conjunta';
-  }[]>([]);
 
   // Keyword Rule State
   const [newKeyword, setNewKeyword] = useState('');
@@ -518,14 +413,6 @@ export const SettingsScreen: React.FC = () => {
       investimentos: pisoInvestimentosPct,
     });
 
-    updatePluggyCredentials({
-      partner1ClientId: p1PluggyClientId,
-      partner1ClientSecret: p1PluggySecret,
-      partner1Cpf: p1PluggyCpf,
-      partner2ClientId: p2PluggyClientId,
-      partner2ClientSecret: p2PluggySecret,
-      partner2Cpf: p2PluggyCpf,
-    });
 
     setSaveSuccessMsg(true);
     triggerCelebration();
@@ -689,113 +576,6 @@ export const SettingsScreen: React.FC = () => {
     setSaveSuccessMsg(true);
     triggerCelebration();
     setTimeout(() => setSaveSuccessMsg(false), 4000);
-  };
-
-  // ==========================================
-  // PLUGGY CONNECT MULTI-STEP FLOW LOGIC
-  // ==========================================
-  const handleSelectBank = (bank: BankBrand) => {
-    setSelectedBank(bank);
-    setPluggyCpf(bank.defaultCpf);
-    setPluggyAgencia('3412');
-    setPluggyAccountNum('98234-1');
-    setPluggyStep(2);
-  };
-
-  const handleAuthorizePluggy = () => {
-    if (!pluggyCpf.trim() || !pluggyPassword.trim()) return;
-    setPluggyStep(3);
-    setSyncProgress(0);
-  };
-
-  // Sincronização Progress Simulation
-  useEffect(() => {
-    if (pluggyStep !== 3) return;
-
-    const statuses = [
-      'Estabelecendo conexão segura com servidor Meu Pluggy...',
-      'Autenticando via chaves eletrônicas reguladas...',
-      'Processando consentimento Open Finance do Banco Central...',
-      'Mapeando contas de depósitos e faturas de cartões...',
-      'Importando extratos e faturas dos últimos 90 dias...',
-      'Executando categorização automática do Nosso Financeiro...',
-    ];
-
-    const interval = setInterval(() => {
-      setSyncProgress(prev => {
-        const next = prev + 15;
-        if (next >= 100) {
-          clearInterval(interval);
-          // Generate simulated accounts found at selected bank
-          const bName = selectedBank?.name || 'Banco';
-          const holds = pluggyCpf === '123.456.789-00' ? 'partner1' : 'partner2';
-          setDiscoveredAccounts([
-            {
-              id: `disc-1`,
-              name: `${bName} Conta Corrente`,
-              type: 'corrente',
-              balance: selectedBank?.id === 'itau' ? 12800 : selectedBank?.id === 'bb' ? 8400 : 4500,
-              owner: holds as 'partner1' | 'partner2',
-              accountType: 'individual',
-            },
-            {
-              id: `disc-2`,
-              name: `${bName} Cartão de Crédito`,
-              type: 'cartao',
-              balance: selectedBank?.id === 'nubank' ? 1250 : 2100,
-              owner: holds as 'partner1' | 'partner2',
-              accountType: 'individual',
-            }
-          ]);
-          setPluggyStep(4);
-          return 100;
-        }
-        const index = Math.min(statuses.length - 1, Math.floor((next / 100) * statuses.length));
-        setSyncStatus(statuses[index]);
-        return next;
-      });
-    }, 400);
-
-    return () => clearInterval(interval);
-  }, [pluggyStep, selectedBank, pluggyCpf]);
-
-  const handleConfirmDiscoveredAccounts = () => {
-    discoveredAccounts.forEach(disc => {
-      addPluggyAccount({
-        itemId: `item-plug-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-        accountId: `acc-${Math.floor(Math.random() * 9000) + 1000}`,
-        name: disc.name,
-        bankName: selectedBank?.name || 'Banco',
-        accountType: disc.type,
-        type: disc.accountType,
-        owner: disc.owner,
-        taxNumber: pluggyCpf,
-        balance: disc.balance,
-        lastSynced: 'Agora mesmo',
-        consentExpiresAt: '2027-10-01',
-        status: 'connected',
-        appOwner: disc.owner === 'partner2' ? 'partner2' : 'partner1',
-      });
-    });
-
-    setIsAddingAccount(false);
-    setPluggyStep(1);
-    setSelectedBank(null);
-    setPluggyPassword('');
-    triggerCelebration();
-  };
-
-  const handleUpdateDiscoveredOwner = (id: string, owner: 'partner1' | 'partner2' | 'both') => {
-    setDiscoveredAccounts(prev => prev.map(a => {
-      if (a.id === id) {
-        return {
-          ...a,
-          owner,
-          accountType: owner === 'both' ? 'conjunta' : 'individual',
-        };
-      }
-      return a;
-    }));
   };
 
   const handleAddKeyword = () => {
@@ -999,6 +779,7 @@ export const SettingsScreen: React.FC = () => {
       {/* ========================================================================= */}
       {activeTab === 'geral' && (
         <div className="space-y-6">
+          <MedicalCareerSettings />
           {/* BLOCO 1 — RENDA */}
           <div className="bg-white dark:bg-slate-900 rounded-3xl p-6 sm:p-7 border-2 border-slate-300 dark:border-slate-800 shadow-md space-y-5 animate-in fade-in duration-200">
             <div className="flex flex-wrap items-center justify-between gap-3">
@@ -1947,346 +1728,14 @@ export const SettingsScreen: React.FC = () => {
       {/* ABA 2: MINHAS CONTAS (MEU PLUGGY & OPEN FINANCE) */}
       {/* ========================================================================= */}
       {activeTab === 'contas' && (
-        <div className="space-y-6">
-          {/* Header Info Banner */}
-          <div className="p-5 rounded-3xl bg-gradient-to-r from-emerald-500/10 via-teal-500/10 to-indigo-500/10 border border-emerald-500/30 flex flex-wrap items-center justify-between gap-4 animate-in fade-in duration-200">
-            <div className="flex items-start gap-3.5 min-w-0">
-              <span className="w-10 h-10 rounded-2xl bg-emerald-600 text-white flex items-center justify-center text-xl shrink-0 shadow-md">
-                🏛️
-              </span>
-              <div className="min-w-0">
-                <div className="flex flex-wrap items-center gap-2">
-                  <h3 className="font-bold text-sm sm:text-base text-slate-900 dark:text-white">
-                    Conexão Bancária via Meu Pluggy (Open Finance)
-                  </h3>
-                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 font-extrabold uppercase shrink-0">
-                    Regulado Banco Central
-                  </span>
-                </div>
-                <p className="text-xs text-slate-600 dark:text-slate-400 mt-1 max-w-2xl leading-relaxed">
-                  O app puxa os dados das duas aplicações do Meu Pluggy de cada parceiro e organiza tudo no mesmo dashboard. O consentimento do Open Finance expira a cada 12 meses.
-                </p>
-              </div>
-            </div>
-
-            <div className="flex items-center gap-2 shrink-0">
-              <button
-                onClick={syncPluggyData}
-                disabled={isSyncingBanks}
-                className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-slate-900 dark:bg-white text-white dark:text-slate-900 text-xs font-bold shadow-sm transition-all active:scale-95 cursor-pointer"
-              >
-                <RefreshCw className={`w-3.5 h-3.5 ${isSyncingBanks ? 'animate-spin' : ''}`} />
-                <span>{isSyncingBanks ? 'Sincronizando...' : 'Sincronizar Pluggy'}</span>
-              </button>
-
-              <button
-                onClick={() => {
-                  setPluggyStep(1);
-                  setIsAddingAccount(true);
-                }}
-                className="btn-primary-accent flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-white text-xs font-extrabold shadow-xs active:scale-95 cursor-pointer"
-              >
-                <Plus className="w-4 h-4" />
-                <span>Nova Conta</span>
-              </button>
-            </div>
-          </div>
-
-          {/* TABELA DE CONTAS COM LAYOUT RESPONSIVO (Desktop Table vs Mobile Cards) */}
-          <div className="bg-white dark:bg-slate-900 rounded-3xl p-5 sm:p-7 border border-slate-200/90 dark:border-slate-800 shadow-xs space-y-4 animate-in fade-in duration-200">
-            <div className="flex items-center justify-between">
-              <div>
-                <h4 className="text-sm sm:text-base font-bold text-slate-900 dark:text-white font-display">
-                  Tabela "Minhas Contas" Conectadas
-                </h4>
-                <p className="text-xs text-slate-500 dark:text-slate-400">
-                  O app pré-preenche o campo Dono via CPF. Ajuste para "Nós dois" para contas conjuntas.
-                </p>
-              </div>
-              <span className="text-xs font-bold text-slate-500 shrink-0">
-                {pluggyAccounts.length} conta(s) ativas
-              </span>
-            </div>
-
-            {/* Desktop View Table: Shown on screen >= sm */}
-            <div className="hidden sm:block overflow-x-auto rounded-2xl border border-slate-100 dark:border-slate-800/80">
-              <table className="w-full text-xs text-left min-w-[720px]">
-                <thead className="bg-slate-50 dark:bg-slate-800/60 text-slate-500 font-bold uppercase tracking-wider">
-                  <tr>
-                    <th className="py-3 px-3.5 rounded-l-xl">1. Nome da Conta</th>
-                    <th className="py-3 px-3.5">2. Banco & CPF</th>
-                    <th className="py-3 px-3.5">3. Tipo</th>
-                    <th className="py-3 px-3.5">4. Dono (Mapeamento)</th>
-                    <th className="py-3 px-3.5">Validade Open Finance</th>
-                    <th className="py-3 px-3.5 rounded-r-xl text-right">Saldo</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 dark:divide-slate-800 font-medium">
-                  {pluggyAccounts.map(acc => (
-                    <tr key={acc.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30">
-                      {/* 1. Nome da Conta */}
-                      <td className="py-3.5 px-3.5 font-bold text-slate-900 dark:text-white">
-                        <div className="flex items-center gap-2">
-                          <CreditCard className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
-                          <div>
-                            <span>{acc.name}</span>
-                            <span className="text-[10px] text-slate-400 block font-normal">
-                              ID: {acc.accountId}
-                            </span>
-                          </div>
-                        </div>
-                      </td>
-
-                      {/* 2. Banco & CPF */}
-                      <td className="py-3.5 px-3.5">
-                        <span className="font-bold text-slate-800 dark:text-slate-200 block">
-                          {acc.bankName}
-                        </span>
-                        <span className="text-[10px] text-slate-400 font-mono">
-                          CPF: {acc.taxNumber}
-                        </span>
-                      </td>
-
-                      {/* 3. Tipo */}
-                      <td className="py-3.5 px-3.5">
-                        <select
-                          value={acc.type}
-                          onChange={e => updatePluggyAccount(acc.id, { type: e.target.value as 'individual' | 'conjunta' })}
-                          className="px-2.5 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-850 font-bold text-xs text-slate-800 dark:text-slate-200"
-                        >
-                          <option value="individual">Individual</option>
-                          <option value="conjunta">Conjunta (Open Finance)</option>
-                        </select>
-                      </td>
-
-                      {/* 4. Dono */}
-                      <td className="py-3.5 px-3.5">
-                        <select
-                          value={acc.owner}
-                          onChange={e => updatePluggyAccount(acc.id, { owner: e.target.value as 'partner1' | 'partner2' | 'both' })}
-                          className={`px-2.5 py-1.5 rounded-xl border font-bold text-xs ${
-                            acc.owner === 'both'
-                              ? 'bg-emerald-50 dark:bg-emerald-950/60 border-emerald-300 text-emerald-800 dark:text-emerald-300'
-                              : acc.owner === 'partner1'
-                              ? 'bg-blue-50 dark:bg-blue-950/60 border-blue-300 text-blue-800 dark:text-blue-300'
-                              : 'bg-rose-50 dark:bg-rose-950/60 border-rose-300 text-rose-800 dark:text-rose-300'
-                          }`}
-                        >
-                          <option value="partner1">Você ({partner1Name})</option>
-                          <option value="partner2">Ela/Ele ({partner2Name})</option>
-                          <option value="both">Nós dois (Conta Conjunta)</option>
-                        </select>
-                      </td>
-
-                      {/* Validade Open Finance */}
-                      <td className="py-3.5 px-3.5">
-                        <div className="flex items-center gap-1.5">
-                          <Clock className="w-3.5 h-3.5 text-slate-400" />
-                          <span className="text-[11px] text-slate-600 dark:text-slate-300 font-mono">
-                            {acc.consentExpiresAt}
-                          </span>
-                          <span className="text-[9px] px-1.5 py-0.5 rounded-md bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 font-bold">
-                            Válido 12m
-                          </span>
-                        </div>
-                      </td>
-
-                      {/* Saldo */}
-                      <td className="py-3.5 px-3.5 text-right font-extrabold text-slate-900 dark:text-white tabular-nums">
-                        R$ {formatCurrency(acc.balance)}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-
-            {/* Mobile View Card Grid: Shown on screen < sm to avoid any table overflow */}
-            <div className="block sm:hidden space-y-3.5">
-              {pluggyAccounts.map(acc => (
-                <div
-                  key={`mob-acc-${acc.id}`}
-                  className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-950/30 space-y-3 text-xs"
-                >
-                  <div className="flex items-center justify-between gap-2 border-b border-slate-100 dark:border-slate-800/80 pb-2">
-                    <div className="flex items-center gap-2">
-                      <span className="text-xl">💳</span>
-                      <div>
-                        <span className="font-bold text-slate-900 dark:text-white block">{acc.name}</span>
-                        <span className="text-[10px] text-slate-400">ID: {acc.accountId}</span>
-                      </div>
-                    </div>
-                    <div className="text-right">
-                      <span className="font-black text-slate-900 dark:text-white block">
-                        R$ {formatCurrency(acc.balance)}
-                      </span>
-                      <span className="text-[9px] text-emerald-600 dark:text-emerald-400 flex items-center gap-1 justify-end font-bold">
-                        <span className="w-1 h-1 rounded-full bg-emerald-500 animate-pulse" /> Ativo
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* Grid details */}
-                  <div className="grid grid-cols-2 gap-3 text-[11px]">
-                    <div>
-                      <span className="text-slate-400 block">Banco & CPF</span>
-                      <strong className="text-slate-800 dark:text-slate-200">{acc.bankName}</strong>
-                      <span className="text-[10px] text-slate-400 block font-mono">{acc.taxNumber}</span>
-                    </div>
-
-                    <div>
-                      <span className="text-slate-400 block">Validade Open Finance</span>
-                      <span className="text-slate-700 dark:text-slate-300 font-bold font-mono">{acc.consentExpiresAt}</span>
-                      <span className="text-[9px] font-bold block text-emerald-600">Consentimento 12 meses</span>
-                    </div>
-                  </div>
-
-                  {/* Edit Type & Owner directly */}
-                  <div className="grid grid-cols-2 gap-2 pt-1 border-t border-slate-100 dark:border-slate-850">
-                    <div>
-                      <label className="text-[10px] font-bold text-slate-400 block mb-1">Tipo de Conta</label>
-                      <select
-                        value={acc.type}
-                        onChange={e => updatePluggyAccount(acc.id, { type: e.target.value as 'individual' | 'conjunta' })}
-                        className="w-full px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 font-bold text-[11px] text-slate-800 dark:text-slate-200"
-                      >
-                        <option value="individual">Individual</option>
-                        <option value="conjunta">Conjunta</option>
-                      </select>
-                    </div>
-
-                    <div>
-                      <label className="text-[10px] font-bold text-slate-400 block mb-1">Dono / Titular</label>
-                      <select
-                        value={acc.owner}
-                        onChange={e => updatePluggyAccount(acc.id, { owner: e.target.value as 'partner1' | 'partner2' | 'both' })}
-                        className={`w-full px-2 py-1.5 rounded-lg border font-bold text-[11px] ${
-                          acc.owner === 'both'
-                            ? 'bg-emerald-50 dark:bg-emerald-950/60 border-emerald-300 text-emerald-800 dark:text-emerald-300'
-                            : acc.owner === 'partner1'
-                            ? 'bg-blue-50 dark:bg-blue-950/60 border-blue-300 text-blue-800 dark:text-blue-300'
-                            : 'bg-rose-50 dark:bg-rose-950/60 border-rose-300 text-rose-800 dark:text-rose-300'
-                        }`}
-                      >
-                        <option value="partner1">Você ({partner1Name})</option>
-                        <option value="partner2">Ela/Ele ({partner2Name})</option>
-                        <option value="both">Nós dois (Conjunta)</option>
-                      </select>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* AS DUAS APLICAÇÕES SEPARADAS DO MEU PLUGGY */}
-          <div className="bg-white dark:bg-slate-900 rounded-3xl p-6 sm:p-7 border border-slate-200/90 dark:border-slate-800 shadow-xs space-y-5 animate-in fade-in duration-200">
-            <div className="flex items-center gap-3">
-              <span className="w-9 h-9 rounded-xl bg-indigo-100 dark:bg-indigo-950 text-indigo-600 dark:text-indigo-400 flex items-center justify-center text-lg font-bold">
-                🔑
-              </span>
-              <div>
-                <h4 className="text-base font-bold text-slate-900 dark:text-white font-display">
-                  Configuração de Credenciais: 2 Aplicações Separadas Meu Pluggy
-                </h4>
-                <p className="text-xs text-slate-500 dark:text-slate-400">
-                  O plano gratuito do Meu Pluggy é de 1 CPF por aplicação. Registre as credenciais de ambos para que o app consolide tudo.
-                </p>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-              {/* Aplicação Parceiro 1 */}
-              <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 space-y-3">
-                <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-700 pb-1.5">
-                  <span className="font-bold text-xs text-blue-700 dark:text-blue-300 flex items-center gap-1">
-                    <span>👩</span> Aplicação 1 ({partner1Name})
-                  </span>
-                  <span className="text-[10px] text-slate-400 font-mono">meu.pluggy.ai</span>
-                </div>
-                <div className="space-y-2.5 text-xs">
-                  <div>
-                    <label className="text-[10px] font-bold text-slate-500 block mb-0.5">Client ID</label>
-                    <input
-                      type="text"
-                      value={p1PluggyClientId}
-                      onChange={e => setP1PluggyClientId(e.target.value)}
-                      placeholder="pluggy_cli_..."
-                      className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs font-mono"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-[10px] font-bold text-slate-500 block mb-0.5">Client Secret</label>
-                    <input
-                      type="password"
-                      value={p1PluggySecret}
-                      onChange={e => setP1PluggySecret(e.target.value)}
-                      placeholder="••••••••••••"
-                      className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs font-mono"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-[10px] font-bold text-slate-500 block mb-0.5">CPF do Titular (taxNumber)</label>
-                    <input
-                      type="text"
-                      value={p1PluggyCpf}
-                      onChange={e => setP1PluggyCpf(e.target.value)}
-                      placeholder="123.456.789-00"
-                      className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs font-mono font-bold"
-                    />
-                  </div>
-                </div>
-              </div>
-
-              {/* Aplicação Parceiro 2 */}
-              <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 space-y-3">
-                <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-700 pb-1.5">
-                  <span className="font-bold text-xs text-rose-700 dark:text-rose-300 flex items-center gap-1">
-                    <span>👨</span> Aplicação 2 ({partner2Name})
-                  </span>
-                  <span className="text-[10px] text-slate-400 font-mono">meu.pluggy.ai</span>
-                </div>
-                <div className="space-y-2.5 text-xs">
-                  <div>
-                    <label className="text-[10px] font-bold text-slate-500 block mb-0.5">Client ID</label>
-                    <input
-                      type="text"
-                      value={p2PluggyClientId}
-                      onChange={e => setP2PluggyClientId(e.target.value)}
-                      placeholder="pluggy_cli_..."
-                      className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs font-mono"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-[10px] font-bold text-slate-500 block mb-0.5">Client Secret</label>
-                    <input
-                      type="password"
-                      value={p2PluggySecret}
-                      onChange={e => setP2PluggySecret(e.target.value)}
-                      placeholder="••••••••••••"
-                      className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs font-mono"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-[10px] font-bold text-slate-500 block mb-0.5">CPF do Titular (taxNumber)</label>
-                    <input
-                      type="text"
-                      value={p2PluggyCpf}
-                      onChange={e => setP2PluggyCpf(e.target.value)}
-                      placeholder="987.654.321-99"
-                      className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs font-mono font-bold"
-                    />
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
+        <section className="surface-card p-6 sm:p-8 space-y-5">
+          <div className="flex items-start gap-4"><Building className="w-7 h-7 text-emerald-700 shrink-0" /><div><h2 className="text-xl font-bold">Conexões bancárias</h2><p className="text-sm text-slate-500 mt-2 leading-relaxed">Conecte suas contas com a Pluggy e revise os lançamentos antes de organizar seu orçamento. As credenciais da integração são configuradas no servidor.</p></div></div>
+          <div className="grid gap-3">{pluggyAccounts.map(account => <div key={account.id} className="flex flex-wrap justify-between gap-3 p-4 rounded-xl border border-slate-200 dark:border-slate-700"><div><h3 className="font-semibold text-sm">{account.name}</h3><p className="text-xs text-slate-500 mt-1">{account.status === 'connected' ? 'Conectada' : 'Atualização necessária'}</p></div><span className="text-sm tabular-nums font-semibold">{formatCurrency(account.balance)}</span></div>)}</div>
+          {!pluggyAccounts.length && <p className="text-sm text-slate-500 py-4">Nenhuma conta conectada. Seus registros manuais continuam disponíveis.</p>}
+          <button onClick={() => setIsAddingAccount(true)} className="btn-accent"><Plus size={17} /> Gerenciar conexões</button>
+        </section>
       )}
 
-      {/* ========================================================================= */}
-      {/* ABA 3: CORES DOS 3 MODOS */}
-      {/* ========================================================================= */}
       {activeTab === 'cores' && (
         <div className="bg-white dark:bg-slate-900 rounded-3xl p-6 sm:p-7 border border-slate-200/90 dark:border-slate-800 shadow-xs space-y-6">
           <div className="flex items-center gap-3">
@@ -2904,7 +2353,7 @@ export const SettingsScreen: React.FC = () => {
                 Fusão de Contas & Espaço Compartilhado "Casal"
               </h3>
               <p className="text-xs text-slate-500 dark:text-slate-400">
-                Gere um convite de 6 dígitos para seu parceiro ou insira o código dele para conectar os perfis.
+                Gere um convite de uso único ou insira o código do seu par para conectar os perfis.
               </p>
             </div>
           </div>
@@ -2913,15 +2362,16 @@ export const SettingsScreen: React.FC = () => {
             {/* Seu Código de Convite */}
             <div className="p-5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 space-y-3">
               <span className="font-bold text-xs text-slate-700 dark:text-slate-300 block">
-                Seu Código de Convite do Casal:
+                Seu convite de uso único:
               </span>
               <div className="flex items-center gap-2">
-                <div className="flex-1 py-3 px-4 rounded-xl bg-white dark:bg-slate-900 border-2 border-emerald-500 text-center font-mono font-black text-xl tracking-widest text-emerald-600 dark:text-emerald-400">
-                  {coupleAccount?.inviteCode || 'CASAL6'}
+                <div className="flex-1 py-3 px-4 rounded-xl bg-white dark:bg-slate-900 border-2 border-emerald-500 text-center font-mono font-semibold text-xs break-all text-emerald-600 dark:text-emerald-400">
+                  {coupleAccount?.inviteCode || 'Gere um convite abaixo'}
                 </div>
                 <button
+                  disabled={!coupleAccount?.inviteCode}
                   onClick={() => {
-                    navigator.clipboard.writeText(coupleAccount?.inviteCode || 'CASAL6');
+                    navigator.clipboard.writeText(coupleAccount?.inviteCode || '');
                     setCopiedInvite(true);
                     setTimeout(() => setCopiedInvite(false), 2500);
                   }}
@@ -2931,6 +2381,7 @@ export const SettingsScreen: React.FC = () => {
                   {copiedInvite ? <Check className="w-5 h-5 text-emerald-400" /> : <Copy className="w-5 h-5" />}
                 </button>
               </div>
+              <button className="btn-outline w-full" onClick={async () => { try { await generateNewInviteCode(); setInviteFeedback('Convite gerado. Compartilhe apenas com seu par.'); } catch (cause) { setInviteFeedback(cause instanceof Error ? cause.message : 'Não foi possível gerar o convite.'); } }}><RefreshCw size={15} />Gerar novo convite</button>
               <p className="text-[11px] text-slate-500">
                 Envie este código para seu par inserir no aplicativo dele e fazer a fusão.
               </p>
@@ -2944,11 +2395,14 @@ export const SettingsScreen: React.FC = () => {
               <div className="flex items-center gap-2">
                 <input
                   type="text"
-                  maxLength={6}
+                  maxLength={128}
                   value={inputInviteCode}
-                  onChange={e => setInputInviteCode(e.target.value.toUpperCase())}
-                  placeholder="EX: 7X89Q2"
-                  className="flex-1 py-2.5 px-3 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 font-mono font-bold text-sm uppercase text-center"
+                  onChange={e => setInputInviteCode(e.target.value)}
+                  placeholder="Cole o convite recebido"
+                  aria-label="Código de convite do seu par"
+                  autoCapitalize="none"
+                  autoCorrect="off"
+                  className="flex-1 py-2.5 px-3 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 font-mono font-bold text-sm text-center"
                 />
                 <button
                   onClick={async () => {
@@ -3149,326 +2603,7 @@ export const SettingsScreen: React.FC = () => {
       {/* ========================================================================= */}
       {/* HIGH-FIDELITY MEU PLUGGY CONNECT WIDGET SIMULATOR MODAL */}
       {/* ========================================================================= */}
-      {isAddingAccount && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/60 backdrop-blur-sm animate-in fade-in duration-200">
-          <div className="absolute inset-0" onClick={() => setIsAddingAccount(false)} />
-
-          <div className="relative z-10 w-full max-w-lg bg-white dark:bg-slate-900 rounded-3xl shadow-2xl border border-slate-200 dark:border-slate-800 overflow-hidden flex flex-col max-h-[92vh] text-slate-800 dark:text-slate-100">
-            {/* Header */}
-            <div className="flex items-center justify-between px-5 sm:px-6 pt-5 pb-3.5 border-b border-slate-100 dark:border-slate-800 shrink-0">
-              <div className="flex items-center gap-2.5">
-                <span className="w-8 h-8 rounded-xl bg-emerald-500 text-white flex items-center justify-center text-sm font-bold shadow-xs">
-                  🔌
-                </span>
-                <div>
-                  <h3 className="font-extrabold text-sm sm:text-base text-slate-900 dark:text-white">
-                    Meu Pluggy Connect Flow
-                  </h3>
-                  <p className="text-[10px] text-slate-400 font-medium">
-                    Sincronização Segura Open Finance · Passo {pluggyStep} de 4
-                  </p>
-                </div>
-              </div>
-              <button
-                onClick={() => {
-                  setIsAddingAccount(false);
-                  setPluggyStep(1);
-                  setSelectedBank(null);
-                }}
-                className="w-8 h-8 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-850 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 flex items-center justify-center"
-              >
-                <X className="w-4 h-4 stroke-[2.5]" />
-              </button>
-            </div>
-
-            {/* STEP 1: SELECT BANK */}
-            {pluggyStep === 1 && (
-              <div className="p-5 sm:p-6 overflow-y-auto space-y-4">
-                <div>
-                  <h4 className="font-extrabold text-xs text-slate-500 uppercase tracking-wider">
-                    Selecione a Instituição Financeira do Casal:
-                  </h4>
-                  <p className="text-[11px] text-slate-400 mt-0.5">
-                    Conecte contas individuais ou conjuntas de qualquer banco regulado pelo Banco Central.
-                  </p>
-                </div>
-
-                <div className="grid grid-cols-2 gap-2.5 pt-1">
-                  {BANK_BRANDS.map(bank => (
-                    <button
-                      key={bank.id}
-                      onClick={() => handleSelectBank(bank)}
-                      className={`p-4 rounded-2xl border text-left flex flex-col justify-between h-24 hover:scale-[1.02] hover:shadow-md transition-all cursor-pointer ${bank.bgClass} ${bank.borderClass}`}
-                    >
-                      <span className="text-2xl shrink-0">{bank.logo}</span>
-                      <div>
-                        <span className={`font-bold text-xs block ${bank.textClass}`}>
-                          {bank.name}
-                        </span>
-                        <span className="text-[9px] text-slate-400 block font-normal">
-                          Open Finance Ativo
-                        </span>
-                      </div>
-                    </button>
-                  ))}
-                </div>
-
-                <div className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-850/60 border border-slate-200/80 dark:border-slate-800 text-[11px] text-slate-500 flex items-start gap-2.5">
-                  <Shield className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />
-                  <p>
-                    <strong>Apenas Modo Leitura:</strong> A API do Meu Pluggy é 100% segura e regulada pelo BC. O aplicativo nunca terá acesso para realizar transações, saques ou pagamentos.
-                  </p>
-                </div>
-              </div>
-            )}
-
-            {/* STEP 2: CREDENTIALS & CONSENT */}
-            {pluggyStep === 2 && selectedBank && (
-              <div className="p-5 sm:p-6 overflow-y-auto space-y-4">
-                <div className="flex items-center gap-3 p-3.5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-950/40">
-                  <span className="text-3xl">{selectedBank.logo}</span>
-                  <div>
-                    <h4 className="font-extrabold text-sm text-slate-900 dark:text-white">
-                      Conectar {selectedBank.name}
-                    </h4>
-                    <p className="text-[10px] text-slate-400 font-mono">
-                      meu.pluggy.ai via {selectedBank.id}.api.openbanking.com.br
-                    </p>
-                  </div>
-                </div>
-
-                <div className="space-y-3.5">
-                  <div className="grid grid-cols-2 gap-2 text-xs">
-                    <div>
-                      <label className="text-[10px] font-bold text-slate-500 block mb-1">
-                        Agência (4 dígitos)
-                      </label>
-                      <input
-                        type="text"
-                        value={pluggyAgencia}
-                        onChange={e => setPluggyAgencia(e.target.value)}
-                        placeholder="3412"
-                        className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs font-mono font-bold"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-[10px] font-bold text-slate-500 block mb-1">
-                        Conta (com dígito)
-                      </label>
-                      <input
-                        type="text"
-                        value={pluggyAccountNum}
-                        onChange={e => setPluggyAccountNum(e.target.value)}
-                        placeholder="98234-1"
-                        className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs font-mono font-bold"
-                      />
-                    </div>
-                  </div>
-
-                  <div className="text-xs">
-                    <label className="text-[10px] font-bold text-slate-500 block mb-1">
-                      CPF do Titular da Conta / Cartão
-                    </label>
-                    <input
-                      type="text"
-                      value={pluggyCpf}
-                      onChange={e => setPluggyCpf(e.target.value)}
-                      placeholder="123.456.789-00"
-                      className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs font-mono font-bold"
-                    />
-                  </div>
-
-                  <div className="text-xs">
-                    <label className="text-[10px] font-bold text-slate-500 block mb-1">
-                      Senha Eletrônica / PIN (Simulado)
-                    </label>
-                    <div className="relative">
-                      <input
-                        type={showPassword ? 'text' : 'password'}
-                        value={pluggyPassword}
-                        onChange={e => setPluggyPassword(e.target.value)}
-                        placeholder="Sua senha eletrônica de internet banking"
-                        className="w-full pl-3 pr-10 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs font-mono"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => setShowPassword(!showPassword)}
-                        className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
-                      >
-                        {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Consents boxes */}
-                  <div className="space-y-2 pt-1">
-                    <label className="flex items-start gap-2.5 cursor-pointer text-[11px] text-slate-600 dark:text-slate-300">
-                      <input
-                        type="checkbox"
-                        checked={consentCheck}
-                        onChange={e => setConsentCheck(e.target.checked)}
-                        className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 mt-0.5"
-                      />
-                      <span>
-                        Autorizo o compartilhamento de saldos, limites e extratos da minha conta para fins de consolidação das finanças do casal.
-                      </span>
-                    </label>
-
-                    <label className="flex items-start gap-2.5 cursor-pointer text-[11px] text-slate-600 dark:text-slate-300">
-                      <input
-                        type="checkbox"
-                        checked={consentMonthsCheck}
-                        onChange={e => setConsentCheckMonths(e.target.checked)}
-                        className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 mt-0.5"
-                      />
-                      <span>
-                        Autorizo a validade regulatória deste compartilhamento por **12 meses** conforme normas do BC.
-                      </span>
-                    </label>
-                  </div>
-                </div>
-
-                {/* Flow buttons */}
-                <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-slate-100 dark:border-slate-800">
-                  <button
-                    onClick={() => {
-                      setPluggyStep(1);
-                      setSelectedBank(null);
-                    }}
-                    className="px-4 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 font-bold text-xs"
-                  >
-                    Voltar
-                  </button>
-                  <button
-                    onClick={handleAuthorizePluggy}
-                    disabled={!pluggyCpf.trim() || !pluggyPassword.trim() || !consentCheck || !consentMonthsCheck}
-                    className="btn-primary-accent px-5 py-2 rounded-xl text-white font-extrabold text-xs shadow-md disabled:opacity-50 transition-all cursor-pointer"
-                  >
-                    Autorizar Open Finance
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {/* STEP 3: SYNC PROGRESS BAR ANIMATION */}
-            {pluggyStep === 3 && (
-              <div className="p-8 text-center space-y-5">
-                <div className="relative w-16 h-16 mx-auto">
-                  <RefreshCw className="w-16 h-16 text-emerald-600 dark:text-emerald-400 animate-spin stroke-[2]" />
-                  <span className="absolute inset-0 flex items-center justify-center text-xl font-bold">
-                    🔑
-                  </span>
-                </div>
-
-                <div className="space-y-1.5 max-w-sm mx-auto">
-                  <h4 className="font-extrabold text-sm text-slate-900 dark:text-white">
-                    Conexão Segura em Andamento...
-                  </h4>
-                  <p className="text-xs text-slate-500 dark:text-slate-400 font-medium min-h-[32px] px-2 animate-pulse leading-snug">
-                    {syncStatus}
-                  </p>
-                </div>
-
-                {/* Progress bar */}
-                <div className="w-full max-w-xs mx-auto bg-slate-100 dark:bg-slate-800 rounded-full h-2 overflow-hidden">
-                  <div
-                    className="bg-emerald-500 h-full rounded-full transition-all duration-300"
-                    style={{ width: `${syncProgress}%` }}
-                  />
-                </div>
-
-                <div className="text-[10px] text-slate-400 font-mono tracking-wider">
-                  Open Finance API (V3.1) · {syncProgress}% concluído
-                </div>
-              </div>
-            )}
-
-            {/* STEP 4: CONFIRM DISCOVERED ACCOUNTS AND DEFINE ROLES */}
-            {pluggyStep === 4 && (
-              <div className="p-5 sm:p-6 overflow-y-auto space-y-4">
-                <div className="p-3.5 rounded-2xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800/80 flex items-center gap-2.5">
-                  <span className="text-xl">🎉</span>
-                  <div className="text-xs">
-                    <span className="font-bold text-emerald-900 dark:text-emerald-300 block">
-                      Conexão Estabelecida!
-                    </span>
-                    Encontramos as seguintes contas sob o CPF <strong className="font-mono">{pluggyCpf}</strong>:
-                  </div>
-                </div>
-
-                <div className="space-y-3">
-                  {discoveredAccounts.map(disc => (
-                    <div
-                      key={disc.id}
-                      className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-950/20 space-y-3"
-                    >
-                      <div className="flex items-center justify-between text-xs gap-3">
-                        <div className="flex items-center gap-2 font-bold text-slate-900 dark:text-white min-w-0">
-                          <span className="shrink-0">{disc.type === 'cartao' ? '💳' : '🏦'}</span>
-                          <span className="truncate">{disc.name}</span>
-                        </div>
-                        <strong className="text-slate-900 dark:text-white font-extrabold tabular-nums shrink-0">
-                          R$ {formatCurrency(disc.balance)}
-                        </strong>
-                      </div>
-
-                      {/* Map owner & accountType */}
-                      <div className="grid grid-cols-2 gap-3 text-xs">
-                        <div>
-                          <label className="text-[10px] font-bold text-slate-400 block mb-1">
-                            Tipo de Conta
-                          </label>
-                          <select
-                            value={disc.accountType}
-                            onChange={e => {
-                              const val = e.target.value as 'individual' | 'conjunta';
-                              setDiscoveredAccounts(prev => prev.map(a => a.id === disc.id ? { ...a, accountType: val } : a));
-                            }}
-                            className="w-full px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs font-bold"
-                          >
-                            <option value="individual">Individual</option>
-                            <option value="conjunta">Conjunta (Mapeamento)</option>
-                          </select>
-                        </div>
-
-                        <div>
-                          <label className="text-[10px] font-bold text-slate-400 block mb-1">
-                            Dono / Titular
-                          </label>
-                          <select
-                            value={disc.owner}
-                            onChange={e => handleUpdateDiscoveredOwner(disc.id, e.target.value as any)}
-                            className="w-full px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs font-bold capitalize"
-                          >
-                            <option value="partner1">Você ({partner1Name})</option>
-                            <option value="partner2">Ela/Ele ({partner2Name})</option>
-                            <option value="both">Ambos (Casal)</option>
-                          </select>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-
-                <div className="p-3 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-[11px] text-amber-800 dark:text-amber-300 leading-snug">
-                  *Nota: Você poderá ajustar estes mapeamentos a qualquer momento na aba Ajustes.*
-                </div>
-
-                {/* Finalize connection */}
-                <div className="flex justify-end pt-2 border-t border-slate-100 dark:border-slate-800">
-                  <button
-                    onClick={handleConfirmDiscoveredAccounts}
-                    className="btn-primary-accent w-full py-3 rounded-xl text-white font-extrabold text-xs shadow-md transition-all active:scale-95 flex items-center justify-center gap-1.5 cursor-pointer"
-                  >
-                    <CheckSquare className="w-4 h-4" />
-                    <span>Concluir Conexão Open Finance</span>
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
+      {isAddingAccount && <BankSyncModal isOpen={isAddingAccount} onClose={() => setIsAddingAccount(false)} />}
     </div>
   );
 };

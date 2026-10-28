@@ -1,3 +1,4 @@
+import { useDialogFocus } from '../../hooks/useDialogFocus';
 import React, { useState } from 'react';
 import { X, ArrowRight, ArrowLeft, Check, Sparkles, Users, User, Percent, Shield, Target } from 'lucide-react';
 import { useFinance, CATEGORIES_BASE } from '../../context/FinanceContext';
@@ -36,6 +37,9 @@ export const ExpenseModal: React.FC<ExpenseModalProps> = ({
   const [fundingSource, setFundingSource] = useState<FundingSourceType>('month_budget');
   const [selectedGoalId, setSelectedGoalId] = useState<string>(() => state.piggyBanks[0]?.id || '');
   const [successCelebration, setSuccessCelebration] = useState(false);
+  const [validationError, setValidationError] = useState('');
+
+  const dialogRef = useDialogFocus(isOpen, onClose);
 
   if (!isOpen) return null;
 
@@ -83,7 +87,8 @@ export const ExpenseModal: React.FC<ExpenseModalProps> = ({
   const handleNext = () => {
     if (step === 1) {
       const val = parseFloat(amount.replace(',', '.'));
-      if (!val || val <= 0) return;
+      if (!Number.isFinite(val) || val <= 0 || val > 10000000) { setValidationError('Informe um valor entre R$ 0,01 e R$ 10.000.000.'); return; }
+      setValidationError('');
       setStep(2);
     } else if (step === 2) {
       setStep(3);
@@ -106,9 +111,11 @@ export const ExpenseModal: React.FC<ExpenseModalProps> = ({
   };
 
   const handleSave = () => {
-    const numAmount = parseFloat(amount.replace(',', '.'));
+    const numAmount = Math.round(Number(amount.replace(',', '.')) * 100) / 100;
+    if (!Number.isFinite(numAmount) || numAmount <= 0 || !Number.isFinite(splitPartner1Pct) || splitPartner1Pct < 0 || splitPartner1Pct > 100 || (isInstallment && (!Number.isInteger(installmentsCount) || installmentsCount < 2 || installmentsCount > 120))) { setValidationError('Confira o valor, a divisão e a quantidade de parcelas.'); return; }
     const finalDesc = description.trim() || CATEGORIES_BASE[category].name;
-    const today = defaultDate || new Date().toISOString().split('T')[0];
+    const today = defaultDate || new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().split('T')[0];
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(today) || Number.isNaN(new Date(today + 'T12:00:00').getTime())) { setValidationError('Informe uma data válida.'); return; }
 
     const p1Pct =
       paidBy === 'partner1'
@@ -133,6 +140,7 @@ export const ExpenseModal: React.FC<ExpenseModalProps> = ({
         splitPartner1Pct: p1Pct,
         splitPartner2Pct: p2Pct,
       });
+    } else {
       const targetGoal = state.piggyBanks.find(g => g.id === selectedGoalId);
       addExpense({
         description: finalDesc,
@@ -175,7 +183,7 @@ export const ExpenseModal: React.FC<ExpenseModalProps> = ({
   const currentParsedAmount = parseFloat(amount.replace(',', '.')) || 0;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/60 backdrop-blur-sm animate-in fade-in duration-200">
+    <div ref={dialogRef} role="dialog" aria-modal="true" aria-label="Registrar gasto" tabIndex={-1} className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/60 backdrop-blur-sm animate-in fade-in duration-200">
       {/* Click outside backdrop */}
       <div className="absolute inset-0" onClick={handleClose} />
 
@@ -204,6 +212,7 @@ export const ExpenseModal: React.FC<ExpenseModalProps> = ({
           </button>
         </div>
 
+        {validationError && <p role="alert" className="mx-6 mt-4 p-3 text-xs rounded-xl bg-rose-50 dark:bg-rose-950/40 text-rose-800 dark:text-rose-200">{validationError}</p>}
         {/* Content Body */}
         <div className="p-6 overflow-y-auto flex-1 flex flex-col justify-center">
           {successCelebration ? (

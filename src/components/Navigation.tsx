@@ -87,15 +87,15 @@ export const Navigation: React.FC<NavigationProps> = ({
     { id: 'home', label: 'Início', icon: <Home className="w-4 h-4 shrink-0" /> },
     {
       id: 'couple_hub',
-      label: 'Hub do Casal',
+      label: 'Nosso espaço',
       icon: <Users className="w-4 h-4 shrink-0 text-rose-500" />,
-      badge: 'Novo',
+
     },
     {
       id: 'calendar',
       label: 'Calendário',
       icon: <Calendar className="w-4 h-4 shrink-0" />,
-      badge: 'Geral',
+
     },
     {
       id: 'categories',
@@ -211,6 +211,7 @@ export const Navigation: React.FC<NavigationProps> = ({
             return (
               <button
                 key={item.id}
+                aria-current={isActive ? 'page' : undefined}
                 onClick={() => onSelectScreen(item.id)}
                 className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-2xl text-xs font-extrabold transition-all cursor-pointer ${
                   isActive
@@ -249,7 +250,7 @@ export const Navigation: React.FC<NavigationProps> = ({
               className="w-full flex items-center justify-center gap-2 py-3 px-3 rounded-2xl text-xs font-black bg-[#111318] text-white shadow-md active:scale-95 transition-all cursor-pointer mt-1"
             >
               <Plus className="w-4 h-4 stroke-[3]" />
-              <span>GASTEI</span>
+              <span>Registrar gasto</span>
             </button>
 
             {/* Secondary Action Row: Ganhei & Parcela */}
@@ -418,7 +419,7 @@ export const Navigation: React.FC<NavigationProps> = ({
       {/* FLOATING DARK BOTTOM BAR (Capsule in Charcoal #111318 with Magic Button +)*/}
       {/* ========================================================================= */}
       <nav
-        aria-label="Navegação inferior mobile flutuante"
+        aria-label="Navegação principal"
         className="lg:hidden fixed bottom-[calc(0.75rem+env(safe-area-inset-bottom,0px))] inset-x-4 sm:max-w-md sm:mx-auto z-40 floating-dark-bar p-1.5 transition-all"
       >
         <div className="grid grid-cols-5 items-center h-14 relative">
@@ -553,7 +554,7 @@ export const Navigation: React.FC<NavigationProps> = ({
                   </span>
                   <div>
                     <h4 className="font-black text-sm text-[#111318] dark:text-white">Recebi</h4>
-                    <p className="text-[11px] text-slate-600 dark:text-slate-400">Salário, plantão médico ou renda extra</p>
+                    <p className="text-[11px] text-slate-600 dark:text-slate-400">Bolsa, ajuda familiar, salário ou renda extra</p>
                   </div>
                 </div>
                 <ChevronRight className="w-5 h-5 text-emerald-700 group-hover:translate-x-1 transition-transform" />
@@ -611,7 +612,7 @@ export const Navigation: React.FC<NavigationProps> = ({
           <div className="w-full bg-[#FAF7F2] dark:bg-[#111318] rounded-t-3xl p-5 border-t border-[#E8E2D8] dark:border-slate-800 space-y-4 max-h-[85vh] overflow-y-auto">
             <div className="flex items-center justify-between pb-2 border-b border-slate-200 dark:border-slate-800">
               <span className="font-black text-[#111318] dark:text-white text-sm font-display">
-                Todos os Recursos do JUNTÔ
+                Explore seu Juntô
               </span>
               <button
                 onClick={() => setIsMobileMenuOpen(false)}
@@ -629,10 +630,10 @@ export const Navigation: React.FC<NavigationProps> = ({
                 <div className="flex items-center gap-2 text-rose-900 dark:text-rose-200 font-extrabold text-sm">
                   <Users className="w-5 h-5 text-rose-600 dark:text-rose-400 stroke-[2.5]" />
                   <span>Hub do Casal</span>
-                  <span className="text-[10px] bg-rose-200 dark:bg-rose-800 text-rose-900 dark:text-rose-100 px-2 py-0.5 rounded-full font-black uppercase">Ultimate</span>
+                  <span className="text-[10px] bg-rose-200 dark:bg-rose-800 text-rose-900 dark:text-rose-100 px-2 py-0.5 rounded-full font-black uppercase"></span>
                 </div>
                 <span className="text-[11px] text-rose-700 dark:text-rose-300 font-medium">
-                  Cofrinhos, Wishlist, Reserva, FIRE, Sonhos &amp; Alertas de Contas
+                  Metas, prioridades e contas de vocês
                 </span>
               </button>
 
@@ -713,7 +714,7 @@ export const Navigation: React.FC<NavigationProps> = ({
               >
                 <span className="text-xl">🏦</span>
                 <span className="font-bold text-xs text-[#111318] dark:text-white">Open Finance Pluggy</span>
-                <span className="text-[10px] text-slate-600 dark:text-slate-400">Sincronização de bancos em 2 CPFs</span>
+                <span className="text-[10px] text-slate-600 dark:text-slate-400">Conecte e revise seus lançamentos</span>
               </button>
             </div>
           </div>

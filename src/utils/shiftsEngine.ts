@@ -9,6 +9,19 @@ import {
 } from '../types/finance';
 import { formatMonthYear, getNextMonth } from './formatters';
 
+export function shiftCivilToday(): string {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+}
+
+export function isActiveShift(shift: MedicalShift): boolean {
+  return shift.executionStatus !== 'cancelled' && shift.executionStatus !== 'replaced';
+}
+
+export function isPerformedShift(shift: MedicalShift): boolean {
+  return isActiveShift(shift) && shift.executionStatus !== 'scheduled' && shift.dateWorked <= shiftCivilToday();
+}
+
 export const SECTOR_CONFIG: Record<
   ShiftSector,
   { label: string; emoji: string; bgClass: string; textClass: string; borderClass: string }
@@ -219,12 +232,12 @@ export function calculateShiftMetrics(
   monthKey: string,
   partnerFilter?: 'partner1' | 'partner2' | 'both'
 ): ShiftMetricsSummary {
-  const todayStr = new Date().toISOString().split('T')[0];
+  const todayStr = shiftCivilToday();
 
   const filtered = shifts.filter(s => {
     const isPartner = !partnerFilter || partnerFilter === 'both' || s.partner === partnerFilter;
     const isMonth = s.dateWorked.startsWith(monthKey) || s.estimatedPayDate.startsWith(monthKey);
-    return isPartner && isMonth;
+    return isPartner && isMonth && isActiveShift(s);
   });
 
   let totalHours = 0;
@@ -237,13 +250,15 @@ export function calculateShiftMetrics(
   let overdueCount = 0;
 
   filtered.forEach(shift => {
-    totalHours += shift.durationHours || 0;
-    totalGross += shift.grossAmount || 0;
+    if (isPerformedShift(shift)) {
+      totalHours += shift.durationHours || 0;
+      totalGross += shift.grossAmount || 0;
+    }
 
     const isOverdue = shift.status === 'overdue' || (shift.status === 'pending' && shift.estimatedPayDate < todayStr);
 
-    if (shift.status === 'received') {
-      totalReceived += shift.netAmount || shift.grossAmount;
+    if (shift.status === 'received' && isPerformedShift(shift)) {
+      totalReceived += shift.netAmount ?? shift.grossAmount;
       receivedCount++;
     } else if (isOverdue) {
       totalOverdue += shift.grossAmount;
@@ -297,7 +312,7 @@ export function calculateHourlyYieldRanking(shifts: MedicalShift[]): HourlyEffic
     }
   > = {};
 
-  shifts.forEach(s => {
+  shifts.filter(isPerformedShift).forEach(s => {
     const key = `${s.hospitalName}-${s.sector}`;
     if (!groups[key]) {
       groups[key] = {
@@ -350,21 +365,21 @@ export function calculateShiftRecommendations(
   monthKey: string,
   monthLabel: string
 ): ShiftPacingRecommendation {
-  const safeShiftValue = averageShiftValue > 0 ? averageShiftValue : 1400;
+  const safeShiftValue = Number.isFinite(averageShiftValue) && averageShiftValue > 0 ? averageShiftValue : 0;
   const isDryMonth = projectedAmount < fixedExpensesAmount;
 
   // Level 1: Linha de Sobrevivência / Blindagem Básica (cobrir contas fixas)
   const gapToFixed = Math.max(0, fixedExpensesAmount - projectedAmount);
-  const shiftsToCoverFixed = gapToFixed > 0 ? Math.ceil(gapToFixed / safeShiftValue) : 0;
+  const shiftsToCoverFixed = gapToFixed > 0 && safeShiftValue > 0 ? Math.ceil(gapToFixed / safeShiftValue) : 0;
 
   // Level 2: Manutenção do Estilo de Vida Médio
   const gapToLifestyle = Math.max(0, averageIncomeTarget - projectedAmount);
-  const shiftsToMaintainLifestyle = gapToLifestyle > 0 ? Math.ceil(gapToLifestyle / safeShiftValue) : 0;
+  const shiftsToMaintainLifestyle = gapToLifestyle > 0 && safeShiftValue > 0 ? Math.ceil(gapToLifestyle / safeShiftValue) : 0;
 
   // Level 3: Aceleração Patrimonial (+20% sobre a média)
   const accelerateTarget = Math.round(averageIncomeTarget * 1.2);
   const gapToAccelerate = Math.max(0, accelerateTarget - projectedAmount);
-  const shiftsToAccelerateGains = gapToAccelerate > 0 ? Math.ceil(gapToAccelerate / safeShiftValue) : 0;
+  const shiftsToAccelerateGains = gapToAccelerate > 0 && safeShiftValue > 0 ? Math.ceil(gapToAccelerate / safeShiftValue) : 0;
 
   return {
     monthKey,
@@ -402,24 +417,24 @@ export function projectCashFlowTimeline(
   monthsAhead: number = 4
 ): CashFlowMonthProjection[] {
   const timeline: CashFlowMonthProjection[] = [];
-  const safeFixed = fixedExpenses > 0 ? fixedExpenses : 8000;
-  const safeAvgIncome = averageIncome > 0 ? averageIncome : 15000;
+  const safeFixed = Number.isFinite(fixedExpenses) ? Math.max(0, fixedExpenses) : 0;
+  const safeAvgIncome = Number.isFinite(averageIncome) ? Math.max(0, averageIncome) : 0;
 
   // Compute overall average 12h shift value from recorded shifts
-  const validShifts = shifts.filter(s => s.grossAmount > 0);
+  const validShifts = shifts.filter(s => isPerformedShift(s) && s.grossAmount > 0);
   const avgShiftValue =
     validShifts.length > 0
       ? Math.round(validShifts.reduce((s, it) => s + it.grossAmount, 0) / validShifts.length)
-      : 1400;
+      : 0;
 
   let currentKey = startMonthKey;
 
   for (let i = 0; i < monthsAhead; i++) {
-    const monthShifts = shifts.filter(s => s.estimatedPayDate.startsWith(currentKey));
+    const monthShifts = shifts.filter(s => isActiveShift(s) && s.estimatedPayDate.startsWith(currentKey));
     const projectedIncome = monthShifts.reduce((s, it) => s + it.grossAmount, 0);
     const alreadyReceived = monthShifts
-      .filter(s => s.status === 'received')
-      .reduce((s, it) => s + (it.netAmount || it.grossAmount), 0);
+      .filter(s => s.status === 'received' && isPerformedShift(s))
+      .reduce((s, it) => s + (it.netAmount ?? it.grossAmount), 0);
 
     const coverageRatio = safeFixed > 0 ? projectedIncome / safeFixed : 1;
     const label = formatMonthYear(currentKey);
@@ -469,7 +484,8 @@ export function findMatchingBankIncomesForShift(
   const probableMatches: IncomeItem[] = [];
 
   incomes.forEach(inc => {
-    const amountDiff = Math.abs(inc.amount - shift.grossAmount);
+    if (inc.recipient !== shift.partner) return;
+    const amountDiff = Math.abs(inc.amount - (shift.netAmount ?? shift.grossAmount));
     const isAmountClose = amountDiff <= 50; // allow small withholding tax variation
 
     const descUpper = (inc.description || '').toUpperCase();

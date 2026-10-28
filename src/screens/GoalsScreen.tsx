@@ -30,7 +30,7 @@ import {
   CheckCircle2,
   HelpCircle,
 } from 'lucide-react';
-import { useFinance } from '../context/FinanceContext';
+import { useFinance, CATEGORIES_BASE } from '../context/FinanceContext';
 import { SavingsPiggyBank } from '../types/finance';
 import { formatCurrency, formatHumanDuration, formatMonthYear } from '../utils/formatters';
 import { compressImageFile, GOAL_PHOTO_PRESETS, GoalPhotoPreset } from '../utils/imageCompressor';

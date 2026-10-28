@@ -38,5 +38,8 @@ jobs:
       - name: Unit tests
         run: npm run test
 
-      - name: Build client
-        run: npm run build
+      - name: Build client and server
+        run: npm run build:all
+
+      - name: Production smoke (no external services)
+        run: node scripts/smoke-production.mjs

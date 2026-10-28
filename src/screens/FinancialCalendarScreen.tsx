@@ -1,3 +1,4 @@
+import { installmentValue } from '../utils/installmentMoney';
 import React, { useState, useMemo } from 'react';
 import {
   Calendar as CalendarIcon,
@@ -59,7 +60,7 @@ export const FinancialCalendarScreen: React.FC<FinancialCalendarScreenProps> = (
     confirmSubscriptionAsExpense,
   } = useFinance();
 
-  const todayStr = useMemo(() => new Date().toISOString().split('T')[0], []);
+  const todayStr = useMemo(() => new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().split('T')[0], []);
   const todayMonthStr = useMemo(() => todayStr.slice(0, 7), [todayStr]);
 
   // Selected Month (YYYY-MM) and Selected Day for detailed drawer
@@ -75,21 +76,11 @@ export const FinancialCalendarScreen: React.FC<FinancialCalendarScreenProps> = (
   const [newBillType, setNewBillType] = useState<'fixo' | 'assinatura'>('fixo');
   const [newBillPayer, setNewBillPayer] = useState<PaidBy>('both');
 
-  // Default recurring fixed bills for Brazilian couples (if none registered yet)
-  const defaultBills = useMemo(() => {
-    // If user has already added subscriptions, we use them
-    const subs = state.detectedSubscriptions || [];
-    if (subs.length > 0) return [];
-    
-    // Default smart templates to start with
-    return [
-      { id: 'def-aluguel', title: 'Aluguel / Condomínio', amount: 1850, category: 'moradia' as CategoryKey, dueDay: 10, payer: 'both' as PaidBy },
-      { id: 'def-luz', title: 'Conta de Energia (Luz)', amount: 195, category: 'moradia' as CategoryKey, dueDay: 15, payer: 'both' as PaidBy },
-      { id: 'def-internet', title: 'Internet Fibra 500MB', amount: 119, category: 'moradia' as CategoryKey, dueDay: 12, payer: 'both' as PaidBy },
-      { id: 'def-netflix', title: 'Netflix 4K', amount: 55.90, category: 'lazer' as CategoryKey, dueDay: 18, payer: 'both' as PaidBy },
-      { id: 'def-spotify', title: 'Spotify Premium Casal', amount: 34.90, category: 'lazer' as CategoryKey, dueDay: 22, payer: 'both' as PaidBy },
-    ];
-  }, [state.detectedSubscriptions]);
+  // Only bills explicitly registered by the couple belong in the calendar.
+  const registeredBills = useMemo(() => (state.coupleFixedBills || [])
+    .filter(bill => bill.lastPaidMonth !== activeMonth)
+    .filter(bill => viewMode === 'couple' || bill.assignedPayer === 'both' || bill.assignedPayer === viewMode)
+    .map(bill => ({ ...bill, payer: bill.assignedPayer })), [state.coupleFixedBills, activeMonth, viewMode]);
 
   // Navigate Months
   const handlePrevMonth = () => {
@@ -113,10 +104,10 @@ export const FinancialCalendarScreen: React.FC<FinancialCalendarScreenProps> = (
   const filteredExpenses = useMemo(() => {
     return state.expenses.filter(e => {
       if (viewMode === 'partner1') {
-        return e.paidBy === 'partner1' || (e.paidBy === 'both' && (e.splitPartner1Pct || 50) > 0);
+        return e.paidBy === 'partner1' || (e.paidBy === 'both' && (e.splitPartner1Pct ?? 50) > 0);
       }
       if (viewMode === 'partner2') {
-        return e.paidBy === 'partner2' || (e.paidBy === 'both' && (e.splitPartner2Pct || 50) > 0);
+        return e.paidBy === 'partner2' || (e.paidBy === 'both' && (e.splitPartner2Pct ?? 50) > 0);
       }
       return true;
     });
@@ -130,7 +121,7 @@ export const FinancialCalendarScreen: React.FC<FinancialCalendarScreenProps> = (
     });
   }, [state.incomes, viewMode]);
 
-  // Combine user subscriptions and default bills
+  // Registered active subscriptions
   const allActiveSubscriptions = useMemo(() => {
     return (state.detectedSubscriptions || []).filter(s => s.status === 'active');
   }, [state.detectedSubscriptions]);
@@ -188,61 +179,23 @@ export const FinancialCalendarScreen: React.FC<FinancialCalendarScreenProps> = (
       const dayExpenses = filteredExpenses.filter(e => e.date === dateStr);
       const dayExpSum = dayExpenses.reduce((sum, e) => {
         if (viewMode === 'partner1' && e.paidBy === 'both') {
-          return sum + (e.amount * (e.splitPartner1Pct || 50)) / 100;
+          return sum + (e.amount * (e.splitPartner1Pct ?? 50)) / 100;
         }
         if (viewMode === 'partner2' && e.paidBy === 'both') {
-          return sum + (e.amount * (e.splitPartner2Pct || 50)) / 100;
+          return sum + (e.amount * (e.splitPartner2Pct ?? 50)) / 100;
         }
         return sum + e.amount;
       }, 0);
 
       // Real Incomes on this day
       const dayIncomes = filteredIncomes.filter(i => i.date === dateStr);
-      let dayIncSum = dayIncomes.reduce((sum, i) => sum + i.amount, 0);
-
-      // Default Salary entry on day 5 if profile has salary and no salary entered on day 5
-      if (dayNum === 5 && dayIncomes.length === 0) {
-        if (viewMode === 'couple') {
-          const combined = (state.profile.partner1Income || 0) + (state.profile.partner2Income || 0);
-          if (combined > 0) {
-            dayIncSum += combined;
-            dayIncomes.push({
-              id: 'renda-casal-mensal',
-              description: 'Renda Mensal do Casal (Salários)',
-              amount: combined,
-              date: dateStr,
-              recipient: 'both',
-              type: 'salario',
-            });
-          }
-        } else if (viewMode === 'partner1' && state.profile.partner1Income > 0) {
-          dayIncSum += state.profile.partner1Income;
-          dayIncomes.push({
-            id: 'renda-p1-mensal',
-            description: `Salário Mensal (${state.profile.partner1Name})`,
-            amount: state.profile.partner1Income,
-            date: dateStr,
-            recipient: 'partner1',
-            type: 'salario',
-          });
-        } else if (viewMode === 'partner2' && state.profile.partner2Income > 0) {
-          dayIncSum += state.profile.partner2Income;
-          dayIncomes.push({
-            id: 'renda-p2-mensal',
-            description: `Salário Mensal (${state.profile.partner2Name})`,
-            amount: state.profile.partner2Income,
-            date: dateStr,
-            recipient: 'partner2',
-            type: 'salario',
-          });
-        }
-      }
+      const dayIncSum = dayIncomes.reduce((sum, income) => sum + (viewMode !== 'couple' && income.recipient === 'both' ? income.amount / 2 : income.amount), 0);
 
       // Subscriptions falling on this day of month
-      const daySubs = allActiveSubscriptions.filter(s => (s.dueDay || 15) === dayNum);
+      const daySubs = allActiveSubscriptions.filter(s => Math.min(s.dueDay || 15, totalDays) === dayNum);
 
-      // Default fixed bills falling on this day (if no custom subscriptions exist)
-      const dayBills = defaultBills.filter(b => b.dueDay === dayNum);
+      // Unpaid registered bills falling on this day
+      const dayBills = registeredBills.filter(b => Math.min(b.dueDay, totalDays) === dayNum);
 
       // Installments due on this day
       // An installment is active if startMonth <= activeMonth and (months diff) < installmentsCount
@@ -250,7 +203,7 @@ export const FinancialCalendarScreen: React.FC<FinancialCalendarScreenProps> = (
       (state.installments || []).forEach(inst => {
         if (!inst.active) return;
         const instDueDay = inst.dueDay || 10;
-        if (instDueDay !== dayNum) return;
+        if (Math.min(instDueDay, totalDays) !== dayNum) return;
 
         // Calculate installment index for this month
         const [instY, instM] = inst.startMonth.split('-').map(Number);
@@ -259,7 +212,7 @@ export const FinancialCalendarScreen: React.FC<FinancialCalendarScreenProps> = (
           dayInstallments.push({
             installment: inst,
             currentNumber: monthsPassed + 1,
-            amount: inst.installmentAmount,
+            amount: installmentValue(inst, monthsPassed),
           });
         }
       });
@@ -325,10 +278,10 @@ export const FinancialCalendarScreen: React.FC<FinancialCalendarScreenProps> = (
       category: CategoryKey;
     }[] = [];
 
-    const todayDateObj = new Date();
+    const todayDateObj = new Date(todayStr + 'T12:00:00');
     days.filter(d => d.isCurrentMonth).forEach(d => {
       const [dY, dM, dD] = d.dateStr.split('-').map(Number);
-      const dayDateObj = new Date(dY, dM - 1, dD);
+      const dayDateObj = new Date(dY, dM - 1, dD, 12);
       const diffTime = dayDateObj.getTime() - todayDateObj.getTime();
       const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
 
@@ -377,7 +330,7 @@ export const FinancialCalendarScreen: React.FC<FinancialCalendarScreenProps> = (
       },
       upcomingItems: upcoming.sort((a, b) => a.daysRemaining - b.daysRemaining),
     };
-  }, [activeMonth, filteredExpenses, filteredIncomes, allActiveSubscriptions, defaultBills, state.installments, state.profile, viewMode, todayStr]);
+  }, [activeMonth, filteredExpenses, filteredIncomes, allActiveSubscriptions, registeredBills, state.installments, state.profile, viewMode, todayStr]);
 
   // Selected Day Details
   const selectedDayData = useMemo(() => {
@@ -430,6 +383,13 @@ export const FinancialCalendarScreen: React.FC<FinancialCalendarScreenProps> = (
     setNewBillAmount('');
   };
 
+  const careerMilestones = (['partner1', 'partner2'] as const).flatMap(partner => {
+    if (viewMode !== 'couple' && viewMode !== partner) return [];
+    const career = state.profile[partner === 'partner1' ? 'partner1Career' : 'partner2Career'];
+    const name = state.profile[partner === 'partner1' ? 'partner1Name' : 'partner2Name'];
+    return [{ date: career?.graduationDate, label: 'Formatura prevista', name }, { date: career?.residencyStartDate, label: 'Início previsto da residência', name }].filter(item => item.date?.startsWith(activeMonth));
+  });
+
   return (
     <div className="space-y-6 animate-in fade-in duration-300 pb-12">
       {/* ========================================================================= */}
@@ -445,7 +405,7 @@ export const FinancialCalendarScreen: React.FC<FinancialCalendarScreenProps> = (
               Calendário Financeiro
             </h1>
             <span className="text-[11px] font-extrabold px-2.5 py-0.5 rounded-full bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800">
-              Conexão Total
+              Agenda do mês
             </span>
           </div>
           <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400">
@@ -498,6 +458,7 @@ export const FinancialCalendarScreen: React.FC<FinancialCalendarScreenProps> = (
       </div>
 
       {/* ========================================================================= */}
+      {careerMilestones.length > 0 && <section className="surface-card p-5"><h2 className="text-sm font-semibold">Marcos da formação neste mês</h2><div className="grid sm:grid-cols-2 gap-3 mt-3">{careerMilestones.map((item, index) => <div key={index} className="p-3 rounded-xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-100 dark:border-emerald-900"><p className="font-semibold text-sm">{item.label}</p><p className="text-xs text-slate-500 mt-1">{item.name} · {item.date && new Date(item.date + 'T12:00:00').toLocaleDateString('pt-BR')}</p><p className="text-[11px] text-slate-500 mt-2">Previsão informada por vocês. Nenhuma receita é antecipada.</p></div>)}</div></section>}
       {/* MONTH SUMMARY METRIC STRIP                                                */}
       {/* ========================================================================= */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">

@@ -55,10 +55,10 @@ export async function sendLocalPushNotification(
     return false;
   }
 
-  const defaultOptions: NotificationOptions = {
-    icon: '/icon.svg',
-    badge: '/icon.svg',
-    vibrate: [200, 100, 200],
+  const defaultOptions: NotificationOptions & { vibrate?: number[] } = {
+    icon: '/favicon.svg',
+    badge: '/favicon.svg',
+    ...('vibrate' in navigator ? { vibrate: [200, 100, 200] } : {}),
     requireInteraction: false,
     ...options,
   };
@@ -66,7 +66,7 @@ export async function sendLocalPushNotification(
   try {
     // Attempt Service Worker registration notification first
     if ('serviceWorker' in navigator) {
-      const registration = await navigator.serviceWorker.ready;
+      const registration = await navigator.serviceWorker.getRegistration();
       if (registration && registration.showNotification) {
         await registration.showNotification(title, defaultOptions);
         return true;
@@ -92,7 +92,7 @@ export async function sendTestNotification(): Promise<boolean> {
   }
 
   return sendLocalPushNotification('🏦 JUNTÔ — Notificações Ativas!', {
-    body: 'Tudo pronto! Vocês receberão lembretes sutis de triagem diária, resumo semanal e fechamento do mês.',
+    body: 'Notificação local ativada. Os lembretes são verificados enquanto o aplicativo está aberto.',
     tag: 'junto-test-push',
   });
 }
@@ -116,6 +116,12 @@ export function checkAndTriggerScheduledPushNotifications(
   const todayStr = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
   const now = new Date();
   const currentMonthKey = state.currentMonth || todayStr.slice(0, 7);
+
+  if (settings.statementReminderEnabled && settings.lastStatementReminderAt !== todayStr) {
+    addNotification({ title: 'Hora de conferir o extrato', message: 'Exporte o extrato do seu banco e importe no Juntô para revisar novos lançamentos.', type: 'info' });
+    if (currentPermission === 'granted') void sendLocalPushNotification('Juntô — conferir extrato', { body: 'Exporte seu extrato e revise novos lançamentos no aplicativo.', tag: 'statement-reminder' });
+    updatePushSettings({ lastStatementReminderAt: todayStr });
+  }
 
   // 1. TRIAGEM DIÁRIA (Ex: Final da Tarde)
   if (settings.dailyTriageEnabled && settings.lastDailyTriageNotifiedAt !== todayStr) {

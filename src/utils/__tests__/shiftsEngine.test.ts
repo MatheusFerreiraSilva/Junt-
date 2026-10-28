@@ -160,7 +160,7 @@ describe('shiftsEngine: Gestão de Plantões Médicos', () => {
         amount: 1350,
         date: '2026-10-09',
         recipient: 'partner1',
-        type: 'salary',
+        type: 'salario',
       },
       {
         id: 'inc-2',
@@ -176,4 +176,23 @@ describe('shiftsEngine: Gestão de Plantões Médicos', () => {
     expect(result.exactMatches.length).toBe(1);
     expect(result.exactMatches[0].id).toBe('inc-1');
   });
+});
+
+ describe('plantões sem dados inventados', () => {
+ it('não cria renda ou valor médio quando não há registros', () => {
+ const [month] = projectCashFlowTimeline([], 0, 0, '2026-10', 1);
+ expect(month.fixedExpenses).toBe(0); expect(month.projectedIncome).toBe(0); expect(month.recommendation.averageIncomeTarget).toBe(0); expect(month.recommendation.averageShiftValue).toBe(0);
+ });
+ it('não conta cancelados nem futuros como trabalho realizado', () => {
+ const base = getSampleMedicalShifts('2026-10')[0];
+ const shifts: MedicalShift[] = [{...base,id:'cancelled', executionStatus:'cancelled'}, {...base,id:'future',dateWorked:'2099-01-01',estimatedPayDate:'2099-02-01',status:'pending'}];
+ expect(calculateShiftMetrics(shifts,'2026-10').totalGross).toBe(0);
+ expect(calculateShiftMetrics(shifts,'2099-01').totalHours).toBe(0);
+ expect(calculateHourlyYieldRanking(shifts)).toEqual([]);
+ });
+ it('não concilia depósito do outro parceiro', () => {
+ const shift = getSampleMedicalShifts('2026-10')[0];
+ const result = findMatchingBankIncomesForShift(shift,[{id:'other',recipient:'partner2',amount:shift.netAmount ?? shift.grossAmount,date:'2026-10-20',description:shift.hospitalName,type:'salario'}]);
+ expect(result.exactMatches).toEqual([]); expect(result.probableMatches).toEqual([]);
+ });
 });

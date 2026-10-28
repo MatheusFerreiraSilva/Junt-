@@ -18,6 +18,8 @@ import {
   Laptop,
 } from 'lucide-react';
 import { useFinance } from '../../context/FinanceContext';
+import { authenticatedApi } from '../../lib/authenticatedApi';
+import { useDialogFocus } from '../../hooks/useDialogFocus';
 import { formatCurrency } from '../../utils/formatters';
 
 interface AIOnboardingModalProps {
@@ -26,6 +28,8 @@ interface AIOnboardingModalProps {
 }
 
 interface AIInterpretationResult {
+  source: 'ai' | 'heuristic';
+  fallbackReason?: string;
   diagnosisSummary: string;
   recommendedPercentages: {
     moradia: number;
@@ -70,19 +74,19 @@ export const AIOnboardingModal: React.FC<AIOnboardingModalProps> = ({ isOpen, on
       : ''
   );
   const [partner1Income, setPartner1Income] = useState(
-    state.profile.partner1Income && state.profile.partner1Income !== 14000
+    state.profile.partner1Income
       ? state.profile.partner1Income.toString()
       : ''
   );
   const [partner2Income, setPartner2Income] = useState(
-    state.profile.partner2Income && state.profile.partner2Income !== 16000
+    state.profile.partner2Income
       ? state.profile.partner2Income.toString()
       : ''
   );
 
-  const [lifeStage, setLifeStage] = useState('Recém-casados montando casa');
-  const [housingSituation, setHousingSituation] = useState('Aluguel em região central');
-  const [estimatedRent, setEstimatedRent] = useState('5200');
+  const [lifeStage, setLifeStage] = useState('Planejando a vida a dois');
+  const [housingSituation, setHousingSituation] = useState('');
+  const [estimatedRent, setEstimatedRent] = useState('');
   const [diningStyle, setDiningStyle] = useState('Equilibrado com pedidos de delivery e jantares');
   const [mainGoal, setMainGoal] = useState('Construir reserva rápida e investir sem abrir mão da qualidade de vida');
   const [isInitialHomePhase, setIsInitialHomePhase] = useState(state.profile.isInitialHomePhase || false);
@@ -91,6 +95,9 @@ export const AIOnboardingModal: React.FC<AIOnboardingModalProps> = ({ isOpen, on
   const [isLoadingAI, setIsLoadingAI] = useState(false);
   const [aiResult, setAiResult] = useState<AIInterpretationResult | null>(null);
 
+  const [analysisError, setAnalysisError] = useState('');
+  const dialogRef = useDialogFocus(isOpen, onClose);
+
   if (!isOpen) return null;
 
   const numP1 = parseFloat(partner1Income.replace(',', '.')) || 0;
@@ -98,6 +105,7 @@ export const AIOnboardingModal: React.FC<AIOnboardingModalProps> = ({ isOpen, on
   const totalRenda = numP1 + numP2;
 
   const handleRunAIAnalysis = async () => {
+    setAnalysisError('');
     setIsLoadingAI(true);
     setStep(4);
 
@@ -109,54 +117,25 @@ export const AIOnboardingModal: React.FC<AIOnboardingModalProps> = ({ isOpen, on
         partner2Income: numP2,
         lifeStage,
         housingSituation,
-        estimatedRent: parseFloat(estimatedRent.replace(',', '.')) || 5000,
+        estimatedRent: parseFloat(estimatedRent.replace(',', '.')) || 0,
         diningStyle,
         mainGoal,
         isInitialHomePhase,
         specialNotes,
+        shareNotesWithAI: false,
       };
 
-      const res = await fetch('/api/gemini/onboarding-interpret', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-
-      if (!res.ok) throw new Error('Falha ao processar análise');
-      const data: AIInterpretationResult = await res.json();
+      const data = await authenticatedApi<AIInterpretationResult>('/api/gemini/onboarding-interpret', payload, AbortSignal.timeout(30000));
+      const categories = ['moradia', 'transporte', 'comida', 'lazer', 'protecao', 'profissional', 'investimentos'] as const;
+      const floorKeys = ['moradia', 'comida', 'protecao', 'profissional', 'investimentos'] as const;
+      const values = categories.map(key => data.recommendedPercentages?.[key] ?? NaN);
+      const floors = floorKeys.map(key => data.recommendedFloors?.[key] ?? NaN);
+      if (values.some(value => !Number.isFinite(value) || value < 0 || value > 100) || Math.abs(values.reduce((sum, value) => sum + value, 0) - 100) > 0.01 || floors.some(value => !Number.isFinite(value) || value < 0) || !Number.isFinite(data.recommendedEmergencyMonths) || data.recommendedEmergencyMonths < 1 || data.recommendedEmergencyMonths > 60 || typeof data.diagnosisSummary !== 'string' || !Array.isArray(data.customPointers) || data.customPointers.some(pointer => typeof pointer !== 'string') || !['ai', 'heuristic'].includes(data.source)) throw new Error('O planejamento recebido é inconsistente. Tente novamente.');
       setAiResult(data);
       setStep(5);
-    } catch (err) {
-      console.warn('Fallback local analysis on error:', err);
-      // Fallback result
-      const fallback: AIInterpretationResult = {
-        diagnosisSummary: `A IA interpretou a renda conjunta de ${formatCurrency(totalRenda)} de ${partner1Name} & ${partner2Name} e calibrou as divisões ideais para proteger o casal e acelerar os investimentos.`,
-        recommendedPercentages: {
-          moradia: isInitialHomePhase ? 28 : 26,
-          transporte: 10,
-          comida: 12,
-          lazer: isInitialHomePhase ? 10 : 13,
-          protecao: isInitialHomePhase ? 12 : 11,
-          profissional: 8,
-          investimentos: isInitialHomePhase ? 20 : 20,
-        },
-        recommendedFloors: {
-          moradia: Math.max(4000, Math.round(totalRenda * 0.25)),
-          comida: Math.max(2000, Math.round(totalRenda * 0.10)),
-          protecao: 800,
-          profissional: 600,
-          investimentos: 10,
-        },
-        recommendedEmergencyMonths: isInitialHomePhase ? 8 : 10,
-        isInitialHomePhase,
-        customPointers: [
-          `Teto de parcelas ajustado para ${isInitialHomePhase ? '20%' : '10%'} com base na fase da casa.`,
-          `Pisos mínimos inegociáveis protegidos contra quedas de renda.`,
-          `Modos individuais e modo conjunto prontos para uso em qualquer tela.`,
-        ],
-      };
-      setAiResult(fallback);
-      setStep(5);
+    } catch (err: unknown) {
+      setAnalysisError(err instanceof Error ? err.message : 'Não foi possível gerar o planejamento. Tente novamente.');
+      setStep(3);
     } finally {
       setIsLoadingAI(false);
     }
@@ -177,7 +156,7 @@ export const AIOnboardingModal: React.FC<AIOnboardingModalProps> = ({ isOpen, on
 
     updateCategoryPercentages({
       moradia: aiResult.recommendedPercentages.moradia,
-      transporte: aiResult.recommendedPercentages.transporte || 10,
+      transporte: aiResult.recommendedPercentages.transporte ?? 0,
       comida: aiResult.recommendedPercentages.comida,
       lazer: aiResult.recommendedPercentages.lazer,
       protecao: aiResult.recommendedPercentages.protecao,
@@ -198,7 +177,7 @@ export const AIOnboardingModal: React.FC<AIOnboardingModalProps> = ({ isOpen, on
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/60 backdrop-blur-sm animate-in fade-in duration-200">
+    <div ref={dialogRef} role="dialog" aria-modal="true" aria-label="Planejar orçamento" tabIndex={-1} className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/60 backdrop-blur-sm animate-in fade-in duration-200">
       {/* Click outside backdrop */}
       <div className="absolute inset-0" onClick={onClose} />
 
@@ -211,7 +190,7 @@ export const AIOnboardingModal: React.FC<AIOnboardingModalProps> = ({ isOpen, on
             </span>
             <div className="min-w-0">
               <h3 className="font-extrabold text-slate-900 dark:text-white text-sm sm:text-base font-display truncate">
-                Questionário Inteligente com IA
+                Vamos organizar seu orçamento
               </h3>
               <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
                 Divisão automática das telas e porcentagens
@@ -333,6 +312,7 @@ export const AIOnboardingModal: React.FC<AIOnboardingModalProps> = ({ isOpen, on
             </div>
           )}
 
+          {analysisError && <p role="alert" className="mx-6 p-4 rounded-xl bg-rose-50 dark:bg-rose-950/40 text-rose-800 dark:text-rose-200 text-sm">{analysisError}</p>}
           {/* STEP 2: MOMENTO DE VIDA & MORADIA */}
           {step === 2 && (
             <div className="space-y-5 animate-in fade-in">
@@ -505,12 +485,13 @@ export const AIOnboardingModal: React.FC<AIOnboardingModalProps> = ({ isOpen, on
                   className="btn-primary-accent flex items-center gap-2 px-6 py-3 rounded-2xl text-white font-extrabold text-xs shadow-lg active:scale-95 transition-all"
                 >
                   <Sparkles className="w-4 h-4 text-amber-300" />
-                  <span>Interpretar com IA e Gerar Divisão</span>
+                  <span>Gerar planejamento</span>
                 </button>
               </div>
             </div>
           )}
 
+          <p className="px-6 py-2 text-[11px] text-slate-500 leading-relaxed">Seu resumo pode ser processado pelo Gemini, serviço externo de IA. Notas livres não são enviadas ao provedor. Não inclua dados clínicos ou de pacientes.</p>
           {/* STEP 4: IA CARREGANDO */}
           {step === 4 && (
             <div className="py-12 text-center space-y-4">
@@ -538,10 +519,11 @@ export const AIOnboardingModal: React.FC<AIOnboardingModalProps> = ({ isOpen, on
               <div className="p-4 rounded-2xl bg-gradient-to-r from-emerald-500/10 via-teal-500/10 to-transparent border border-emerald-300 dark:border-emerald-800/80 space-y-2">
                 <div className="flex items-center gap-2 text-emerald-800 dark:text-emerald-300 font-bold text-sm">
                   <Sparkles className="w-4 h-4 text-emerald-600" />
-                  <span>Diagnóstico Personalizado da IA</span>
+                  <span>{aiResult.source === 'ai' ? 'Planejamento com apoio de IA' : 'Planejamento por regras locais'}</span>
                 </div>
                 <p className="text-xs text-slate-700 dark:text-slate-300 leading-relaxed">
                   {aiResult.diagnosisSummary}
+                  {aiResult.source === 'heuristic' && <span className="block mt-2 text-xs font-semibold">Esta proposta usa regras determinísticas. Não houve análise bem-sucedida de IA.</span>}
                 </p>
               </div>
 
@@ -635,7 +617,7 @@ export const AIOnboardingModal: React.FC<AIOnboardingModalProps> = ({ isOpen, on
               {/* Custom Pointers */}
               <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 space-y-2 text-xs">
                 <span className="font-bold text-slate-900 dark:text-white block">
-                  Recomendações Práticas da IA:
+                  Pontos para revisar:
                 </span>
                 <ul className="space-y-1 text-slate-600 dark:text-slate-300">
                   {aiResult.customPointers.map((ptr, idx) => (
@@ -661,7 +643,7 @@ export const AIOnboardingModal: React.FC<AIOnboardingModalProps> = ({ isOpen, on
                   className="btn-primary-accent flex items-center gap-2 px-6 py-3 rounded-2xl text-white font-extrabold text-xs shadow-lg active:scale-95 transition-all"
                 >
                   <Check className="w-4 h-4 stroke-[3]" />
-                  <span>Aplicar Planejamento da IA no App</span>
+                  <span>Aplicar este planejamento</span>
                 </button>
               </div>
             </div>

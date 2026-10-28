@@ -30,6 +30,7 @@ export interface CategoryInfo {
 }
 
 export interface ExpenseItem {
+  foodPillar?: FoodPillarType;
   id: string;
   description: string;
   amount: number;
@@ -211,7 +212,18 @@ export interface LifeTierInfo {
   inflectionNote: string;
 }
 
+export type MedicalCareerStage = 'graduacao' | 'internato' | 'preparacao_residencia' | 'residencia' | 'atuacao';
+export interface MedicalCareerProfile {
+  stage: MedicalCareerStage;
+  graduationDate?: string;
+  residencyStartDate?: string;
+  expectedMonthlyIncome?: number;
+  transitionMonthlyExpense?: number;
+}
+
 export interface CoupleProfile {
+  partner1Career?: MedicalCareerProfile;
+  partner2Career?: MedicalCareerProfile;
   partner1Name: string;
   partner1Specialty: string; // e.g. "Dermatologia" or "Clínico Geral"
   partner2Name: string;
@@ -250,14 +262,6 @@ export interface PluggyBankConnection {
   appOwner: 'partner1' | 'partner2'; // which Pluggy application provided the data
 }
 
-export interface PluggyCredentials {
-  partner1ClientId?: string;
-  partner1ClientSecret?: string;
-  partner1Cpf?: string;
-  partner2ClientId?: string;
-  partner2ClientSecret?: string;
-  partner2Cpf?: string;
-}
 
 export interface CategoryKeywordRule {
   id: string;
@@ -401,7 +405,21 @@ export interface CollegeModeData {
   migrationCompleted?: boolean;
 }
 
+export interface BankImportedTransaction {
+  id: string;
+  itemId: string;
+  accountId: string;
+  amount: number;
+  date: string;
+  description: string;
+  direction: 'credit' | 'debit';
+  owner: PaidBy;
+  status: 'pending' | 'expense' | 'income' | 'internal_transfer';
+}
+
 export interface AppState {
+  bankImportedTransactions?: BankImportedTransaction[];
+  shiftIncomeAllocations?: ShiftIncomeAllocation[];
   profile: CoupleProfile;
   appMode?: AppMode;
   collegeModeData?: CollegeModeData;
@@ -419,7 +437,6 @@ export interface AppState {
   notifications: AppNotification[];
   // Open Finance & Meu Pluggy
   pluggyAccounts?: PluggyBankConnection[];
-  pluggyCredentials?: PluggyCredentials;
   keywordRules?: CategoryKeywordRule[];
   detectedSubscriptions?: DetectedSubscription[];
   incomeSourceRules?: IncomeSourceRule[];
@@ -471,7 +488,13 @@ export type ShiftContractType =
 
 export type ShiftPaymentStatus = 'pending' | 'overdue' | 'received';
 
+export interface ShiftIncomeAllocation {
+  id: string; // one ledger per real deposit, prevents concurrent over-allocation
+  allocations: Record<string, number>; // shift ID -> amount, in integer cents
+}
+
 export interface MedicalShift {
+  executionStatus?: 'scheduled' | 'performed' | 'cancelled' | 'replaced';
   id: string;
   partner: 'partner1' | 'partner2';
   title: string;
@@ -526,6 +549,8 @@ export interface ShiftPacingRecommendation {
 export interface PushNotificationSettings {
   enabled: boolean;
   permissionStatus: 'default' | 'granted' | 'denied';
+  statementReminderEnabled?: boolean;
+  lastStatementReminderAt?: string;
   dailyTriageEnabled: boolean; // 17:30
   weeklySummaryEnabled: boolean; // Domingos 18:00
   monthlySummaryEnabled: boolean; // Último dia do mês 19:00

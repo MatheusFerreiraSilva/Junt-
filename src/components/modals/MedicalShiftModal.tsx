@@ -1,3 +1,4 @@
+import { useDialogFocus } from '../../hooks/useDialogFocus';
 import React, { useState } from 'react';
 import {
   X,
@@ -53,8 +54,9 @@ export const MedicalShiftModal: React.FC<MedicalShiftModalProps> = ({
     shiftToEdit ? shiftToEdit.partner : 'partner1'
   );
   const [title, setTitle] = useState<string>(shiftToEdit?.title || '');
+  const [executionStatus, setExecutionStatus] = useState<NonNullable<MedicalShift['executionStatus']>>(shiftToEdit?.executionStatus || (shiftToEdit && shiftToEdit.dateWorked <= new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10) ? 'performed' : 'scheduled'));
   const [dateWorked, setDateWorked] = useState<string>(
-    shiftToEdit ? shiftToEdit.dateWorked : new Date().toISOString().split('T')[0]
+    shiftToEdit ? shiftToEdit.dateWorked : new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().split('T')[0]
   );
   const [durationHours, setDurationHours] = useState<number>(
     shiftToEdit ? shiftToEdit.durationHours : 12
@@ -69,7 +71,7 @@ export const MedicalShiftModal: React.FC<MedicalShiftModalProps> = ({
     shiftToEdit ? shiftToEdit.contractType : 'pj_oss'
   );
   const [grossAmount, setGrossAmount] = useState<string>(
-    shiftToEdit ? shiftToEdit.grossAmount.toString() : '1600'
+    shiftToEdit ? shiftToEdit.grossAmount.toString() : ''
   );
   const [estimatedDelayDays, setEstimatedDelayDays] = useState<number>(
     CONTRACT_CONFIG.pj_oss.typicalDays
@@ -81,6 +83,9 @@ export const MedicalShiftModal: React.FC<MedicalShiftModalProps> = ({
   const [saveAsPreset, setSaveAsPreset] = useState<boolean>(false);
   const [presetTitle, setPresetTitle] = useState<string>('');
   const [showPresetManager, setShowPresetManager] = useState<boolean>(false);
+
+  const [validationError, setValidationError] = useState('');
+  const dialogRef = useDialogFocus(isOpen, onClose);
 
   if (!isOpen) return null;
 
@@ -111,7 +116,9 @@ export const MedicalShiftModal: React.FC<MedicalShiftModalProps> = ({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!hospitalName.trim() || parsedAmount <= 0) return;
+    if (!hospitalName.trim() || !Number.isFinite(parsedAmount) || parsedAmount <= 0 || !Number.isFinite(durationHours) || durationHours <= 0 || durationHours > 168 || !Number.isFinite(estimatedDelayDays) || estimatedDelayDays < 0 || estimatedDelayDays > 3650 || !/^\d{4}-\d{2}-\d{2}$/.test(dateWorked) || Number.isNaN(new Date(dateWorked + 'T12:00:00').getTime()) || !/^\d{4}-\d{2}-\d{2}$/.test(calculatedPayDate) || Number.isNaN(new Date(calculatedPayDate + 'T12:00:00').getTime())) { setValidationError('Confira hospital, valor, duração e datas antes de salvar.'); return; }
+    if (executionStatus === 'performed' && dateWorked > new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10)) { setValidationError('Um plantão futuro deve ficar como agendado.'); return; }
+    setValidationError('');
 
     const finalTitle =
       title.trim() || `${hospitalName.trim()} (${durationHours}h)`;
@@ -119,6 +126,7 @@ export const MedicalShiftModal: React.FC<MedicalShiftModalProps> = ({
     if (shiftToEdit) {
       updateMedicalShift(shiftToEdit.id, {
         partner,
+        executionStatus,
         title: finalTitle,
         dateWorked,
         durationHours,
@@ -163,7 +171,7 @@ export const MedicalShiftModal: React.FC<MedicalShiftModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm overflow-y-auto">
+    <div ref={dialogRef} role="dialog" aria-modal="true" aria-label="Plantão médico" tabIndex={-1} className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm overflow-y-auto">
       <div className="bg-[#FAF7F2] dark:bg-[#111318] text-slate-800 dark:text-slate-100 rounded-[28px] max-w-xl w-full p-6 sm:p-8 shadow-2xl border border-stone-200 dark:border-stone-800 my-8">
         {/* Header */}
         <div className="flex items-center justify-between pb-4 border-b border-stone-200 dark:border-stone-800">
@@ -182,6 +190,7 @@ export const MedicalShiftModal: React.FC<MedicalShiftModalProps> = ({
           </div>
           <button
             onClick={onClose}
+            aria-label="Fechar"
             className="p-2 rounded-full hover:bg-stone-200/60 dark:hover:bg-stone-800 text-stone-500 transition-colors"
           >
             <X className="w-5 h-5" />
@@ -254,6 +263,8 @@ export const MedicalShiftModal: React.FC<MedicalShiftModalProps> = ({
           </div>
         )}
 
+        {validationError && <p role="alert" className="mt-4 p-3 rounded-xl text-xs bg-rose-50 dark:bg-rose-950/40 text-rose-800 dark:text-rose-200">{validationError}</p>}
+        <div className="mt-5"><label htmlFor="shift-execution-status" className="block text-xs font-semibold mb-2">Situação do trabalho</label><select id="shift-execution-status" value={executionStatus} onChange={event => setExecutionStatus(event.target.value as NonNullable<MedicalShift['executionStatus']>)} className="w-full min-h-11 px-3 rounded-xl border border-stone-200 dark:border-stone-700 bg-transparent"><option value="scheduled">Agendado</option><option value="performed">Realizado</option><option value="cancelled">Cancelado</option><option value="replaced">Substituído</option></select><p className="text-[11px] text-stone-500 mt-2">O trabalho e o recebimento são acompanhados separadamente.</p></div>
         {/* Shift Form */}
         <form onSubmit={handleSubmit} className="mt-4 space-y-4">
           {/* Partner Selector */}

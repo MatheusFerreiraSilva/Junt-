@@ -24,6 +24,7 @@ import {
   calculateShiftMetrics,
   calculateHourlyYieldRanking,
   projectCashFlowTimeline,
+  isPerformedShift,
 } from '../utils/shiftsEngine';
 import { formatCurrency, formatMonthYear } from '../utils/formatters';
 import { MedicalShiftModal } from '../components/modals/MedicalShiftModal';
@@ -35,6 +36,8 @@ export const MedicalShiftsScreen: React.FC = () => {
     state,
     totalActiveInstallmentsAmountMonth,
     deleteMedicalShift,
+    undoShiftReconciliation,
+    monthlyFixedExpensesAvg,
   } = useFinance();
 
   // State
@@ -74,25 +77,11 @@ export const MedicalShiftsScreen: React.FC = () => {
     return calculateHourlyYieldRanking(partnerShifts);
   }, [partnerShifts]);
 
-  // Total Fixed Expenses for the couple
-  const totalFixedExpensesAmount = useMemo(() => {
-    const expenses = state?.expenses || [];
-    const fixedCategories = ['housing', 'bills', 'services', 'education', 'health'];
-    const fixedExpensesThisMonth = expenses
-      .filter((e) => fixedCategories.includes(e.category))
-      .reduce((sum, e) => sum + (e.amount || 0), 0);
-
-    const baseFixed = fixedExpensesThisMonth > 0
-      ? fixedExpensesThisMonth + (totalActiveInstallmentsAmountMonth || 0)
-      : 8500;
-    return Math.max(baseFixed, 6000);
-  }, [state?.expenses, totalActiveInstallmentsAmountMonth]);
-
-  // Estimated average monthly net income (derived from shifts or default base 25000)
-  const averageMonthlyIncome = useMemo(() => {
-    const totalShiftEarnings = partnerShifts.reduce((acc, s) => acc + s.grossAmount, 0);
-    return Math.max(totalShiftEarnings / 3, totalFixedExpensesAmount * 1.35, 22000);
-  }, [partnerShifts, totalFixedExpensesAmount]);
+  // Projection inputs come only from the couple's registered baseline.
+  const totalFixedExpensesAmount = monthlyFixedExpensesAvg + (totalActiveInstallmentsAmountMonth || 0);
+  const averageMonthlyIncome = partnerFilter === 'partner1' ? state.profile.partner1Income : partnerFilter === 'partner2' ? state.profile.partner2Income : state.profile.partner1Income + state.profile.partner2Income;
+  const includedCareers = partnerFilter === 'partner1' ? [state.profile.partner1Career] : partnerFilter === 'partner2' ? [state.profile.partner2Career] : [state.profile.partner1Career, state.profile.partner2Career];
+  const canPlanShifts = includedCareers.every(career => career && ['residencia', 'atuacao'].includes(career.stage));
 
   // Cash Flow Timeline for next 6 months
   const cashFlowTimeline = useMemo(() => {
@@ -114,7 +103,7 @@ export const MedicalShiftsScreen: React.FC = () => {
 
   // Filtered shifts for the list view
   const displayShifts = useMemo(() => {
-    const todayStr = new Date().toISOString().split('T')[0];
+    const todayStr = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().split('T')[0];
     return partnerShifts.filter((shift) => {
       const matchesMonth =
         shift.dateWorked.startsWith(selectedMonth) ||
@@ -307,7 +296,7 @@ export const MedicalShiftsScreen: React.FC = () => {
         <div className="p-4 rounded-[22px] bg-white dark:bg-stone-900 border border-stone-200/80 dark:border-stone-800 shadow-xs flex flex-col justify-between">
           <div className="flex items-center justify-between text-stone-400">
             <span className="text-xs font-semibold text-amber-600 dark:text-amber-400">
-              A Receber (D+30 a 90)
+              A receber
             </span>
             {monthlyMetrics.totalOverdue > 0 ? (
               <AlertTriangle className="w-4 h-4 text-rose-500" />
@@ -485,14 +474,15 @@ export const MedicalShiftsScreen: React.FC = () => {
             })}
           </div>
 
+          {(!canPlanShifts || !recommendations?.averageShiftValue) && <p className="text-xs text-stone-500 leading-relaxed p-4 rounded-xl border border-stone-200 dark:border-stone-800">{canPlanShifts ? 'Cadastre um plantão realizado para estimar quantidades a partir dos seus próprios valores.' : 'Seu planejamento respeita a etapa de cada pessoa. Bolsa e ajuda familiar podem compor o orçamento; plantões não são sugeridos durante a graduação ou preparação.'}</p>}
           {/* 3-Tier Recommendation Engine Banner */}
-          {recommendations && (
+          {recommendations && canPlanShifts && recommendations.averageShiftValue > 0 && (
             <div className="p-4 rounded-2xl bg-stone-50 dark:bg-stone-800/50 border border-stone-200 dark:border-stone-800 space-y-3">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-1.5">
                   <Sparkles className="w-4 h-4 text-teal-600 dark:text-teal-400" />
                   <span className="text-xs font-bold text-stone-900 dark:text-stone-100">
-                    Prescrição de Escala para {formattedMonthLabel}
+                    Cenário financeiro de {formattedMonthLabel}
                   </span>
                 </div>
                 <span className="text-[11px] text-stone-500">
@@ -512,7 +502,7 @@ export const MedicalShiftsScreen: React.FC = () => {
                       : `+${recommendations.shiftsToCoverFixed} plantões`}
                   </p>
                   <p className="text-[11px] text-stone-500 mt-0.5">
-                    Para garantir o total de contas fixas ({formatCurrency(totalFixedExpensesAmount)}) sem dívidas.
+                    Para comparar com o total de contas fixas ({formatCurrency(totalFixedExpensesAmount)}) informado.
                   </p>
                 </div>
 
@@ -540,7 +530,7 @@ export const MedicalShiftsScreen: React.FC = () => {
                     +{recommendations.shiftsToAccelerateGains} plantões
                   </p>
                   <p className="text-[11px] text-stone-500 mt-0.5">
-                    Para alavancar investimentos, caixinhas e crescimento patrimonial (+20%).
+                    Cenário opcional com 20% a mais de renda. Não considera sua disponibilidade.
                   </p>
                 </div>
               </div>
@@ -608,8 +598,12 @@ export const MedicalShiftsScreen: React.FC = () => {
             {displayShifts.map((shift) => {
               const contract = CONTRACT_CONFIG[shift.contractType];
               const sectorConf = SECTOR_CONFIG[shift.sector];
-              const isReceived = shift.status === 'received';
-              const todayStr = new Date().toISOString().split('T')[0];
+              const allocatedCents = (state.shiftIncomeAllocations || []).reduce((sum, ledger) => sum + (ledger.allocations[shift.id] || 0), 0);
+              const receivedAmount = allocatedCents / 100 || (shift.status === 'received' ? shift.netAmount ?? shift.grossAmount : 0);
+              const outstandingAmount = Math.max(0, (shift.netAmount ?? shift.grossAmount) - receivedAmount);
+              const isReceived = outstandingAmount <= 0;
+              const executionLabel = ({ scheduled: 'Agendado', performed: 'Realizado', cancelled: 'Cancelado', replaced: 'Substituído' })[shift.executionStatus || (isPerformedShift(shift) ? 'performed' : 'scheduled')];
+              const todayStr = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().split('T')[0];
               const isOverdue =
                 shift.status === 'overdue' || (shift.status === 'pending' && shift.estimatedPayDate < todayStr);
               const hourly = shift.durationHours > 0 ? shift.grossAmount / shift.durationHours : 0;
@@ -664,10 +658,11 @@ export const MedicalShiftsScreen: React.FC = () => {
                     </div>
                   </div>
 
+                  <span className="self-start text-[11px] rounded-lg px-2 py-1 bg-stone-100 dark:bg-stone-800 text-stone-600 dark:text-stone-300">{executionLabel}</span>
                   {/* Dates & Payment Details */}
                   <div className="p-2.5 rounded-xl bg-white/80 dark:bg-stone-900/80 border border-stone-200/60 dark:border-stone-800/60 text-xs flex items-center justify-between">
                     <div>
-                      <span className="text-[10px] text-stone-400 block">Realizado em:</span>
+                      <span className="text-[10px] text-stone-400 block">{isPerformedShift(shift) ? 'Realizado em:' : 'Data do trabalho:'}</span>
                       <span className="font-semibold text-stone-800 dark:text-stone-200">
                         {new Date(shift.dateWorked + 'T12:00:00').toLocaleDateString('pt-BR')}
                       </span>
@@ -690,6 +685,8 @@ export const MedicalShiftsScreen: React.FC = () => {
                     </div>
                   </div>
 
+                  <div className="grid grid-cols-2 gap-2 text-xs"><div className="p-2 rounded-lg bg-emerald-50 dark:bg-emerald-950/30"><span className="block text-[10px] text-stone-500">Recebido e alocado</span><strong className="text-emerald-700 dark:text-emerald-300">{formatCurrency(receivedAmount)}</strong></div><div className="p-2 rounded-lg bg-amber-50 dark:bg-amber-950/30"><span className="block text-[10px] text-stone-500">Saldo a receber</span><strong className="text-amber-800 dark:text-amber-300">{formatCurrency(outstandingAmount)}</strong></div></div>
+                  {allocatedCents > 0 && <button className="text-xs text-stone-500 underline underline-offset-4 text-left" onClick={() => undoShiftReconciliation(shift.id)}>Desfazer vínculo com recebimentos</button>}
                   {/* Open Finance badge if linked */}
                   {shift.linkedIncomeId && (
                     <div className="flex items-center gap-1.5 text-[11px] font-semibold text-emerald-700 dark:text-emerald-300 bg-emerald-500/10 px-2.5 py-1 rounded-lg">
@@ -719,7 +716,7 @@ export const MedicalShiftsScreen: React.FC = () => {
                       </button>
                     </div>
 
-                    {!isReceived ? (
+                    {!isReceived && isPerformedShift(shift) ? (
                       <button
                         type="button"
                         onClick={() => setReconcilingShift(shift)}
@@ -730,7 +727,7 @@ export const MedicalShiftsScreen: React.FC = () => {
                       </button>
                     ) : (
                       <span className="text-[11px] font-bold text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
-                        <CheckCircle2 className="w-3.5 h-3.5" /> Recebido
+                        <CheckCircle2 className="w-3.5 h-3.5" /> {isReceived ? 'Recebido' : 'Aguardando realização'}
                       </span>
                     )}
                   </div>
@@ -742,7 +739,7 @@ export const MedicalShiftsScreen: React.FC = () => {
       </div>
 
       {/* Modals */}
-      <MedicalShiftModal
+      <MedicalShiftModal key={(editingShift?.id || 'new') + String(isShiftModalOpen)}
         isOpen={isShiftModalOpen}
         onClose={() => {
           setIsShiftModalOpen(false);
@@ -751,7 +748,7 @@ export const MedicalShiftsScreen: React.FC = () => {
         shiftToEdit={editingShift}
       />
 
-      <ReconcileShiftPaymentModal
+      <ReconcileShiftPaymentModal key={reconcilingShift?.id || 'closed'}
         isOpen={!!reconcilingShift}
         onClose={() => setReconcilingShift(null)}
         shift={reconcilingShift}

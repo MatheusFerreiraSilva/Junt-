@@ -4,7 +4,7 @@
  */
 
 export function formatCurrency(value: number, showCents: boolean = false): string {
-  const num = isNaN(value) ? 0 : value;
+  const num = Number.isFinite(value) ? value : 0;
   return new Intl.NumberFormat('pt-BR', {
     style: 'currency',
     currency: 'BRL',
@@ -24,7 +24,8 @@ export function formatCompactCurrency(value: number): string {
 }
 
 export function formatHumanDuration(months: number): string {
-  if (!isFinite(months) || months <= 0) return 'Meta alcançada 🎉';
+  if (!Number.isFinite(months)) return 'Defina um aporte para calcular o prazo';
+  if (months <= 0) return 'Meta alcançada 🎉';
   const totalMonths = Math.ceil(months);
 
   if (totalMonths < 12) {
