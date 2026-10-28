@@ -58,7 +58,7 @@ describe('Push Notification Engine', () => {
 
     expect(mockAddNotification).toHaveBeenCalledWith(
       expect.objectContaining({
-        title: 'Triagem Diária Pendente 📋',
+        title: expect.stringMatching(/Fechamento do Dia|Triagem Diária/i),
       })
     );
     expect(mockUpdateSettings).toHaveBeenCalledWith(

@@ -56,20 +56,22 @@ export async function parseOfxStatement(
   owner: PaidBy,
   customRules: CategoryKeywordRule[] = DEFAULT_KEYWORD_RULES
 ): Promise<BankImportedTransaction[]> {
+  let rawBlocks: string[] = [];
   const trnRegex = /<STMTTRN>([\s\S]*?)<\/STMTTRN>/gi;
-  let matches = [...text.matchAll(trnRegex)];
+  for (const match of text.matchAll(trnRegex)) {
+    if (match[1]) rawBlocks.push(match[1]);
+  }
 
   // Fallback for SGML without closing </STMTTRN> tags
-  if (matches.length === 0 && text.toUpperCase().includes('<STMTTRN>')) {
+  if (rawBlocks.length === 0 && text.toUpperCase().includes('<STMTTRN>')) {
     const parts = text.split(/<STMTTRN>/i).slice(1);
-    matches = parts.map(p => {
+    rawBlocks = parts.map(p => {
       const end = p.search(/<STMTTRN>|<\/BANKTRANLIST>|<\/OFX>/i);
-      const chunk = end > 0 ? p.substring(0, end) : p;
-      return [chunk, chunk] as unknown as RegExpMatchArray;
+      return end > 0 ? p.substring(0, end) : p;
     });
   }
 
-  if (matches.length === 0) {
+  if (rawBlocks.length === 0) {
     throw new Error('Nenhuma transação encontrada no arquivo OFX. Verifique se o extrato contém o bloco <STMTTRN>.');
   }
 
@@ -83,8 +85,8 @@ export async function parseOfxStatement(
   const counts = new Map<string, number>();
   const results: BankImportedTransaction[] = [];
 
-  for (let i = 0; i < matches.length; i++) {
-    const block = matches[i][1] || matches[i][0];
+  for (let i = 0; i < rawBlocks.length; i++) {
+    const block = rawBlocks[i];
     const trnType = getTagValue(block, 'TRNTYPE').toUpperCase();
     const rawDate = getTagValue(block, 'DTPOSTED'); // e.g. 20261015120000[-3:BRT] or 20261015
     const rawAmt = getTagValue(block, 'TRNAMT').replace(',', '.');
@@ -186,7 +188,11 @@ export async function parseCsvStatement(
     const date = br ? `${br[3]}-${br[2]}-${br[1]}` : raw.slice(0, 10);
     const dateObj = new Date(date + 'T00:00:00Z');
 
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !Number.isFinite(dateObj.valueOf())) {
+    if (
+      !/^\d{4}-\d{2}-\d{2}$/.test(date) ||
+      !Number.isFinite(dateObj.valueOf()) ||
+      dateObj.toISOString().slice(0, 10) !== date
+    ) {
       throw new Error(`Data inválida na linha ${index + 2}: "${raw}"`);
     }
 
