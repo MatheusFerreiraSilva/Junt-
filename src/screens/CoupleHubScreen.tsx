@@ -165,7 +165,7 @@ export const CoupleHubScreen: React.FC = () => {
     });
 
     return Array.from(unifiedMap.values());
-  }, [state.piggyBanks, state.coupleGoals, p1Name, p2Name]);
+  }, [state.piggyBanks, state.coupleGoals]);
 
   // Wishlist list
   const wishlist: CoupleWishlistItem[] = state.coupleWishlist || [];

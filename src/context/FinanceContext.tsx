@@ -827,11 +827,12 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
     const membershipChanged = () => { void handleAuth(auth.currentUser); };
     window.addEventListener('junto-membership-changed', membershipChanged);
 
+    const genRef = sessionGeneration;
     return () => {
       unsubAuth();
       window.removeEventListener('junto-membership-changed', membershipChanged);
       disposed = true;
-      ++sessionGeneration.current;
+      ++genRef.current;
       coupleListener.current?.();
       coupleListener.current = null;
       entityListener.current?.();
@@ -857,6 +858,7 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
       }
     }, 400);
     return () => clearTimeout(timer);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [coupleAccount?.id, currentUser?.uid, state.expenses, state.incomes, state.installments, state.piggyBanks, state.strategicIntents, state.medicalShifts, state.shiftIncomeAllocations, state.bankImportedTransactions, state.medicalShiftPresets, state.hospitalMappingRules, state.incomeSourceRules, state.pendingConfirmations, state.linkedAccounts, state.detectedSubscriptions, state.keywordRules, state.coupleGoals, state.coupleWishlist, state.coupleFixedBills, state.dreamSimulations, state.pluggyAccounts]);
 
   // Realtime Cloud Persistence: Save shared couple state to Firestore (debounced)
@@ -906,6 +908,7 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
     }, 800);
 
     return () => clearTimeout(timer);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     coupleAccount?.id,
     state.expenses,
@@ -1089,7 +1092,7 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
     const curMonthTotal = curMonthIncomes.reduce((sum, inc) => sum + (inc.amount || 0), 0);
     const baseline = declaredProfileIncome > 0 ? declaredProfileIncome : (dynamicIncomeAnalysis.threeMonthsAverage > 0 ? dynamicIncomeAnalysis.threeMonthsAverage : 0);
     return calculateBonusShift50_50(curMonthTotal > 0 ? curMonthTotal : totalIncome, baseline);
-  }, [state.incomes, state.currentMonth, declaredProfileIncome, dynamicIncomeAnalysis.threeMonthsAverage, activeLifeTier.minIncome, totalIncome]);
+  }, [state.incomes, state.currentMonth, declaredProfileIncome, dynamicIncomeAnalysis.threeMonthsAverage, totalIncome]);
 
   // Apply Accent Theme & Mode CSS Variables to document root dynamically
   useEffect(() => {

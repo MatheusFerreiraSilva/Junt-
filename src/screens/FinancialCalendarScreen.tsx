@@ -330,7 +330,7 @@ export const FinancialCalendarScreen: React.FC<FinancialCalendarScreenProps> = (
       },
       upcomingItems: upcoming.sort((a, b) => a.daysRemaining - b.daysRemaining),
     };
-  }, [activeMonth, filteredExpenses, filteredIncomes, allActiveSubscriptions, registeredBills, state.installments, state.profile, viewMode, todayStr]);
+  }, [activeMonth, filteredExpenses, filteredIncomes, allActiveSubscriptions, registeredBills, state.installments, viewMode, todayStr]);
 
   // Selected Day Details
   const selectedDayData = useMemo(() => {
