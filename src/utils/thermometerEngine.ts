@@ -256,7 +256,7 @@ export function calculateThermometerEngine(
       pendingCommitmentsList.push({
         id: `inst-${inst.id}`,
         title: `${inst.title} (${inst.paidInstallmentsCount + 1}/${inst.installmentsCount})`,
-        amount: inst.monthlyAmount,
+        amount: inst.installmentAmount,
         type: 'installment',
       });
     }
