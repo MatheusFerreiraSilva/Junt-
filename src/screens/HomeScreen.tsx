@@ -53,6 +53,8 @@ import { LIFE_TIERS } from '../utils/incomeTiersEngine';
 import { FoodPacingWeeklyCard } from '../components/FoodPacingWeeklyCard';
 import { WeeklySurplusHub } from '../components/WeeklySurplusHub';
 import { MonthThermometerGauge } from '../components/MonthThermometerGauge';
+import { ThermometerRaioXModal } from '../components/ThermometerRaioXModal';
+import { calculateThermometerEngine, ThermometerScope } from '../utils/thermometerEngine';
 
 interface HomeScreenProps {
   onNavigate: (screen: ScreenId, categoryKey?: CategoryKey) => void;
@@ -131,6 +133,11 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
     predictiveBurnAlerts,
     aiPredictiveInsights,
   } = useFinance();
+
+  const thermometerEngineResult = useMemo(() => {
+    const scope: ThermometerScope = viewMode === 'partner1' ? 'partner1' : viewMode === 'partner2' ? 'partner2' : 'couple';
+    return calculateThermometerEngine(state, scope);
+  }, [state, viewMode]);
 
   const [inviteCodeInput, setInviteCodeInput] = useState('');
   const [fusionLoading, setFusionLoading] = useState(false);
@@ -538,15 +545,8 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
       {/* PRIORIDADE 1: O TERMÔMETRO DO MÊS (ANEL SEGMENTADO CIRCULAR EM ARCOS)      */}
       {/* ========================================================================= */}
       <MonthThermometerGauge
-        totalIncome={totalIncome}
-        totalSpent={displayedTotalSpent}
-        remainingToSpend={displayedRemaining}
-        budgetConsumedPercent={budgetConsumedPercent}
-        daysRemaining={progress.daysRemaining}
-        safeDailyLimit={safeDailyLimit}
-        isOverBudget={isOverBudget}
+        engineResult={thermometerEngineResult}
         activeLifeTier={activeLifeTier}
-        streakMonths={state.profile.streakMonths}
         onOpenRaioX={() => setActiveModal('thermometer')}
       />
 
@@ -1611,110 +1611,13 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
       {/* ========================================================================= */}
       {/* MODAL 1: RAIO-X DO MÊS (AO CLICAR NO TERMÔMETRO/SALDO)                     */}
       {/* ========================================================================= */}
-      {activeModal === 'thermometer' && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/70 backdrop-blur-sm animate-in fade-in duration-200">
-          <div className="absolute inset-0" onClick={() => setActiveModal(null)} />
-          <div className="relative z-10 w-full max-w-lg bg-white dark:bg-slate-900 rounded-3xl shadow-2xl border-2 border-slate-300 dark:border-slate-700 overflow-hidden flex flex-col max-h-[90vh]">
-            {/* Modal Header */}
-            <div className="p-5 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <span className="w-10 h-10 rounded-2xl bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 flex items-center justify-center text-xl font-black">
-                  🔍
-                </span>
-                <div>
-                  <h3 className="font-black text-base sm:text-lg text-slate-950 dark:text-white leading-tight">
-                    Raio-X do Orçamento do Mês
-                  </h3>
-                  <p className="text-xs text-slate-600 dark:text-slate-400 font-medium">
-                    Diagnóstico instantâneo e projeção diária
-                  </p>
-                </div>
-              </div>
-              <button
-                onClick={() => setActiveModal(null)}
-                className="w-8 h-8 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center text-slate-400 cursor-pointer"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            {/* Modal Content */}
-            <div className="p-5 sm:p-6 space-y-4 overflow-y-auto">
-              <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700 space-y-2 text-center">
-                <span className="text-xs font-bold text-slate-600 dark:text-slate-400 uppercase tracking-wider">
-                  {isOverBudget ? 'Passamos do combinado' : 'Quanto ainda podemos gastar'}
-                </span>
-                <div className={`text-3xl sm:text-4xl font-black font-display ${isOverBudget ? 'text-rose-600' : 'text-emerald-600 dark:text-emerald-400'}`}>
-                  {isOverBudget
-                    ? `Passamos ${formatCurrency(Math.abs(remainingToSpendThisMonth))} do combinado`
-                    : formatCurrency(remainingToSpendThisMonth)}
-                </div>
-                <div className="text-xs text-slate-600 dark:text-slate-400 font-semibold">
-                  {isOverBudget
-                    ? 'A rotina de plantões e do dia a dia puxou mais este mês! Fiquem tranquilos: a gente recalibra juntos sem neura.'
-                    : `Total de gastos: ${formatCurrency(totalSpentThisMonth)} de ${formatCurrency(totalIncome)} planejado`}
-                </div>
-              </div>
-
-              {/* Ritmo Diário Seguro */}
-              <div className="p-4 rounded-2xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-300 dark:border-emerald-700 space-y-1.5">
-                <div className="flex items-center justify-between text-xs font-extrabold text-emerald-900 dark:text-emerald-200">
-                  <span className="flex items-center gap-1.5">
-                    <span>💡</span> Ritmo Diário Seguro Recomendado:
-                  </span>
-                  <span className="text-sm font-black underline">
-                    {formatCurrency(safeDailyLimit)} / dia
-                  </span>
-                </div>
-                <p className="text-xs text-emerald-800 dark:text-emerald-300 font-medium leading-relaxed">
-                  Gastando até esse valor por dia nos próximos <strong>{progress.daysRemaining} dias</strong>, vocês fecham o mês exatamente dentro do combinado, sem comprometer a reserva.
-                </p>
-              </div>
-
-              {/* Resumo da Divisão */}
-              <div className="grid grid-cols-2 gap-3 text-xs">
-                <div className="p-3.5 rounded-2xl bg-slate-100 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700">
-                  <span className="text-slate-600 dark:text-slate-400 block font-bold">Gasto {state.profile.partner1Name}:</span>
-                  <strong className="text-base font-black text-slate-950 dark:text-white block mt-0.5">
-                    {formatCurrency(partner1ShareSpent)}
-                  </strong>
-                  <span className="text-[11px] text-slate-500 font-semibold">{p1SharePct}% do total gasto</span>
-                </div>
-
-                <div className="p-3.5 rounded-2xl bg-slate-100 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700">
-                  <span className="text-slate-600 dark:text-slate-400 block font-bold">Gasto {state.profile.partner2Name}:</span>
-                  <strong className="text-base font-black text-slate-950 dark:text-white block mt-0.5">
-                    {formatCurrency(partner2ShareSpent)}
-                  </strong>
-                  <span className="text-[11px] text-slate-500 font-semibold">{p2SharePct}% do total gasto</span>
-                </div>
-              </div>
-            </div>
-
-            {/* Modal Actions */}
-            <div className="p-4 border-t border-slate-200 dark:border-slate-800 flex items-center justify-end gap-2 bg-slate-50 dark:bg-slate-900">
-              <button
-                onClick={() => {
-                  setActiveModal(null);
-                  onOpenExpenseModal();
-                }}
-                className="btn-primary-accent px-4 py-2 rounded-xl text-white font-black text-xs cursor-pointer shadow-xs"
-              >
-                + Lançar Gasto Agora
-              </button>
-              <button
-                onClick={() => {
-                  setActiveModal(null);
-                  onNavigate('transactions');
-                }}
-                className="px-4 py-2 rounded-xl bg-slate-200 dark:bg-slate-800 text-slate-800 dark:text-slate-200 font-black text-xs cursor-pointer"
-              >
-                Ver Extrato Completo
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <ThermometerRaioXModal
+        isOpen={activeModal === 'thermometer'}
+        onClose={() => setActiveModal(null)}
+        engineResult={thermometerEngineResult}
+        onOpenExpenseModal={() => onOpenExpenseModal()}
+        onNavigateTransactions={() => onNavigate('transactions')}
+      />
 
       {/* ========================================================================= */}
       {/* MODAL 2: JORNADA DAS 4 FAIXAS & REGRAS DE OURO                             */}
