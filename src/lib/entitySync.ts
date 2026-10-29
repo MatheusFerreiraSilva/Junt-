@@ -65,11 +65,10 @@ export function subscribeEntities(db: Firestore, coupleId: string, callback: (da
 export async function saveEntities(db: Firestore, coupleId: string, baseline: EntityState, current: EntityState, isActive: () => boolean = () => true) {
   const changes = ENTITY_FIELDS.flatMap(field => entityChanges(baseline[field] || [], current[field] || []).map(change => ({ field, ...change })));
   if (!changes.length) return;
-  // A transaction validates the baseline so conflicting edits never silently
-  // overwrite a partner's version. Independent records can be saved together.
-  if (changes.length > 450) throw new Error('Há mais de 450 alterações pendentes. Exporte um backup e sincronize em lotes menores.');
-  {
-    const chunk = changes;
+  // Transaction size is split in safe chunks of <= 400 items so imports up to 5,000 items complete smoothly
+  const BATCH_SIZE = 400;
+  for (let i = 0; i < changes.length; i += BATCH_SIZE) {
+    const chunk = changes.slice(i, i + BATCH_SIZE);
     if (!isActive()) return;
     await runTransaction(db, async tx => {
       const snapshots = await Promise.all(chunk.map(change => tx.get(entityRef(db, coupleId, change.field, change.id))));

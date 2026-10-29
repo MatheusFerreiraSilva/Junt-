@@ -17,6 +17,7 @@ import {
 import { useFinance, CATEGORIES_BASE } from '../context/FinanceContext';
 import { formatCurrency } from '../utils/formatters';
 import { CategoryKey } from '../types/finance';
+import { BudgetRebalanceModal } from './modals/BudgetRebalanceModal';
 
 export const LifeTierHeroCard: React.FC = () => {
   const {
@@ -33,6 +34,7 @@ export const LifeTierHeroCard: React.FC = () => {
 
   const [isExpanded, setIsExpanded] = useState(false);
   const [allocatedBonus, setAllocatedBonus] = useState(false);
+  const [isRebalanceModalOpen, setIsRebalanceModalOpen] = useState(false);
 
   const tier = activeLifeTier;
   const isAboveInflection = totalIncome > 35000;
@@ -334,9 +336,24 @@ export const LifeTierHeroCard: React.FC = () => {
                 </div>
               </div>
             </div>
+
+            <div className="pt-2 border-t border-slate-200 dark:border-slate-800 flex justify-end">
+              <button
+                onClick={() => setIsRebalanceModalOpen(true)}
+                className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-white font-bold text-xs shadow-md flex items-center gap-1.5 transition-all"
+              >
+                <PieChart className="w-4 h-4" />
+                <span>Reequilibrar Orçamento Respeitando minhas Travas</span>
+              </button>
+            </div>
           </div>
         )}
       </div>
+
+      <BudgetRebalanceModal
+        isOpen={isRebalanceModalOpen}
+        onClose={() => setIsRebalanceModalOpen(false)}
+      />
     </div>
   );
 };

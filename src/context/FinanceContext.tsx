@@ -28,6 +28,8 @@ import {
   BankImportedTransaction,
   CategoryKey,
   CategoryInfo,
+  DestinationKey,
+  BudgetPlanContract,
   ExpenseItem,
   IncomeItem,
   InstallmentPurchase,
@@ -315,6 +317,16 @@ const INITIAL_STATE: AppState = {
     profissional: 0,
     investimentos: 0,
   },
+  categoryLocks: {
+    moradia: false,
+    transporte: false,
+    comida: false,
+    lazer: false,
+    protecao: false,
+    profissional: false,
+    investimentos: false,
+  },
+  monthlyBudgetPlans: {},
   currentMonth: new Date().toISOString().slice(0, 7),
   expenses: [],
   incomes: [],
@@ -391,7 +403,7 @@ export interface FinanceContextType {
   editExpense: (expenseOrId: string | ExpenseItem, expense?: Partial<ExpenseItem>) => void;
   deleteExpense: (id: string) => void;
   addIncome: (income: Omit<IncomeItem, 'id'>) => void;
-  deleteIncome: (id: string) => void;
+  deleteIncome: (id: string, forceUnlink?: boolean) => void;
   addInstallment: (installment: Omit<InstallmentPurchase, 'id' | 'paidInstallmentsCount' | 'active'>) => void;
   recordInstallmentPayment: (id: string) => void;
   markInstallmentPaidStep: (id: string) => void;
@@ -443,6 +455,10 @@ export interface FinanceContextType {
   updateProfile: (profile: Partial<CoupleProfile>) => void;
   updateCategoryPercentages: (percentages: Record<CategoryKey, number>) => void;
   updateCategoryFloors: (floors: Record<string, number>) => void;
+  categoryLocks: Record<DestinationKey, boolean>;
+  monthlyBudgetPlans: Record<string, BudgetPlanContract>;
+  updateCategoryLocks: (locks: Partial<Record<DestinationKey, boolean>>) => void;
+  applyBudgetPlanContract: (plan: BudgetPlanContract) => void;
   toggleThemeMode: () => void;
   setAccentTheme: (theme: AccentTheme) => void;
   setModeTheme: (mode: 'couple' | 'partner1' | 'partner2', theme: AccentTheme) => void;
@@ -2412,13 +2428,62 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
     }));
   };
 
-  const deleteIncome = (id: string) => {
+  const deleteIncome = (id: string, forceUnlink = false) => {
     setState(prev => {
       const allocated = (prev.shiftIncomeAllocations || []).find(ledger => ledger.id === id);
-      if (allocated && Object.keys(allocated.allocations).length > 0 || prev.medicalShifts?.some(shift => shift.linkedIncomeId === id)) {
-        return { ...prev, notifications: [{ id: 'linked-income:' + id, title: 'Recebimento vinculado a plantões', message: 'Desfaça a conciliação dos plantões antes de excluir este recebimento.', timestamp: 'Agora', type: 'alert' as const, isRead: false }, ...prev.notifications.filter(n => n.id !== 'linked-income:' + id)] };
+      const linkedShifts = (prev.medicalShifts || []).filter(shift => shift.linkedIncomeId === id);
+
+      if (!forceUnlink && ((allocated && Object.keys(allocated.allocations).length > 0) || linkedShifts.length > 0)) {
+        return {
+          ...prev,
+          notifications: [
+            {
+              id: 'linked-income:' + id,
+              title: 'Recebimento vinculado a plantões',
+              message: 'Este recebimento está vinculado a plantões médicos. Clique em Estornar no Extrato para desvincular e reabrir os plantões.',
+              timestamp: 'Agora',
+              type: 'alert' as const,
+              isRead: false,
+            },
+            ...prev.notifications.filter(n => n.id !== 'linked-income:' + id),
+          ],
+        };
       }
-      return { ...prev, incomes: prev.incomes.filter(i => i.id !== id) };
+
+      // Revert linked medical shifts so they return to unpayout status
+      const updatedShifts = (prev.medicalShifts || []).map(shift => {
+        if (shift.linkedIncomeId === id) {
+          return {
+            ...shift,
+            status: 'completed' as const,
+            payoutReceived: false,
+            linkedIncomeId: undefined,
+          };
+        }
+        return shift;
+      });
+
+      const updatedAllocations = (prev.shiftIncomeAllocations || []).filter(l => l.id !== id);
+
+      return {
+        ...prev,
+        incomes: prev.incomes.filter(i => i.id !== id),
+        medicalShifts: updatedShifts,
+        shiftIncomeAllocations: updatedAllocations,
+        notifications: linkedShifts.length > 0
+          ? [
+              {
+                id: `notif-shift-unlinked-${Date.now()}`,
+                title: 'Estorno de Depósito Médico 🩺',
+                message: 'O recebimento de plantão foi removido e os plantões vinculados voltaram ao status pendente de recebimento.',
+                timestamp: 'Agora mesmo',
+                type: 'info' as const,
+                isRead: false,
+              },
+              ...prev.notifications,
+            ]
+          : prev.notifications,
+      };
     });
   };
 
@@ -4048,6 +4113,70 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
     }));
   };
 
+  const updateCategoryLocks = (locks: Partial<Record<DestinationKey, boolean>>) => {
+    setState(prev => ({
+      ...prev,
+      categoryLocks: {
+        ...(prev.categoryLocks || {
+          moradia: false,
+          transporte: false,
+          comida: false,
+          lazer: false,
+          protecao: false,
+          profissional: false,
+          investimentos: false,
+        }),
+        ...locks,
+      },
+    }));
+  };
+
+  const applyBudgetPlanContract = (plan: BudgetPlanContract) => {
+    setState(prev => {
+      const nextCategoryPercentages: Record<CategoryKey, number> = {
+        moradia: plan.categoryPercentages.moradia ?? prev.categoryPercentages.moradia,
+        transporte: plan.categoryPercentages.transporte ?? prev.categoryPercentages.transporte,
+        comida: plan.categoryPercentages.comida ?? prev.categoryPercentages.comida,
+        lazer: plan.categoryPercentages.lazer ?? prev.categoryPercentages.lazer,
+        protecao: plan.categoryPercentages.protecao ?? prev.categoryPercentages.protecao,
+        profissional: plan.categoryPercentages.profissional ?? prev.categoryPercentages.profissional,
+      };
+
+      const nextInvestmentsPercentage = plan.categoryPercentages.investimentos ?? (prev.profile.investmentsPercentage || 20);
+
+      const nextCategoryLocks = {
+        ...(prev.categoryLocks || {
+          moradia: false,
+          transporte: false,
+          comida: false,
+          lazer: false,
+          protecao: false,
+          profissional: false,
+          investimentos: false,
+        }),
+        ...plan.categoryLocks,
+      };
+
+      const nextMonthlyPlans = {
+        ...(prev.monthlyBudgetPlans || {}),
+        [plan.competence]: plan,
+      };
+
+      return {
+        ...prev,
+        categoryPercentages: nextCategoryPercentages,
+        categoryLocks: nextCategoryLocks,
+        monthlyBudgetPlans: nextMonthlyPlans,
+        isCustomizedPercentages: true,
+        profile: {
+          ...prev.profile,
+          investmentsPercentage: nextInvestmentsPercentage,
+        },
+      };
+    });
+    triggerCelebration();
+  };
+
   const toggleThemeMode = () => {
     setState(prev => ({
       ...prev,
@@ -4606,6 +4735,10 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
         updateProfile,
         updateCategoryPercentages,
         updateCategoryFloors,
+        categoryLocks: state.categoryLocks || INITIAL_STATE.categoryLocks!,
+        monthlyBudgetPlans: state.monthlyBudgetPlans || {},
+        updateCategoryLocks,
+        applyBudgetPlanContract,
         toggleThemeMode,
         setAccentTheme,
         setModeTheme,

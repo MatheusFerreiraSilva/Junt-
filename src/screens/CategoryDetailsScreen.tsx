@@ -22,6 +22,7 @@ import { CategoryKey, ExpenseItem, PaidBy, FundingSourceType } from '../types/fi
 import { formatCurrency } from '../utils/formatters';
 import { MonthSelector } from '../components/MonthSelector';
 import { FoodPacingWeeklyCard } from '../components/FoodPacingWeeklyCard';
+import { BudgetRebalanceModal } from '../components/modals/BudgetRebalanceModal';
 
 interface CategoryDetailsScreenProps {
   initialCategory?: CategoryKey;
@@ -1208,6 +1209,11 @@ export const CategoryDetailsScreen: React.FC<CategoryDetailsScreenProps> = ({
           </div>
         </div>
       )}
+      {/* Modal de Reequilíbrio Orçamentário com Travas */}
+      <BudgetRebalanceModal
+        isOpen={isSimulatingCeiling}
+        onClose={() => setIsSimulatingCeiling(false)}
+      />
     </div>
   );
 };

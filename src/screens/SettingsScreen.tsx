@@ -7,6 +7,7 @@ import { formatCurrency } from '../utils/formatters';
 import { BankSyncModal } from '../components/BankSyncModal';
 import { MedicalCareerSettings } from '../components/MedicalCareerSettings';
 import { PWAInstallButton } from '../components/PWAInstallButton';
+import { BudgetRebalanceModal } from '../components/modals/BudgetRebalanceModal';
 import {
   getCurrentMonthlyReviewSchedule,
   requestPushNotificationPermission,
@@ -135,6 +136,7 @@ export const SettingsScreen: React.FC = () => {
   // Reajuste Automático Modal / State
   const [rebalanceProposal, setProposedRebalance] = useState<ProposedRebalance | null>(null);
   const [rebalanceMessage, setRebalanceMessage] = useState<string | null>(null);
+  const [isRebalanceModalOpen, setIsRebalanceModalOpen] = useState(false);
 
   // Investimentos Settings
   const [reserveMonths, setReserveMonths] = useState<number>(
@@ -1070,14 +1072,19 @@ export const SettingsScreen: React.FC = () => {
 
                 <button
                   type="button"
-                  onClick={handleTriggerRebalance}
-                  className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 text-slate-800 dark:text-slate-200 border-2 border-slate-300 dark:border-slate-700 text-xs font-black transition-all cursor-pointer"
+                  onClick={() => setIsRebalanceModalOpen(true)}
+                  className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-white font-bold text-xs shadow-md transition-all cursor-pointer"
                 >
                   <RefreshCw className="w-3.5 h-3.5" />
-                  <span>Reajustar Pisos</span>
+                  <span>Reequilibrar Orçamento com Travas</span>
                 </button>
               </div>
             </div>
+
+            <BudgetRebalanceModal
+              isOpen={isRebalanceModalOpen}
+              onClose={() => setIsRebalanceModalOpen(false)}
+            />
 
             {rebalanceMessage && (
               <div className="p-3.5 rounded-2xl bg-amber-50 dark:bg-amber-950/50 border-2 border-amber-300 dark:border-amber-800 text-amber-950 dark:text-amber-200 text-xs font-black flex items-center gap-2">

@@ -21,12 +21,25 @@ import {
   CheckCircle2,
   ListFilter,
   X,
+  Info,
+  TrendingUp,
+  TrendingDown,
+  RefreshCw,
+  Layers,
+  ArrowRightLeft,
 } from 'lucide-react';
 import { useFinance, CATEGORIES_BASE } from '../context/FinanceContext';
-import { CategoryKey, PaidBy, ExpenseItem } from '../types/finance';
+import { CategoryKey, PaidBy, ExpenseItem, IncomeItem } from '../types/finance';
 import { formatCurrency, formatMonthYear } from '../utils/formatters';
 import { DuplicateReconciliationCard } from '../components/DuplicateReconciliationCard';
 import { TransactionTriageBottomSheet } from '../components/modals/TransactionTriageBottomSheet';
+import { StatementAuditModal } from '../components/modals/StatementAuditModal';
+import {
+  buildUnifiedLedger,
+  StatementItem,
+  StatementDirection,
+  normalizeSearchTerm,
+} from '../utils/unifiedLedger';
 
 interface TransactionHistoryScreenProps {
   onOpenExpenseModal: () => void;
@@ -37,109 +50,81 @@ export const TransactionHistoryScreen: React.FC<TransactionHistoryScreenProps> =
   onOpenExpenseModal,
   onOpenTriageModal,
 }) => {
-  const { state, deleteExpense, getExpenseSplit, viewMode, detectedDuplicates } = useFinance();
+  const {
+    state,
+    deleteExpense,
+    deleteIncome,
+    getExpenseSplit,
+    viewMode,
+    detectedDuplicates,
+  } = useFinance();
+
   const [triageExpense, setTriageExpense] = useState<ExpenseItem | null>(null);
+  const [inspectAuditItem, setInspectAuditItem] = useState<StatementItem | null>(null);
 
   // Search and Filter States
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
-  const [selectedSubcategory, setSelectedSubcategory] = useState<string>('all');
   const [selectedPaidBy, setSelectedPaidBy] = useState<string>('all');
-  const [selectedMonth, setSelectedMonth] = useState<string>('all');
+  const [selectedDirection, setSelectedDirection] = useState<StatementDirection | 'all'>('all');
+  const [selectedOrigin, setSelectedOrigin] = useState<string>('all');
+  // Month selector defaults to currentMonth for global month synchronization
+  const [selectedMonth, setSelectedMonth] = useState<string>(state.currentMonth || 'all');
   const [sortBy, setSortBy] = useState<'date-desc' | 'date-asc' | 'amount-desc' | 'amount-asc'>('date-desc');
 
-  // Standard subcategories list for quick filtering
-  const subcategoryList = [
-    { id: 'all', label: 'Todas as Subcategorias', icon: '🏷️' },
-    { id: 'delivery', label: 'Delivery / iFood', icon: '🛵' },
-    { id: 'supermercado', label: 'Supermercado', icon: '🛒' },
-    { id: 'restaurante', label: 'Restaurante / Jantar', icon: '🍽️' },
-    { id: 'eletrodomesticos', label: 'Eletrodomésticos & Móveis', icon: '🖥️' },
-    { id: 'aluguel', label: 'Aluguel & Condomínio', icon: '🏠' },
-    { id: 'contas', label: 'Contas (Luz, Água, Net)', icon: '⚡' },
-    { id: 'farmacia', label: 'Farmácia & Saúde', icon: '💊' },
-    { id: 'viagem', label: 'Viagem & Passeios', icon: '✈️' },
-    { id: 'cursos', label: 'Cursos & Livros', icon: '📚' },
-  ];
+  // Build unified ledger stream
+  const ledgerStream = useMemo(() => {
+    return buildUnifiedLedger(state, viewMode);
+  }, [state, viewMode]);
 
-  // Helper to detect subcategory or tags from expense description/category
-  const getSubcategoryBadge = (expense: ExpenseItem) => {
-    if (expense.subcategory) return expense.subcategory;
+  // Filtered ledger calculation
+  const filteredLedger = useMemo(() => {
+    const { text: termText, numVal: termNumVal } = normalizeSearchTerm(searchTerm);
 
-    const desc = expense.description.toLowerCase();
-    if (desc.includes('ifood') || desc.includes('delivery') || desc.includes('uber eats') || desc.includes('rappi')) {
-      return 'Delivery';
-    }
-    if (desc.includes('supermercado') || desc.includes('mercado') || desc.includes('feira') || desc.includes('carrefour') || desc.includes('pão de açúcar')) {
-      return 'Supermercado';
-    }
-    if (desc.includes('geladeira') || desc.includes('tv') || desc.includes('sofá') || desc.includes('máquina') || desc.includes('ar condicionado') || desc.includes('eletro')) {
-      return 'Eletrodomésticos';
-    }
-    if (desc.includes('aluguel') || desc.includes('condomínio')) {
-      return 'Moradia/Aluguel';
-    }
-    if (desc.includes('luz') || desc.includes('energia') || desc.includes('água') || desc.includes('internet') || desc.includes('gás')) {
-      return 'Contas Fixas';
-    }
-    if (desc.includes('farmácia') || desc.includes('drogaria') || desc.includes('remédio')) {
-      return 'Farmácia';
-    }
-    if (desc.includes('restaurante') || desc.includes('jantar') || desc.includes('almoço') || desc.includes('sushi') || desc.includes('outback')) {
-      return 'Restaurantes';
-    }
-    return CATEGORIES_BASE[expense.category]?.name || 'Geral';
-  };
+    return ledgerStream.filter(item => {
+      // 1. Month Filter
+      if (selectedMonth !== 'all' && !item.date.startsWith(selectedMonth)) {
+        return false;
+      }
 
-  // Filtered expenses calculation
-  const filteredExpenses = useMemo(() => {
-    return state.expenses.filter(exp => {
-      // View mode filter (Individual vs Couple)
-      if (viewMode === 'partner1' && exp.paidBy === 'partner2') return false;
-      if (viewMode === 'partner2' && exp.paidBy === 'partner1') return false;
+      // 2. Direction Filter (Inflow, Outflow, Internal Transfer)
+      if (selectedDirection !== 'all' && item.direction !== selectedDirection) {
+        return false;
+      }
 
-      // Search term
-      if (searchTerm.trim()) {
-        const term = searchTerm.toLowerCase();
-        const subcat = getSubcategoryBadge(exp).toLowerCase();
-        const matchesDesc = exp.description.toLowerCase().includes(term);
-        const matchesBank = (exp.bankName || '').toLowerCase().includes(term);
-        const matchesCat = CATEGORIES_BASE[exp.category]?.name.toLowerCase().includes(term);
-        const matchesSubcat = subcat.includes(term);
-        const matchesAmount = exp.amount.toString().includes(term);
+      // 3. Origin Filter
+      if (selectedOrigin !== 'all' && item.origin !== selectedOrigin) {
+        return false;
+      }
 
-        if (!matchesDesc && !matchesBank && !matchesCat && !matchesSubcat && !matchesAmount) {
+      // 4. PaidBy Filter
+      if (selectedPaidBy !== 'all' && item.paidBy !== selectedPaidBy) {
+        return false;
+      }
+
+      // 5. Category Filter
+      if (selectedCategory !== 'all' && item.category !== selectedCategory) {
+        return false;
+      }
+
+      // 6. Search Term (Text or Brazilian Comma Amount e.g. "800,00")
+      if (termText) {
+        const titleMatch = item.title.toLowerCase().includes(termText);
+        const catMatch = item.categoryName.toLowerCase().includes(termText);
+        const bankMatch = (item.bankName || '').toLowerCase().includes(termText);
+        const fitidMatch = (item.fitid || '').toLowerCase().includes(termText);
+        const notesMatch = (item.notes || '').toLowerCase().includes(termText);
+
+        let amountMatch = false;
+        if (termNumVal !== undefined) {
+          amountMatch = Math.abs(item.amount - termNumVal) < 0.01 || item.amount.toString().includes(termText);
+        } else {
+          amountMatch = item.amount.toString().includes(termText);
+        }
+
+        if (!titleMatch && !catMatch && !bankMatch && !fitidMatch && !notesMatch && !amountMatch) {
           return false;
         }
-      }
-
-      // Category filter
-      if (selectedCategory !== 'all' && exp.category !== selectedCategory) {
-        return false;
-      }
-
-      // Subcategory filter
-      if (selectedSubcategory !== 'all') {
-        const subcat = getSubcategoryBadge(exp).toLowerCase();
-        if (selectedSubcategory === 'delivery' && !subcat.includes('delivery')) return false;
-        if (selectedSubcategory === 'supermercado' && !subcat.includes('supermercado')) return false;
-        if (selectedSubcategory === 'restaurante' && !subcat.includes('restaurante')) return false;
-        if (selectedSubcategory === 'eletrodomesticos' && !subcat.includes('eletrodoméstico')) return false;
-        if (selectedSubcategory === 'aluguel' && !subcat.includes('aluguel')) return false;
-        if (selectedSubcategory === 'contas' && !subcat.includes('contas')) return false;
-        if (selectedSubcategory === 'farmacia' && !subcat.includes('farmácia')) return false;
-        if (selectedSubcategory === 'viagem' && !subcat.includes('viagem')) return false;
-        if (selectedSubcategory === 'cursos' && !subcat.includes('curso')) return false;
-      }
-
-      // PaidBy filter
-      if (selectedPaidBy !== 'all' && exp.paidBy !== selectedPaidBy) {
-        return false;
-      }
-
-      // Month filter
-      if (selectedMonth !== 'all' && !exp.date.startsWith(selectedMonth)) {
-        return false;
       }
 
       return true;
@@ -150,337 +135,450 @@ export const TransactionHistoryScreen: React.FC<TransactionHistoryScreenProps> =
       if (sortBy === 'amount-asc') return a.amount - b.amount;
       return 0;
     });
-  }, [state.expenses, viewMode, searchTerm, selectedCategory, selectedSubcategory, selectedPaidBy, selectedMonth, sortBy]);
+  }, [ledgerStream, selectedMonth, selectedDirection, selectedOrigin, selectedPaidBy, selectedCategory, searchTerm, sortBy]);
 
-  // Aggregate totals for the filtered set
-  const filteredTotal = useMemo(() => {
-    return filteredExpenses.reduce((sum, e) => sum + e.amount, 0);
-  }, [filteredExpenses]);
+  // Totals Breakdown for Filtered View
+  const totalsSummary = useMemo(() => {
+    let totalInflow = 0;
+    let totalOutflow = 0;
+    let totalTransfers = 0;
 
-  // List of available months in expenses
-  const availableMonths = useMemo(() => {
-    const monthsSet = new Set<string>();
-    state.expenses.forEach(e => {
-      if (e.date && e.date.length >= 7) {
-        monthsSet.add(e.date.substring(0, 7));
+    filteredLedger.forEach(item => {
+      if (item.direction === 'inflow') {
+        totalInflow += item.amount;
+      } else if (item.direction === 'outflow') {
+        totalOutflow += item.amount;
+      } else if (item.direction === 'internal') {
+        totalTransfers += item.amount;
       }
     });
-    return Array.from(monthsSet).sort().reverse();
-  }, [state.expenses]);
 
-  const partner1Name = state.profile.partner1Name;
-  const partner2Name = state.profile.partner2Name;
+    const netFlow = totalInflow - totalOutflow;
+
+    return {
+      totalInflow,
+      totalOutflow,
+      totalTransfers,
+      netFlow,
+      count: filteredLedger.length,
+    };
+  }, [filteredLedger]);
+
+  const handleDeleteItem = (item: StatementItem) => {
+    if (item.entityType === 'expense') {
+      deleteExpense(item.entityId);
+    } else if (item.entityType === 'income') {
+      // Safely unlink medical shifts if linked
+      deleteIncome(item.entityId, true);
+    }
+  };
+
+  const handleEditItem = (item: StatementItem) => {
+    if (item.entityType === 'expense' && item.rawExpense) {
+      if (onOpenTriageModal) {
+        onOpenTriageModal(item.rawExpense);
+      } else {
+        setTriageExpense(item.rawExpense);
+      }
+    } else {
+      setInspectAuditItem(item);
+    }
+  };
 
   return (
     <div className="space-y-6 pb-20">
-      {/* Header & Main Actions */}
-      <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-200 dark:border-slate-800 pb-5">
+      {/* Screen Title & Subtitle */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
-          <h2 className="text-xl sm:text-2xl font-bold text-slate-900 dark:text-white font-display tracking-tight flex items-center gap-2 flex-wrap">
-            <span>Histórico de Transações Detalhado</span>
-            <span className="text-xs px-2.5 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 font-bold">
-              Filtros Inteligentes
-            </span>
-            {detectedDuplicates.length > 0 && (
-              <span className="text-xs px-2.5 py-0.5 rounded-full bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300 font-bold animate-pulse">
-                ⚠️ {detectedDuplicates.length} Duplicidades Detectadas
-              </span>
-            )}
+          <h2 className="text-xl sm:text-2xl font-bold text-slate-900 dark:text-white font-display tracking-tight">
+            Extrato Financeiro Unificado
           </h2>
-          <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 mt-0.5">
-            Pesquise por delivery, comida, eletrodomésticos, mercados e filtre gastos por casal, data ou categoria.
+          <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400">
+            Histórico completo e rastreável de entradas, saídas e transferências do casal.
           </p>
         </div>
 
         <button
           onClick={onOpenExpenseModal}
-          className="btn-primary-accent flex items-center gap-2 px-5 py-2.5 rounded-xl text-white text-xs font-extrabold shadow-md active:scale-95 transition-all"
+          className="btn-primary-accent flex items-center gap-2 px-4 py-2.5 rounded-2xl text-white text-xs font-bold shadow-xs transition-all shrink-0 self-start sm:self-auto"
         >
           <Plus className="w-4 h-4" />
-          <span>Registrar Novo Gasto</span>
+          <span>Novo Lançamento</span>
         </button>
       </div>
 
-      {/* INTELLIGENT DUPLICATE RECONCILIATION CARD */}
-      <DuplicateReconciliationCard />
+      {/* Duplicate Reconciliation Alert Card if any duplicates exist */}
+      {detectedDuplicates.length > 0 && (
+        <DuplicateReconciliationCard />
+      )}
 
-      {/* SEARCH BAR & QUICK FILTERS */}
-      <div className="bg-white dark:bg-slate-900 rounded-3xl p-5 border border-slate-200 dark:border-slate-800 shadow-xs space-y-4">
-        <div className="flex flex-wrap items-center gap-3">
-          {/* Main Search Input */}
-          <div className="relative flex-1 min-w-[240px]">
-            <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
-            <input
-              type="text"
-              placeholder="Buscar por iFood, Delivery, Geladeira, Supermercado, Itaú..."
-              value={searchTerm}
-              onChange={e => setSearchTerm(e.target.value)}
-              className="w-full pl-10 pr-9 py-2.5 rounded-2xl bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-900 dark:text-white focus:ring-2 focus:ring-emerald-500/50 outline-none"
-            />
-            {searchTerm && (
-              <button
-                onClick={() => setSearchTerm('')}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            )}
+      {/* SUMMARY TOTALS CARDS (Entradas, Saídas, Fluxo Líquido e Transferências) */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+        {/* Net Flow */}
+        <div
+          className={`p-4 rounded-3xl border shadow-xs transition-colors space-y-1 ${
+            totalsSummary.netFlow >= 0
+              ? 'bg-emerald-50/50 dark:bg-emerald-950/20 border-emerald-200/80 dark:border-emerald-900/60'
+              : 'bg-rose-50/50 dark:bg-rose-950/20 border-rose-200/80 dark:border-rose-900/60'
+          }`}
+        >
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+              <span>⚖️</span> Fluxo Líquido
+            </span>
+            <span className="text-[10px] px-2 py-0.5 rounded-full font-bold bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300">
+              {totalsSummary.count} itens
+            </span>
           </div>
-
-          {/* Sort dropdown */}
-          <div className="flex items-center gap-1.5 bg-slate-50 dark:bg-slate-800/80 p-1 rounded-2xl border border-slate-200 dark:border-slate-700 text-xs">
-            <ArrowUpDown className="w-3.5 h-3.5 text-slate-400 ml-2" />
-            <select
-              value={sortBy}
-              onChange={e => setSortBy(e.target.value as any)}
-              className="bg-transparent font-bold text-slate-700 dark:text-slate-200 pr-3 py-1.5 outline-none cursor-pointer"
-            >
-              <option value="date-desc">Mais Recentes Primeiro</option>
-              <option value="date-asc">Mais Antigos Primeiro</option>
-              <option value="amount-desc">Maior Valor em R$</option>
-              <option value="amount-asc">Menor Valor em R$</option>
-            </select>
+          <div
+            className={`text-xl sm:text-2xl font-black tabular-nums font-display ${
+              totalsSummary.netFlow >= 0
+                ? 'text-emerald-700 dark:text-emerald-300'
+                : 'text-rose-700 dark:text-rose-300'
+            }`}
+          >
+            {totalsSummary.netFlow >= 0 ? '+ ' : ''}
+            {formatCurrency(totalsSummary.netFlow)}
           </div>
+          <p className="text-[11px] text-slate-500 dark:text-slate-400">
+            Balanço consolidado (Entradas - Saídas no filtro selecionado)
+          </p>
         </div>
 
-        {/* SUBCATEGORY QUICK FILTER CHIPS (Delivery, Comida, Eletrodomésticos, etc.) */}
-        <div className="space-y-2 pt-1 border-t border-slate-100 dark:border-slate-800">
-          <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400 block">
-            Filtros Rápido de Subcategoria:
+        {/* Entradas / Receitas */}
+        <div className="p-4 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800 shadow-xs space-y-1 transition-colors">
+          <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400 uppercase tracking-wider flex items-center gap-1.5">
+            <TrendingUp className="w-3.5 h-3.5" /> Total Entradas
           </span>
-
-          <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none">
-            {subcategoryList.map(sub => {
-              const isSelected = selectedSubcategory === sub.id;
-              return (
-                <button
-                  key={sub.id}
-                  onClick={() => setSelectedSubcategory(sub.id)}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold transition-all whitespace-nowrap border shrink-0 ${
-                    isSelected
-                      ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900 border-slate-900 dark:border-white shadow-xs'
-                      : 'bg-slate-50 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:border-slate-400'
-                  }`}
-                >
-                  <span>{sub.icon}</span>
-                  <span>{sub.label}</span>
-                </button>
-              );
-            })}
+          <div className="text-xl sm:text-2xl font-black text-slate-900 dark:text-white tabular-nums font-display">
+            {formatCurrency(totalsSummary.totalInflow)}
           </div>
+          <p className="text-[11px] text-slate-500 dark:text-slate-400">
+            Receitas, salários e reembolsos
+          </p>
         </div>
 
-        {/* SECONDARY DROPDOWN FILTERS (Categoria Base, Mês e Quem Pagou) */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2">
-          {/* Category Dropdown */}
-          <div className="space-y-1">
-            <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">
-              Área Financeira
-            </label>
-            <select
-              value={selectedCategory}
-              onChange={e => setSelectedCategory(e.target.value)}
-              className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-900 dark:text-white outline-none cursor-pointer"
-            >
-              <option value="all">Todas as Áreas (Moradia, Comida, Lazer...)</option>
-              <option value="moradia">🏠 Moradia</option>
-              <option value="comida">🍽️ Comida</option>
-              <option value="lazer">🎮 Lazer</option>
-              <option value="protecao">🛡️ Proteção</option>
-              <option value="profissional">📚 Profissional</option>
-            </select>
+        {/* Saídas / Despesas */}
+        <div className="p-4 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800 shadow-xs space-y-1 transition-colors">
+          <span className="text-xs font-bold text-rose-600 dark:text-rose-400 uppercase tracking-wider flex items-center gap-1.5">
+            <TrendingDown className="w-3.5 h-3.5" /> Total Saídas
+          </span>
+          <div className="text-xl sm:text-2xl font-black text-slate-900 dark:text-white tabular-nums font-display">
+            {formatCurrency(totalsSummary.totalOutflow)}
           </div>
+          <p className="text-[11px] text-slate-500 dark:text-slate-400">
+            Gastos e compras da rotina
+          </p>
+        </div>
 
-          {/* Month Dropdown */}
-          <div className="space-y-1">
-            <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">
-              Mês da Transação
+        {/* Transferências Internas (Vasos Comunicantes) */}
+        <div className="p-4 rounded-3xl bg-blue-50/40 dark:bg-blue-950/20 border border-blue-200/80 dark:border-blue-900/60 shadow-xs space-y-1 transition-colors">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-bold text-blue-800 dark:text-blue-300 uppercase tracking-wider flex items-center gap-1.5">
+              <ArrowRightLeft className="w-3.5 h-3.5" /> Transferências
+            </span>
+            <span className="text-[9px] px-1.5 py-0.5 rounded font-bold bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">
+              0 impacto líquido
+            </span>
+          </div>
+          <div className="text-xl sm:text-2xl font-black text-blue-900 dark:text-blue-100 tabular-nums font-display">
+            {formatCurrency(totalsSummary.totalTransfers)}
+          </div>
+          <p className="text-[11px] text-slate-500 dark:text-slate-400">
+            Nivelamentos internos (Vasos Comunicantes)
+          </p>
+        </div>
+      </div>
+
+      {/* FILTER & SEARCH BAR */}
+      <div className="bg-white dark:bg-slate-900 rounded-3xl p-4 sm:p-5 border border-slate-200/90 dark:border-slate-800 shadow-xs space-y-3.5 transition-colors">
+        {/* Search input with comma support */}
+        <div className="relative">
+          <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+          <input
+            type="text"
+            value={searchTerm}
+            onChange={e => setSearchTerm(e.target.value)}
+            placeholder="Buscar por descrição, valor (ex: 800,00), banco ou FITID..."
+            className="w-full pl-10 pr-10 py-2.5 rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-800/50 text-slate-900 dark:text-white text-xs focus:ring-2 focus:ring-accent-primary"
+          />
+          {searchTerm && (
+            <button
+              onClick={() => setSearchTerm('')}
+              className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          )}
+        </div>
+
+        {/* Filter Pills Grid */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+          {/* Mês / Competência (Sincronizado com o seletor global do app) */}
+          <div>
+            <label className="block text-[11px] font-semibold text-slate-400 mb-1">
+              Mês / Período:
             </label>
             <select
               value={selectedMonth}
               onChange={e => setSelectedMonth(e.target.value)}
-              className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-900 dark:text-white outline-none cursor-pointer"
+              className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white text-xs font-bold"
             >
-              <option value="all">Todos os Meses</option>
-              {availableMonths.map(m => (
+              <option value="all">🗓️ Todo o Histórico</option>
+              <option value={state.currentMonth}>✨ Mês Atual ({state.currentMonth})</option>
+              {Array.from(
+                new Set(
+                  ledgerStream.map(i => i.competenceMonth).filter(m => m !== state.currentMonth)
+                )
+              ).map(m => (
                 <option key={m} value={m}>
-                  📅 {formatMonthYear(m)}
+                  {m}
                 </option>
               ))}
             </select>
           </div>
 
-          {/* Who Paid Dropdown */}
-          <div className="space-y-1">
-            <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">
-              Origem do Pagamento
+          {/* Direção / Tipo (Entrada, Saída, Transferência) */}
+          <div>
+            <label className="block text-[11px] font-semibold text-slate-400 mb-1">
+              Direção / Tipo:
+            </label>
+            <select
+              value={selectedDirection}
+              onChange={e => setSelectedDirection(e.target.value as StatementDirection | 'all')}
+              className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white text-xs font-bold"
+            >
+              <option value="all">Todas as Direções</option>
+              <option value="inflow">💰 Entradas (Receitas)</option>
+              <option value="outflow">💳 Saídas (Despesas)</option>
+              <option value="internal">🔄 Transferências Internas</option>
+            </select>
+          </div>
+
+          {/* Origem */}
+          <div>
+            <label className="block text-[11px] font-semibold text-slate-400 mb-1">
+              Origem do Lançamento:
+            </label>
+            <select
+              value={selectedOrigin}
+              onChange={e => setSelectedOrigin(e.target.value)}
+              className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white text-xs font-bold"
+            >
+              <option value="all">Todas as Origens</option>
+              <option value="manual">✍️ Manual (GASTEI)</option>
+              <option value="pluggy_import">🏦 Extrato Bancário (Meu Pluggy)</option>
+              <option value="shift_payout">🩺 Plantão Médico</option>
+              <option value="installment">💳 Parcelamento de Cartão</option>
+              <option value="fixed_bill">🏠 Conta Fixa</option>
+              <option value="surplus_transfer">🔄 Vaso Comunicante</option>
+            </select>
+          </div>
+
+          {/* Titularidade */}
+          <div>
+            <label className="block text-[11px] font-semibold text-slate-400 mb-1">
+              Titular / Divisão:
             </label>
             <select
               value={selectedPaidBy}
               onChange={e => setSelectedPaidBy(e.target.value)}
-              className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-900 dark:text-white outline-none cursor-pointer"
+              className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white text-xs font-bold"
             >
-              <option value="all">Qualquer Pagador</option>
-              <option value="both">👥 Ambos (Divisão 50/50)</option>
-              <option value="partner1">👤 {partner1Name}</option>
-              <option value="partner2">👤 {partner2Name}</option>
+              <option value="all">Todos os Titulares</option>
+              <option value="both">🤝 Casal (Em Conjunto)</option>
+              <option value="partner1">Só {state.profile.partner1Name}</option>
+              <option value="partner2">Só {state.profile.partner2Name}</option>
+            </select>
+          </div>
+        </div>
+
+        {/* Sorting controls and Category Quick Filter */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 pt-2 border-t border-slate-100 dark:border-slate-800 text-xs">
+          <div className="flex items-center gap-1.5 overflow-x-auto pb-1 no-scrollbar">
+            <button
+              onClick={() => setSelectedCategory('all')}
+              className={`px-3 py-1 rounded-xl font-bold transition-all whitespace-nowrap shrink-0 ${
+                selectedCategory === 'all'
+                  ? 'bg-slate-900 dark:bg-white text-white dark:text-slate-900'
+                  : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300'
+              }`}
+            >
+              Todas as Categorias
+            </button>
+            {(Object.keys(CATEGORIES_BASE) as CategoryKey[]).map(key => (
+              <button
+                key={key}
+                onClick={() => setSelectedCategory(key)}
+                className={`px-2.5 py-1 rounded-xl font-bold transition-all whitespace-nowrap shrink-0 flex items-center gap-1 ${
+                  selectedCategory === key
+                    ? 'bg-accent-primary text-white'
+                    : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300'
+                }`}
+              >
+                <span>{CATEGORIES_BASE[key].emoji}</span>
+                <span>{CATEGORIES_BASE[key].name}</span>
+              </button>
+            ))}
+          </div>
+
+          <div className="flex items-center gap-2 shrink-0 self-end sm:self-auto">
+            <span className="text-slate-400 text-[11px]">Ordenação:</span>
+            <select
+              value={sortBy}
+              onChange={e => setSortBy(e.target.value as any)}
+              className="px-2.5 py-1 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-bold text-[11px]"
+            >
+              <option value="date-desc">Mais recentes</option>
+              <option value="date-asc">Mais antigos</option>
+              <option value="amount-desc">Maior valor</option>
+              <option value="amount-asc">Menor valor</option>
             </select>
           </div>
         </div>
       </div>
 
-      {/* FILTER SUMMARY BADGE CARD */}
-      <div className="p-4 rounded-2xl bg-emerald-50/80 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 flex flex-wrap items-center justify-between gap-3 text-xs">
-        <div className="flex items-center gap-3">
-          <span className="w-8 h-8 rounded-xl bg-emerald-600 text-white flex items-center justify-center font-bold text-sm shadow-xs">
-            📊
+      {/* UNIFIED TRANSACTIONS STREAM LIST */}
+      <div className="bg-white dark:bg-slate-900 rounded-3xl p-5 sm:p-6 border border-slate-200/90 dark:border-slate-800 shadow-xs space-y-3 transition-colors">
+        <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
+          <h3 className="font-bold text-slate-900 dark:text-white text-base font-display">
+            Lançamentos ({filteredLedger.length})
+          </h3>
+          <span className="text-xs text-slate-400">
+            {selectedMonth === 'all' ? 'Todo o Histórico' : `Período: ${selectedMonth}`}
           </span>
-          <div>
-            <span className="font-extrabold text-slate-900 dark:text-white block">
-              Resultados da Busca ({filteredExpenses.length} transações encontradas)
-            </span>
-            <span className="text-slate-600 dark:text-slate-300">
-              Soma total dos gastos filtrados: <strong className="text-emerald-700 dark:text-emerald-300 tabular-nums">{formatCurrency(filteredTotal)}</strong>
-            </span>
-          </div>
         </div>
 
-        {(searchTerm || selectedCategory !== 'all' || selectedSubcategory !== 'all' || selectedPaidBy !== 'all' || selectedMonth !== 'all') && (
-          <button
-            onClick={() => {
-              setSearchTerm('');
-              setSelectedCategory('all');
-              setSelectedSubcategory('all');
-              setSelectedPaidBy('all');
-              setSelectedMonth('all');
-            }}
-            className="px-3 py-1.5 rounded-xl bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 text-xs font-bold border border-slate-200 dark:border-slate-700 hover:bg-slate-100"
-          >
-            Limpar Filtros
-          </button>
-        )}
-      </div>
-
-      {/* TRANSACTIONS DETAILED LIST */}
-      <div className="bg-white dark:bg-slate-900 rounded-3xl p-5 sm:p-6 border border-slate-200 dark:border-slate-800 shadow-xs space-y-3">
-        {filteredExpenses.length === 0 ? (
+        {filteredLedger.length === 0 ? (
           <div className="text-center py-12 space-y-2">
-            <span className="text-4xl block">🔍</span>
-            <h3 className="text-base font-bold text-slate-800 dark:text-slate-200">
-              Nenhuma transação encontrada para essa busca
-            </h3>
-            <p className="text-xs text-slate-400 max-w-sm mx-auto">
-              Tente alterar os termos da busca, selecionar outra subcategoria ou limpar os filtros para ver mais resultados.
+            <span className="text-3xl block">🍃</span>
+            <p className="text-sm font-semibold text-slate-700 dark:text-slate-300">
+              Nenhum lançamento encontrado para esses filtros
+            </p>
+            <p className="text-xs text-slate-400">
+              Tente limpar a busca ou selecionar outro período/categoria.
             </p>
           </div>
         ) : (
-          <div className="divide-y divide-slate-100 dark:divide-slate-800/80">
-            {filteredExpenses.map(item => {
-              const cat = CATEGORIES_BASE[item.category];
-              const subcatBadge = getSubcategoryBadge(item);
-              const split = getExpenseSplit(
-                item.amount,
-                item.paidBy,
-                item.splitPartner1Pct,
-                item.splitPartner2Pct
-              );
-              const bankDisplay = item.bankName || 'Cartão/Conta Bancária';
+          <div className="divide-y divide-slate-100 dark:divide-slate-800">
+            {filteredLedger.map(item => {
+              const isInflow = item.direction === 'inflow';
+              const isTransfer = item.direction === 'internal';
 
               return (
                 <div
                   key={item.id}
-                  className="py-4 first:pt-0 last:pb-0 flex flex-wrap items-center justify-between gap-4 hover:bg-slate-50/60 dark:hover:bg-slate-800/30 p-2.5 rounded-2xl transition-colors"
+                  className="py-3.5 flex items-center justify-between gap-3 group transition-colors"
                 >
-                  <div className="flex items-start gap-3.5 min-w-[220px]">
-                    <span className="w-10 h-10 rounded-2xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 flex items-center justify-center text-xl shrink-0 shadow-2xs mt-0.5">
-                      {cat?.emoji || '💳'}
+                  <div className="flex items-center gap-3 min-w-0">
+                    {/* Direction Emoji Icon */}
+                    <span
+                      className={`w-10 h-10 rounded-2xl flex items-center justify-center text-lg shrink-0 border ${
+                        isInflow
+                          ? 'bg-emerald-50 dark:bg-emerald-950/60 border-emerald-200 dark:border-emerald-800'
+                          : isTransfer
+                          ? 'bg-blue-50 dark:bg-blue-950/60 border-blue-200 dark:border-blue-800'
+                          : 'bg-slate-50 dark:bg-slate-800/80 border-slate-200/80 dark:border-slate-700'
+                      }`}
+                    >
+                      {item.categoryEmoji}
                     </span>
 
-                    <div className="space-y-1">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <h4 className="font-extrabold text-slate-900 dark:text-white text-sm">
-                          {item.description}
-                        </h4>
-
-                        {/* Subcategory badge */}
-                        <span className="px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-[10px] font-extrabold border border-slate-200 dark:border-slate-700">
-                          {subcatBadge}
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="font-bold text-slate-900 dark:text-white text-sm truncate">
+                          {item.title}
                         </span>
 
-                        {/* Triagem & Funding Source Badges */}
-                        {item.reconciledWithIntent ? (
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-[#D8C7FF]/40 text-purple-900 dark:text-purple-200 text-[10px] font-black border border-[#D8C7FF]">
-                            <Sparkles className="w-3 h-3 text-purple-600" />
-                            Reconciliado Pluggy
+                        {/* Origin Badges */}
+                        {item.origin === 'pluggy_import' && (
+                          <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-blue-50 dark:bg-blue-950 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800 shrink-0">
+                            🏦 Extrato
                           </span>
-                        ) : item.fundingSource === 'reserve_excess' ? (
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-[#A6D8FF]/40 text-sky-900 dark:text-sky-200 text-[10px] font-black border border-[#A6D8FF]">
-                            🛡️ Excesso da Reserva
+                        )}
+                        {item.origin === 'shift_payout' && (
+                          <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-purple-50 dark:bg-purple-950 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800 shrink-0">
+                            🩺 Plantão
                           </span>
-                        ) : item.fundingSource === 'piggy_bank' ? (
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-[#FFC2E2]/40 text-pink-900 dark:text-pink-200 text-[10px] font-black border border-[#FFC2E2]">
-                            🎯 {item.fundingGoalName || 'Caixinha'}
+                        )}
+                        {item.origin === 'surplus_transfer' && (
+                          <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-amber-50 dark:bg-amber-950 text-amber-800 dark:text-amber-200 border border-amber-200 dark:border-amber-800 shrink-0">
+                            🔄 Nivelamento
                           </span>
-                        ) : item.fundingSource === 'personal_allowance' ? (
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-stone-100 dark:bg-stone-800 text-stone-700 dark:text-stone-300 text-[10px] font-black border border-stone-300">
-                            💼 Mesada
-                          </span>
-                        ) : (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              if (onOpenTriageModal) onOpenTriageModal(item);
-                              else setTriageExpense(item);
-                            }}
-                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-50 hover:bg-amber-100 dark:bg-amber-950/40 text-amber-900 dark:text-amber-200 text-[10px] font-bold border border-amber-200 dark:border-amber-800 transition-colors cursor-pointer"
-                          >
-                            ⚡ Triar Fonte
-                          </button>
                         )}
                       </div>
 
-                      <div className="flex items-center gap-2 flex-wrap text-xs text-slate-500 dark:text-slate-400 font-medium">
-                        <span>📅 {item.date}</span>
-                        <span>·</span>
-                        <span className="flex items-center gap-1 font-semibold text-slate-700 dark:text-slate-300">
-                          💳 {bankDisplay}
+                      <div className="text-xs text-slate-500 dark:text-slate-400 flex items-center gap-2 flex-wrap mt-0.5">
+                        <span className="font-semibold text-slate-600 dark:text-slate-300">
+                          {item.categoryName}
                         </span>
                         <span>·</span>
-                        <span className="text-indigo-600 dark:text-indigo-400 font-bold">
-                          {split.label}
+                        <span>{item.date.split('-').reverse().join('/')}</span>
+                        <span>·</span>
+
+                        {/* PaidBy Badge */}
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
+                          {item.paidByName}
                         </span>
+
+                        {item.fitid && (
+                          <span className="text-[10px] font-mono opacity-70">
+                            [FITID OK]
+                          </span>
+                        )}
                       </div>
                     </div>
                   </div>
 
                   <div className="flex items-center gap-3 shrink-0">
+                    {/* Amount Formatted */}
                     <div className="text-right">
-                      <span className="text-base sm:text-lg font-black text-rose-600 dark:text-rose-400 tabular-nums block font-display">
-                        -{formatCurrency(item.amount)}
-                      </span>
-                      <span className="text-[10px] text-slate-400 uppercase font-extrabold block">
-                        {item.fundingSource && item.fundingSource !== 'month_budget' ? 'Blindado do Mês' : cat?.name || 'Gasto'}
-                      </span>
+                      <div
+                        className={`font-black text-sm sm:text-base tabular-nums font-display ${
+                          isInflow
+                            ? 'text-emerald-700 dark:text-emerald-300'
+                            : isTransfer
+                            ? 'text-blue-700 dark:text-blue-300'
+                            : 'text-slate-900 dark:text-white'
+                        }`}
+                      >
+                        {isInflow ? '+ ' : isTransfer ? '' : '- '}
+                        {formatCurrency(item.amount)}
+                      </div>
                     </div>
 
-                    <button
-                      onClick={() => {
-                        if (onOpenTriageModal) onOpenTriageModal(item);
-                        else setTriageExpense(item);
-                      }}
-                      className="p-2 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 transition-colors cursor-pointer"
-                      title="Triar ou alterar fonte pagadora"
-                    >
-                      <Tag className="w-4 h-4" />
-                    </button>
+                    {/* Action Buttons */}
+                    <div className="flex items-center gap-1 opacity-80 group-hover:opacity-100 transition-opacity">
+                      {/* Audit Inspector Button ("Por que este registro está aqui?") */}
+                      <button
+                        type="button"
+                        onClick={() => setInspectAuditItem(item)}
+                        className="w-8 h-8 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 hover:text-amber-600 flex items-center justify-center transition-colors"
+                        title="Rastreabilidade: Por que este registro está aqui?"
+                      >
+                        <Info className="w-4 h-4" />
+                      </button>
 
-                    <button
-                      onClick={() => deleteExpense(item.id)}
-                      className="p-2 rounded-xl hover:bg-rose-50 dark:hover:bg-rose-950/40 text-slate-400 hover:text-rose-600 transition-colors cursor-pointer"
-                      title="Excluir este gasto do app"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
+                      {/* Edit Button */}
+                      <button
+                        type="button"
+                        onClick={() => handleEditItem(item)}
+                        className="w-8 h-8 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 flex items-center justify-center transition-colors"
+                        title="Editar lançamento"
+                      >
+                        <Edit3 className="w-3.5 h-3.5" />
+                      </button>
+
+                      {/* Delete / Storno Button */}
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteItem(item)}
+                        className="w-8 h-8 rounded-xl hover:bg-rose-50 dark:hover:bg-rose-950/60 text-slate-400 hover:text-rose-600 flex items-center justify-center transition-colors"
+                        title="Excluir ou Estornar lançamento"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
                   </div>
                 </div>
               );
@@ -489,10 +587,17 @@ export const TransactionHistoryScreen: React.FC<TransactionHistoryScreenProps> =
         )}
       </div>
 
-      {/* BOTTOM SHEET DE TRIAGEM INTELIGENTE OMNIPRESENTE */}
+      {/* Audit Inspector Modal ("Por que este registro está aqui?") */}
+      <StatementAuditModal
+        item={inspectAuditItem}
+        onClose={() => setInspectAuditItem(null)}
+        onEdit={handleEditItem}
+        onDelete={handleDeleteItem}
+      />
+
+      {/* Triage Bottom Sheet Modal for Editing Expenses */}
       {triageExpense && (
         <TransactionTriageBottomSheet
-          isOpen={!!triageExpense}
           expense={triageExpense}
           onClose={() => setTriageExpense(null)}
         />

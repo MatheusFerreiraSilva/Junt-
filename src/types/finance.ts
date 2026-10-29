@@ -421,6 +421,7 @@ export interface BankImportedTransaction {
   id: string;
   itemId: string;
   accountId: string;
+  bankName?: string;
   amount: number;
   date: string;
   description: string;
@@ -430,6 +431,30 @@ export interface BankImportedTransaction {
   category?: CategoryKey;
   subcategory?: string;
   matchedRule?: string;
+  fitid?: string;
+}
+
+export type DestinationKey = CategoryKey | 'investimentos';
+
+export interface BudgetPlanContract {
+  competence: string; // YYYY-MM
+  plannedNetIncome: number;
+  version: string;
+  categoryPercentages: Record<DestinationKey, number>;
+  categoryAmountsR$: Record<DestinationKey, number>;
+  categoryLocks: Record<DestinationKey, boolean>;
+  categoryFloorsR$: Record<DestinationKey, number>;
+  categoryPriorities: Record<DestinationKey, 'P1' | 'P2' | 'P3'>;
+  commitmentsR$: Record<DestinationKey, number>;
+  actualSpentR$: Record<DestinationKey, number>;
+  requiredMarginR$: Record<DestinationKey, number>;
+  referencePreset: Record<DestinationKey, number>;
+  status: 'feasible' | 'infeasible';
+  explanation: string;
+  conflicts: string[];
+  approvedAt?: string;
+  approvedBy?: string;
+  applyToFutureMonths?: boolean;
 }
 
 export interface AppState {
@@ -440,6 +465,8 @@ export interface AppState {
   collegeModeData?: CollegeModeData;
   categoryPercentages: Record<CategoryKey, number>;
   categoryFloors?: Record<string, number>; // Minimum floor values in R$ (or % for investimentos)
+  categoryLocks?: Record<string, boolean>; // Locks for categories + investimentos
+  monthlyBudgetPlans?: Record<string, BudgetPlanContract>;
   isCustomizedPercentages?: boolean;
   lastAcknowledgedTierKey?: LifeTierKey;
   lastWeeklyCheckInAt?: string; // YYYY-MM-DD

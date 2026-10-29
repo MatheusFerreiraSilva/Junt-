@@ -102,26 +102,32 @@ export const BankSyncModal: React.FC<BankSyncModalProps> = ({ isOpen, onClose })
     setIsProcessing(true);
     try {
       const text = await file.text();
-      const parsed = await parseStatement(
+      const report = await parseStatement(
         text,
         account.trim() || 'Conta Bancária',
         owner,
         state.keywordRules
       );
 
-      if (parsed.length === 0) {
+      if (report.acceptedCount === 0) {
         throw new Error('Nenhum lançamento válido encontrado no arquivo.');
       }
 
       // Initialize category overrides from auto-categorization
       const initialCatMap: Record<string, CategoryKey> = {};
-      parsed.forEach(t => {
+      report.accepted.forEach(t => {
         if (t.category) {
           initialCatMap[t.id] = t.category;
         }
       });
       setCategoriesMap(prev => ({ ...prev, ...initialCatMap }));
-      setPreview(parsed);
+      setPreview(report.accepted);
+
+      if (report.rejectedCount > 0) {
+        setImportSuccessMsg(
+          `${report.acceptedCount} lançamentos válidos lidos. (${report.rejectedCount} linhas ignoradas/inválidas, ex: saldos ou erros de formato).`
+        );
+      }
     } catch (err: any) {
       setError(err?.message || 'Erro ao processar arquivo. Verifique o formato OFX ou CSV.');
     } finally {
