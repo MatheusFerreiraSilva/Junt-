@@ -227,7 +227,7 @@ export function calculateCalendarEngine(
       dueDay: parseInt(effectiveDueDate.slice(8, 10), 10),
       status,
       payer: bill.assignedPayer,
-      assignedToPartner: bill.assignedPayer === 'both' ? 'couple' : bill.assignedPayer,
+      assignedToPartner: (bill.assignedPayer === 'both' || bill.assignedPayer === 'custom') ? 'couple' : bill.assignedPayer,
       linkedExpenseId: paidExpense?.id,
       notes: bill.autoPay ? 'Débito automático' : undefined,
       isSimulatedPostponed: isPostponed,

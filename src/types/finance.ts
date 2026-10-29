@@ -18,15 +18,16 @@ export type ScreenId =
   | 'couple_hub';
 
 export interface CategoryInfo {
-  key: CategoryKey;
+  key: CategoryKey | string;
   name: string;
   emoji: string;
   description: string;
-  percentage: number; // e.g. 40% of income
-  budget: number; // calculated in R$
+  percentage?: number; // e.g. 40% of income
+  budget?: number; // calculated in R$
   colorHex: string;
   bgLight: string;
   borderHex: string;
+  isLegacy?: boolean;
 }
 
 export interface ExpenseItem {
@@ -151,6 +152,7 @@ export interface SavingsPiggyBank {
   totalInvested?: number;
   yieldAccumulated?: number;
   completed?: boolean;
+  isFireEligible?: boolean;
   coupleAgreement?: CoupleAgreement;
 }
 
@@ -235,9 +237,9 @@ export interface CoupleProfile {
   partner1Career?: MedicalCareerProfile;
   partner2Career?: MedicalCareerProfile;
   partner1Name: string;
-  partner1Specialty: string; // e.g. "Dermatologia" or "Clínico Geral"
+  partner1Specialty?: string; // e.g. "Dermatologia" or "Clínico Geral"
   partner2Name: string;
-  partner2Specialty: string; // e.g. "Cardiologia" or "Clínico Geral"
+  partner2Specialty?: string; // e.g. "Cardiologia" or "Clínico Geral"
   city: string; // e.g. "São Paulo - SP"
   partner1Income: number;
   partner2Income: number;

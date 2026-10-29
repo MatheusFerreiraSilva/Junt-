@@ -157,21 +157,10 @@ export const CATEGORIES_BASE: Record<CategoryKey, { name: string; emoji: string;
   },
 };
 
-export interface CategoryInfo {
-  key: string;
-  name: string;
-  emoji: string;
-  description: string;
-  colorHex: string;
-  bgLight: string;
-  borderHex: string;
-  isLegacy?: boolean;
-}
-
 export const getCategoryInfo = (catKey: string | undefined): CategoryInfo => {
   if (catKey && (catKey in CATEGORIES_BASE)) {
     return {
-      key: catKey,
+      key: catKey as CategoryKey,
       ...CATEGORIES_BASE[catKey as CategoryKey],
       isLegacy: false,
     };
