@@ -10,6 +10,8 @@ import {
 import { useFinance } from '../context/FinanceContext';
 import { formatCurrency, formatCompactCurrency } from '../utils/formatters';
 
+import { selectAnnualYield, selectTotalProtectedAssets } from '../utils/domainSelectors';
+
 export const ProjectionsScreen: React.FC = () => {
   const { state, totalSavedInPiggyBanks, totalMonthlyPiggyDeposits } = useFinance();
 
@@ -17,8 +19,12 @@ export const ProjectionsScreen: React.FC = () => {
   const [selectedHorizon, setSelectedHorizon] = useState<number>(10); // 5, 10, 20, 30 years
 
   const totalMonthlySavings = totalMonthlyPiggyDeposits + extraMonthlyDeposit;
-  const annualYield = state.profile.expectedYieldAnnual / 100;
-  const monthlyYield = Math.pow(1 + annualYield, 1 / 12) - 1;
+  const totalProtectedAssets = useMemo(() => selectTotalProtectedAssets(state, 'casal').totalProtected, [state]);
+  const initialCapital = totalProtectedAssets > 0 ? totalProtectedAssets : totalSavedInPiggyBanks;
+
+  const annualYieldPct = selectAnnualYield(state);
+  const annualYield = annualYieldPct / 100;
+  const monthlyYield = annualYield > -1 ? Math.pow(1 + annualYield, 1 / 12) - 1 : -0.01;
 
   // Calculate future values for 5, 10, 20, 30 years
   const horizons = useMemo(() => [5, 10, 20, 30], []);
@@ -40,8 +46,8 @@ export const ProjectionsScreen: React.FC = () => {
 
   const projections = useMemo(() => {
     return horizons.map(yrs => {
-      const fv = calculateFutureValue(yrs, totalMonthlySavings, totalSavedInPiggyBanks);
-      const totalDeposited = totalSavedInPiggyBanks + totalMonthlySavings * yrs * 12;
+      const fv = calculateFutureValue(yrs, totalMonthlySavings, initialCapital);
+      const totalDeposited = initialCapital + totalMonthlySavings * yrs * 12;
       const earnings = Math.max(0, fv - totalDeposited);
       // "Dinheiro que trabalha sozinho" per month safely (using safe ~0.4% per month real withdrawal)
       const passiveIncomeMonth = Math.round(fv * (annualYield / 12));
@@ -57,7 +63,7 @@ export const ProjectionsScreen: React.FC = () => {
   }, [
     horizons,
     totalMonthlySavings,
-    totalSavedInPiggyBanks,
+    initialCapital,
     annualYield,
     calculateFutureValue,
   ]);

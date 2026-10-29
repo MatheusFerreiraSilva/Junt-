@@ -10,9 +10,15 @@ import {
   User,
   Users,
   Percent,
+  Sliders,
+  ShieldCheck,
+  Target,
+  Sparkles,
+  ArrowRight,
+  X,
 } from 'lucide-react';
-import { useFinance, CATEGORIES_BASE } from '../context/FinanceContext';
-import { CategoryKey, ExpenseItem, PaidBy } from '../types/finance';
+import { useFinance, CATEGORIES_BASE, getCategoryInfo } from '../context/FinanceContext';
+import { CategoryKey, ExpenseItem, PaidBy, FundingSourceType } from '../types/finance';
 import { formatCurrency } from '../utils/formatters';
 import { MonthSelector } from '../components/MonthSelector';
 import { FoodPacingWeeklyCard } from '../components/FoodPacingWeeklyCard';
@@ -34,13 +40,46 @@ export const CategoryDetailsScreen: React.FC<CategoryDetailsScreenProps> = ({
     activeInstallments,
     getExpenseSplit,
     viewMode,
+    monthlySpendingTotals,
+    updateCategoryPercentages,
+    activeLifeTier,
+    totalIncome,
   } = useFinance();
 
-  const [selectedCategory, setSelectedCategory] = useState<CategoryKey | 'all'>(
+  const [selectedCategory, setSelectedCategory] = useState<string | 'all'>(
     initialCategory || 'all'
   );
   const [filterPaidBy, setFilterPaidBy] = useState<PaidBy | 'all'>('all');
+  const [filterScope, setFilterScope] = useState<'all' | 'routine' | 'planned' | 'exceptional'>('all');
   const [editingExpense, setEditingExpense] = useState<ExpenseItem | null>(null);
+  const [isSimulatingCeiling, setIsSimulatingCeiling] = useState(false);
+
+  // Ceiling simulation state initialized from current percentages
+  const [simulatedPercentages, setSimulatedPercentages] = useState<Record<CategoryKey, number>>(() => ({
+    moradia: state.categoryPercentages?.moradia ?? activeLifeTier.percentages.moradia ?? 30,
+    transporte: state.categoryPercentages?.transporte ?? activeLifeTier.percentages.transporte ?? 10,
+    comida: state.categoryPercentages?.comida ?? activeLifeTier.percentages.comida ?? 15,
+    lazer: state.categoryPercentages?.lazer ?? activeLifeTier.percentages.lazer ?? 10,
+    protecao: state.categoryPercentages?.protecao ?? activeLifeTier.percentages.protecao ?? 10,
+    profissional: state.categoryPercentages?.profissional ?? activeLifeTier.percentages.profissional ?? 5,
+  }));
+
+  const openCeilingSimulation = () => {
+    setSimulatedPercentages({
+      moradia: state.categoryPercentages?.moradia ?? activeLifeTier.percentages.moradia ?? 30,
+      transporte: state.categoryPercentages?.transporte ?? activeLifeTier.percentages.transporte ?? 10,
+      comida: state.categoryPercentages?.comida ?? activeLifeTier.percentages.comida ?? 15,
+      lazer: state.categoryPercentages?.lazer ?? activeLifeTier.percentages.lazer ?? 10,
+      protecao: state.categoryPercentages?.protecao ?? activeLifeTier.percentages.protecao ?? 10,
+      profissional: state.categoryPercentages?.profissional ?? activeLifeTier.percentages.profissional ?? 5,
+    });
+    setIsSimulatingCeiling(true);
+  };
+
+  const handleApplySimulatedCeilings = () => {
+    updateCategoryPercentages(simulatedPercentages);
+    setIsSimulatingCeiling(false);
+  };
 
   // Month's manual expenses
   const monthExpenses = useMemo(() => {
@@ -52,7 +91,18 @@ export const CategoryDetailsScreen: React.FC<CategoryDetailsScreenProps> = ({
     });
   }, [state.expenses, state.currentMonth, viewMode]);
 
-  // Filtered list
+  // Discover any legacy or unmapped categories in the expenses list
+  const legacyCategoryKeys = useMemo(() => {
+    const keys = new Set<string>();
+    monthExpenses.forEach(e => {
+      if (e.category && !CATEGORIES_BASE[e.category as CategoryKey]) {
+        keys.add(e.category);
+      }
+    });
+    return Array.from(keys);
+  }, [monthExpenses]);
+
+  // Filtered expenses list
   const filteredExpenses = useMemo(() => {
     return monthExpenses.filter(item => {
       const matchCat = selectedCategory === 'all' || item.category === selectedCategory;
@@ -62,9 +112,20 @@ export const CategoryDetailsScreen: React.FC<CategoryDetailsScreenProps> = ({
           : filterPaidBy === 'both'
           ? item.paidBy === 'both' || item.paidBy === 'custom'
           : item.paidBy === filterPaidBy;
-      return matchCat && matchPaid;
+
+      const source = item.fundingSource || 'month_budget';
+      const matchScope =
+        filterScope === 'all'
+          ? true
+          : filterScope === 'routine'
+          ? source === 'month_budget' && !item.isExcludedFromMonthlyBudget
+          : filterScope === 'planned'
+          ? source === 'piggy_bank'
+          : source === 'reserve_excess' || item.amount >= 500;
+
+      return matchCat && matchPaid && matchScope;
     });
-  }, [monthExpenses, selectedCategory, filterPaidBy]);
+  }, [monthExpenses, selectedCategory, filterPaidBy, filterScope]);
 
   // Active installments in this category for this month
   const categoryInstallments = useMemo(() => {
@@ -73,6 +134,37 @@ export const CategoryDetailsScreen: React.FC<CategoryDetailsScreenProps> = ({
     );
   }, [activeInstallments, selectedCategory]);
 
+  // Category diagnostic breakdown (routine, planned, exceptional)
+  const categoryDiagnostics = useMemo(() => {
+    const targetExpenses = monthExpenses.filter(
+      e => selectedCategory === 'all' || e.category === selectedCategory
+    );
+
+    const routine = targetExpenses.filter(
+      e => !e.isExcludedFromMonthlyBudget && (!e.fundingSource || e.fundingSource === 'month_budget')
+    );
+    const planned = targetExpenses.filter(e => e.fundingSource === 'piggy_bank');
+    const exceptional = targetExpenses.filter(
+      e => e.fundingSource === 'reserve_excess' || e.amount >= 500
+    );
+
+    const routineSum = routine.reduce((s, e) => s + e.amount, 0);
+    const plannedSum = planned.reduce((s, e) => s + e.amount, 0);
+    const exceptionalSum = exceptional.reduce((s, e) => s + e.amount, 0);
+
+    // Identify single largest expense that pressured the budget
+    const sorted = [...targetExpenses].sort((a, b) => b.amount - a.amount);
+    const topExpense = sorted[0] || null;
+
+    return {
+      routineSum,
+      plannedSum,
+      exceptionalSum,
+      topExpense,
+      count: targetExpenses.length,
+    };
+  }, [monthExpenses, selectedCategory]);
+
   const handleSaveEdit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingExpense) return;
@@ -80,21 +172,94 @@ export const CategoryDetailsScreen: React.FC<CategoryDetailsScreenProps> = ({
     setEditingExpense(null);
   };
 
+  const currentCategoryInfo = selectedCategory !== 'all' ? getCategoryInfo(selectedCategory) : null;
+  const currentCategorySpend =
+    selectedCategory !== 'all' && (selectedCategory in categoriesSpending)
+      ? categoriesSpending[selectedCategory as CategoryKey]
+      : null;
+
   return (
     <div className="space-y-6 pb-20">
       <MonthSelector />
 
-      {/* Screen Title & Subtitle - Generous space */}
-      <div className="space-y-1">
-        <h2 className="text-xl sm:text-2xl font-bold text-slate-900 dark:text-white font-display tracking-tight">
-          Gastos do Mês por Área & Divisão
-        </h2>
-        <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400">
-          Entenda com precisão o que foi gasto em conjunto, o que foi de cada um e edite qualquer divisão.
-        </p>
+      {/* Screen Title & Subtitle */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div className="space-y-1">
+          <h2 className="text-xl sm:text-2xl font-bold text-slate-900 dark:text-white font-display tracking-tight">
+            Gastos por Categoria, Fontes & Divisão
+          </h2>
+          <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400">
+            Acompanhe o consumo econômico real, a blindagem das caixinhas e a divisão justa do casal.
+          </p>
+        </div>
+
+        <button
+          onClick={openCeilingSimulation}
+          className="flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-amber-50 dark:bg-amber-950/40 hover:bg-amber-100 dark:hover:bg-amber-900/60 border border-amber-200 dark:border-amber-800 text-amber-900 dark:text-amber-200 text-xs font-bold transition-all shadow-2xs shrink-0 self-start sm:self-auto"
+        >
+          <Sliders className="w-4 h-4 text-amber-600 dark:text-amber-400" />
+          <span>Simular Remanejamento de Teto</span>
+        </button>
       </div>
 
-      {/* Category Filter Tabs */}
+      {/* TRÊS TOTAIS CANÔNICOS DISTINTOS */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        {/* 1. Despesa Econômica Total */}
+        <div className="p-4 sm:p-5 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800 shadow-xs space-y-1.5 transition-colors">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+              <span>🌐</span> Despesa Econômica Total
+            </span>
+            <span className="text-[10px] px-2 py-0.5 rounded-full font-bold bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
+              Vida Real
+            </span>
+          </div>
+          <div className="text-xl sm:text-2xl font-black text-slate-900 dark:text-white tabular-nums font-display">
+            {formatCurrency(monthlySpendingTotals.totalEconomicSpent)}
+          </div>
+          <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-tight">
+            Consumo total da vida do casal (inclui rotina, metas/cofrinhos, reserva e parcelas ativas).
+          </p>
+        </div>
+
+        {/* 2. Consumo do Orçamento Rotineiro */}
+        <div className="p-4 sm:p-5 rounded-3xl bg-teal-50/40 dark:bg-teal-950/20 border border-teal-200/80 dark:border-teal-900/60 shadow-xs space-y-1.5 transition-colors">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-bold text-teal-800 dark:text-teal-300 uppercase tracking-wider flex items-center gap-1.5">
+              <span>🎯</span> Consumo do Orçamento
+            </span>
+            <span className="text-[10px] px-2 py-0.5 rounded-full font-bold bg-teal-100 dark:bg-teal-950 text-teal-800 dark:text-teal-300 border border-teal-200 dark:border-teal-800">
+              Tetos do Mês
+            </span>
+          </div>
+          <div className="text-xl sm:text-2xl font-black text-teal-900 dark:text-teal-100 tabular-nums font-display">
+            {formatCurrency(monthlySpendingTotals.budgetConsumedSpent)}
+          </div>
+          <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-tight">
+            Débito estrito sobre os tetos mensais. Gastos de caixinhas ou da reserva estão blindados.
+          </p>
+        </div>
+
+        {/* 3. Saída Efetiva de Caixa */}
+        <div className="p-4 sm:p-5 rounded-3xl bg-blue-50/40 dark:bg-blue-950/20 border border-blue-200/80 dark:border-blue-900/60 shadow-xs space-y-1.5 transition-colors">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-bold text-blue-800 dark:text-blue-300 uppercase tracking-wider flex items-center gap-1.5">
+              <span>💸</span> Saída de Caixa
+            </span>
+            <span className="text-[10px] px-2 py-0.5 rounded-full font-bold bg-blue-100 dark:bg-blue-950 text-blue-800 dark:text-blue-300 border border-blue-200 dark:border-blue-800">
+              Contas & Pix
+            </span>
+          </div>
+          <div className="text-xl sm:text-2xl font-black text-blue-900 dark:text-blue-100 tabular-nums font-display">
+            {formatCurrency(monthlySpendingTotals.cashOutflowSpent)}
+          </div>
+          <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-tight">
+            Valores liquidados à vista (Pix, débito e dinheiro), que baixaram o saldo bancário imediato.
+          </p>
+        </div>
+      </div>
+
+      {/* Category Filter Tabs with safe fallback for legacy categories */}
       <div className="flex items-center gap-1.5 overflow-x-auto pb-1 no-scrollbar">
         <button
           onClick={() => setSelectedCategory('all')}
@@ -106,8 +271,9 @@ export const CategoryDetailsScreen: React.FC<CategoryDetailsScreenProps> = ({
         >
           ✨ Todas as Áreas
         </button>
+
         {(Object.keys(CATEGORIES_BASE) as CategoryKey[]).map(key => {
-          const cat = CATEGORIES_BASE[key];
+          const cat = getCategoryInfo(key);
           const isSelected = selectedCategory === key;
           const spend = categoriesSpending[key];
           return (
@@ -122,13 +288,33 @@ export const CategoryDetailsScreen: React.FC<CategoryDetailsScreenProps> = ({
             >
               <span>{cat.emoji}</span>
               <span>{cat.name}</span>
-              {spend.isOver && <span className="text-rose-400">⚠️</span>}
+              {spend?.isOver && <span className="text-rose-400">⚠️</span>}
+            </button>
+          );
+        })}
+
+        {/* Legacy / unmapped categories tab if any exist in data */}
+        {legacyCategoryKeys.map(key => {
+          const cat = getCategoryInfo(key);
+          const isSelected = selectedCategory === key;
+          return (
+            <button
+              key={key}
+              onClick={() => setSelectedCategory(key)}
+              className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold transition-all whitespace-nowrap shrink-0 border ${
+                isSelected
+                  ? 'bg-amber-600 text-white border-amber-600 shadow-xs'
+                  : 'bg-amber-50 dark:bg-amber-950/30 text-amber-900 dark:text-amber-200 border-amber-200 dark:border-amber-800'
+              }`}
+            >
+              <span>{cat.emoji}</span>
+              <span>{cat.name}</span>
             </button>
           );
         })}
       </div>
 
-      {/* Interactive Category Spending Chart Card (Gastos do Mês) */}
+      {/* Comparative Progress Chart */}
       <div className="bg-white dark:bg-slate-900 rounded-3xl p-5 sm:p-6 border border-slate-200/90 dark:border-slate-800 shadow-xs space-y-4 transition-colors">
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-2.5">
@@ -146,12 +332,12 @@ export const CategoryDetailsScreen: React.FC<CategoryDetailsScreenProps> = ({
           </div>
         </div>
 
-        {/* Visual Progress Bars for the 5 Categories */}
+        {/* Visual Progress Bars */}
         <div className="space-y-3 pt-2">
           {(Object.keys(CATEGORIES_BASE) as CategoryKey[]).map(key => {
-            const cat = CATEGORIES_BASE[key];
+            const cat = getCategoryInfo(key);
             const spend = categoriesSpending[key];
-            const pct = Math.min(100, spend.percentageUsed);
+            const pct = Math.min(100, spend?.percentageUsed || 0);
 
             return (
               <div
@@ -167,7 +353,7 @@ export const CategoryDetailsScreen: React.FC<CategoryDetailsScreenProps> = ({
                   <div className="flex items-center gap-2">
                     <span className="text-base">{cat.emoji}</span>
                     <span className="text-slate-900 dark:text-white font-display">{cat.name}</span>
-                    {spend.isOver && (
+                    {spend?.isOver && (
                       <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-rose-100 dark:bg-rose-950 text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-900">
                         ⚠️ +{formatCurrency(spend.spent - spend.budget)}
                       </span>
@@ -176,23 +362,22 @@ export const CategoryDetailsScreen: React.FC<CategoryDetailsScreenProps> = ({
 
                   <div className="text-right tabular-nums">
                     <span className="text-slate-900 dark:text-white font-extrabold">
-                      {formatCurrency(spend.spent)}
+                      {formatCurrency(spend?.spent || 0)}
                     </span>
                     <span className="text-slate-400 font-normal text-[11px] ml-1">
-                      / {formatCurrency(spend.budget)} ({spend.percentageUsed}%)
+                      / {formatCurrency(spend?.budget || 0)} ({spend?.percentageUsed || 0}%)
                     </span>
                   </div>
                 </div>
 
-                {/* Progress Bar Container */}
                 <div className="h-2.5 w-full bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden p-0.5">
                   <div
                     className={`h-full rounded-full transition-all duration-700 ${
-                      spend.isOver ? 'bg-rose-500' : 'bg-accent-primary'
+                      spend?.isOver ? 'bg-rose-500' : 'bg-accent-primary'
                     }`}
                     style={{
                       width: `${pct}%`,
-                      backgroundColor: !spend.isOver ? cat.colorHex : undefined,
+                      backgroundColor: !spend?.isOver ? cat.colorHex : undefined,
                     }}
                   />
                 </div>
@@ -201,23 +386,32 @@ export const CategoryDetailsScreen: React.FC<CategoryDetailsScreenProps> = ({
           })}
         </div>
       </div>
-      {selectedCategory !== 'all' && (
+
+      {/* Selected Category Header & Diagnostic */}
+      {selectedCategory !== 'all' && currentCategoryInfo && (
         <div className="bg-white dark:bg-slate-900 rounded-3xl p-5 sm:p-6 border border-slate-200/90 dark:border-slate-800 shadow-xs space-y-4 transition-colors">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-3">
-              <span className="text-3xl">{CATEGORIES_BASE[selectedCategory].emoji}</span>
+              <span className="text-3xl">{currentCategoryInfo.emoji}</span>
               <div>
-                <h3 className="text-lg font-bold text-slate-900 dark:text-white font-display">
-                  {CATEGORIES_BASE[selectedCategory].name}
-                </h3>
+                <div className="flex items-center gap-2">
+                  <h3 className="text-lg font-bold text-slate-900 dark:text-white font-display">
+                    {currentCategoryInfo.name}
+                  </h3>
+                  {currentCategoryInfo.isLegacy && (
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300">
+                      Revisão Necessária
+                    </span>
+                  )}
+                </div>
                 <p className="text-xs text-slate-500 dark:text-slate-400">
-                  {CATEGORIES_BASE[selectedCategory].description}
+                  {currentCategoryInfo.description}
                 </p>
               </div>
             </div>
 
             <button
-              onClick={() => onOpenExpenseModal(selectedCategory)}
+              onClick={() => onOpenExpenseModal((selectedCategory in CATEGORIES_BASE) ? (selectedCategory as CategoryKey) : undefined)}
               className="btn-primary-accent flex items-center gap-1.5 px-4 py-2 rounded-xl text-white text-xs font-bold shadow-xs transition-colors"
             >
               <Plus className="w-4 h-4" />
@@ -226,100 +420,189 @@ export const CategoryDetailsScreen: React.FC<CategoryDetailsScreenProps> = ({
           </div>
 
           {/* Metric Bar */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2">
-            <div className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/60 dark:border-slate-700">
-              <span className="text-xs text-slate-500 dark:text-slate-400 font-medium">Combinado do mês</span>
-              <div className="text-lg font-extrabold text-slate-900 dark:text-white tabular-nums">
-                {formatCurrency(categoriesSpending[selectedCategory].budget)}
+          {currentCategorySpend && (
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2">
+              <div className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/60 dark:border-slate-700">
+                <span className="text-xs text-slate-500 dark:text-slate-400 font-medium">Combinado do mês</span>
+                <div className="text-lg font-extrabold text-slate-900 dark:text-white tabular-nums">
+                  {formatCurrency(currentCategorySpend.budget)}
+                </div>
+              </div>
+
+              <div className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/60 dark:border-slate-700">
+                <span className="text-xs text-slate-500 dark:text-slate-400 font-medium">Consumo do orçamento</span>
+                <div className="text-lg font-extrabold text-slate-900 dark:text-white tabular-nums">
+                  {formatCurrency(currentCategorySpend.spent)}
+                </div>
+              </div>
+
+              <div
+                className={`p-3.5 rounded-2xl border ${
+                  currentCategorySpend.isOver
+                    ? 'bg-rose-50 dark:bg-rose-950/40 border-rose-200 dark:border-rose-900 text-rose-900 dark:text-rose-200'
+                    : 'bg-accent-surface border-accent-themed text-accent-themed'
+                }`}
+              >
+                <span className="text-xs font-medium opacity-90">
+                  {currentCategorySpend.isOver ? '⚠️ Passou do combinado' : 'Ainda podem gastar'}
+                </span>
+                <div className="text-lg font-extrabold tabular-nums">
+                  {formatCurrency(Math.abs(currentCategorySpend.remaining))}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* DIAGNÓSTICO POR CATEGORIA: Rotina vs Planejado vs Excepcional */}
+          <div className="p-4 rounded-2xl bg-slate-50/80 dark:bg-slate-800/50 border border-slate-200/60 dark:border-slate-700 space-y-3">
+            <div className="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
+              <span>🩺</span> Diagnóstico de Natureza do Gasto
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 text-xs">
+              <div className="p-2.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800">
+                <div className="font-semibold text-slate-500 dark:text-slate-400">Rotina (Debita Teto)</div>
+                <div className="font-bold text-slate-900 dark:text-white text-sm tabular-nums mt-0.5">
+                  {formatCurrency(categoryDiagnostics.routineSum)}
+                </div>
+              </div>
+              <div className="p-2.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800">
+                <div className="font-semibold text-teal-600 dark:text-teal-400 flex items-center gap-1">
+                  <Target className="w-3 h-3" /> Metas / Caixinhas
+                </div>
+                <div className="font-bold text-teal-700 dark:text-teal-300 text-sm tabular-nums mt-0.5">
+                  {formatCurrency(categoryDiagnostics.plannedSum)}
+                </div>
+              </div>
+              <div className="p-2.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800">
+                <div className="font-semibold text-amber-600 dark:text-amber-400 flex items-center gap-1">
+                  <ShieldCheck className="w-3 h-3" /> Excepcional / Reserva
+                </div>
+                <div className="font-bold text-amber-700 dark:text-amber-300 text-sm tabular-nums mt-0.5">
+                  {formatCurrency(categoryDiagnostics.exceptionalSum)}
+                </div>
               </div>
             </div>
 
-            <div className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/60 dark:border-slate-700">
-              <span className="text-xs text-slate-500 dark:text-slate-400 font-medium">Total gasto até agora</span>
-              <div className="text-lg font-extrabold text-slate-900 dark:text-white tabular-nums">
-                {formatCurrency(categoriesSpending[selectedCategory].spent)}
+            {/* Destaque do registro que causou desvio */}
+            {currentCategorySpend?.isOver && categoryDiagnostics.topExpense && (
+              <div className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900 text-xs text-rose-900 dark:text-rose-200 flex items-start gap-2">
+                <AlertTriangle className="w-4 h-4 text-rose-600 dark:text-rose-400 shrink-0 mt-0.5" />
+                <div>
+                  <span className="font-bold">Principal causador da pressão no orçamento: </span>
+                  "{categoryDiagnostics.topExpense.description}" ({formatCurrency(categoryDiagnostics.topExpense.amount)}) em {categoryDiagnostics.topExpense.date.split('-').reverse().join('/')}.
+                </div>
               </div>
-            </div>
-
-            <div
-              className={`p-3.5 rounded-2xl border ${
-                categoriesSpending[selectedCategory].isOver
-                  ? 'bg-rose-50 dark:bg-rose-950/40 border-rose-200 dark:border-rose-900 text-rose-900 dark:text-rose-200'
-                  : 'bg-accent-surface border-accent-themed text-accent-themed'
-              }`}
-            >
-              <span className="text-xs font-medium opacity-90">
-                {categoriesSpending[selectedCategory].isOver
-                  ? '⚠️ Passou do combinado'
-                  : 'Ainda podem gastar'}
-              </span>
-              <div className="text-lg font-extrabold tabular-nums">
-                {formatCurrency(Math.abs(categoriesSpending[selectedCategory].remaining))}
-              </div>
-            </div>
+            )}
           </div>
         </div>
       )}
 
-      {/* Se a categoria selecionada for Comida & Conveniência, exibir o Pacing Semanal e Inteligência de Abastecimento */}
+      {/* Special card for Comida & Conveniência */}
       {selectedCategory === 'comida' && (
         <FoodPacingWeeklyCard onOpenExpenseModal={() => onOpenExpenseModal('comida')} />
       )}
 
-      {/* Filter by Who Paid (Todos, Em Conjunto, Só Dra. Bia, Só Dr. Lucas) */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white dark:bg-slate-900 p-3 sm:p-3.5 rounded-2xl border border-slate-200/80 dark:border-slate-800 text-xs transition-colors">
-        <span className="font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5 whitespace-nowrap">
-          <Filter className="w-3.5 h-3.5 text-accent-primary" />
-          Filtrar por quem pagou / divisão:
-        </span>
-        <div className="flex items-center gap-1.5 flex-wrap">
+      {/* Filters bar: Payer and Scope */}
+      <div className="space-y-2">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white dark:bg-slate-900 p-3 sm:p-3.5 rounded-2xl border border-slate-200/80 dark:border-slate-800 text-xs transition-colors">
+          <span className="font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5 whitespace-nowrap">
+            <Filter className="w-3.5 h-3.5 text-accent-primary" />
+            Divisão do casal:
+          </span>
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <button
+              onClick={() => setFilterPaidBy('all')}
+              className={`px-3 py-1.5 rounded-xl font-bold transition-colors whitespace-nowrap ${
+                filterPaidBy === 'all'
+                  ? 'bg-slate-900 dark:bg-white text-white dark:text-slate-900'
+                  : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
+              }`}
+            >
+              Todos
+            </button>
+            <button
+              onClick={() => setFilterPaidBy('both')}
+              className={`px-3 py-1.5 rounded-xl font-bold transition-colors whitespace-nowrap flex items-center gap-1 ${
+                filterPaidBy === 'both'
+                  ? 'bg-purple-700 text-white'
+                  : 'text-purple-700 dark:text-purple-400 hover:bg-purple-50 dark:hover:bg-purple-950/60'
+              }`}
+            >
+              <Users className="w-3 h-3" />
+              Em Conjunto
+            </button>
+            <button
+              onClick={() => setFilterPaidBy('partner1')}
+              className={`px-3 py-1.5 rounded-xl font-bold transition-colors whitespace-nowrap flex items-center gap-1 ${
+                filterPaidBy === 'partner1'
+                  ? 'bg-accent-primary text-white'
+                  : 'text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
+              }`}
+            >
+              <User className="w-3 h-3" />
+              Só {state.profile.partner1Name}
+            </button>
+            <button
+              onClick={() => setFilterPaidBy('partner2')}
+              className={`px-3 py-1.5 rounded-xl font-bold transition-colors whitespace-nowrap flex items-center gap-1 ${
+                filterPaidBy === 'partner2'
+                  ? 'bg-blue-600 text-white'
+                  : 'text-blue-700 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/60'
+              }`}
+            >
+              <User className="w-3 h-3" />
+              Só {state.profile.partner2Name}
+            </button>
+          </div>
+        </div>
+
+        {/* Nature of expenditure filter (Rotina, Metas, Excepcional) */}
+        <div className="flex items-center gap-1.5 overflow-x-auto text-xs px-1">
+          <span className="text-slate-400 text-[11px] font-medium mr-1 shrink-0">Natureza:</span>
           <button
-            onClick={() => setFilterPaidBy('all')}
-            className={`px-3 py-1.5 rounded-xl font-bold transition-colors whitespace-nowrap ${
-              filterPaidBy === 'all'
-                ? 'bg-slate-900 dark:bg-white text-white dark:text-slate-900'
-                : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
+            onClick={() => setFilterScope('all')}
+            className={`px-2.5 py-1 rounded-lg font-medium transition-colors whitespace-nowrap ${
+              filterScope === 'all'
+                ? 'bg-slate-200 dark:bg-slate-700 text-slate-800 dark:text-slate-200'
+                : 'text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800'
             }`}
           >
-            Todos
+            Todas as Fontes
           </button>
           <button
-            onClick={() => setFilterPaidBy('both')}
-            className={`px-3 py-1.5 rounded-xl font-bold transition-colors whitespace-nowrap flex items-center gap-1 ${
-              filterPaidBy === 'both'
-                ? 'bg-purple-700 text-white'
-                : 'text-purple-700 dark:text-purple-400 hover:bg-purple-50 dark:hover:bg-purple-950/60'
+            onClick={() => setFilterScope('routine')}
+            className={`px-2.5 py-1 rounded-lg font-medium transition-colors whitespace-nowrap ${
+              filterScope === 'routine'
+                ? 'bg-teal-100 dark:bg-teal-950 text-teal-800 dark:text-teal-200 border border-teal-200 dark:border-teal-800'
+                : 'text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800'
             }`}
           >
-            <Users className="w-3 h-3" />
-            Em Conjunto / Dividido
+            🟢 Orçamento Rotina
           </button>
           <button
-            onClick={() => setFilterPaidBy('partner1')}
-            className={`px-3 py-1.5 rounded-xl font-bold transition-colors whitespace-nowrap flex items-center gap-1 ${
-              filterPaidBy === 'partner1'
-                ? 'bg-accent-primary text-white'
-                : 'text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
+            onClick={() => setFilterScope('planned')}
+            className={`px-2.5 py-1 rounded-lg font-medium transition-colors whitespace-nowrap ${
+              filterScope === 'planned'
+                ? 'bg-blue-100 dark:bg-blue-950 text-blue-800 dark:text-blue-200 border border-blue-200 dark:border-blue-800'
+                : 'text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800'
             }`}
           >
-            <User className="w-3 h-3" />
-            Só {state.profile.partner1Name}
+            🎯 Caixinhas / Metas
           </button>
           <button
-            onClick={() => setFilterPaidBy('partner2')}
-            className={`px-3 py-1.5 rounded-xl font-bold transition-colors whitespace-nowrap flex items-center gap-1 ${
-              filterPaidBy === 'partner2'
-                ? 'bg-blue-600 text-white'
-                : 'text-blue-700 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/60'
+            onClick={() => setFilterScope('exceptional')}
+            className={`px-2.5 py-1 rounded-lg font-medium transition-colors whitespace-nowrap ${
+              filterScope === 'exceptional'
+                ? 'bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-200 border border-amber-200 dark:border-amber-800'
+                : 'text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800'
             }`}
           >
-            <User className="w-3 h-3" />
-            Só {state.profile.partner2Name}
+            ⚡ Excepcional / Reserva
           </button>
         </div>
       </div>
 
-      {/* Active Installments section in this category (if any) */}
+      {/* Active Installments section in this category */}
       {categoryInstallments.length > 0 && (
         <div className="bg-amber-50/70 dark:bg-amber-950/30 border border-amber-200/80 dark:border-amber-800/60 rounded-3xl p-5 space-y-3">
           <div className="flex items-center gap-2">
@@ -330,7 +613,7 @@ export const CategoryDetailsScreen: React.FC<CategoryDetailsScreenProps> = ({
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
             {categoryInstallments.map(inst => {
-              const cat = CATEGORIES_BASE[inst.category];
+              const cat = getCategoryInfo(inst.category);
               const split = getExpenseSplit(
                 inst.installmentAmount,
                 inst.paidBy,
@@ -369,7 +652,7 @@ export const CategoryDetailsScreen: React.FC<CategoryDetailsScreenProps> = ({
             Lançamentos ({filteredExpenses.length})
           </h3>
           <button
-            onClick={() => onOpenExpenseModal(selectedCategory !== 'all' ? selectedCategory : undefined)}
+            onClick={() => onOpenExpenseModal((selectedCategory in CATEGORIES_BASE) ? (selectedCategory as CategoryKey) : undefined)}
             className="flex items-center gap-1 text-xs font-bold text-accent-themed hover:underline transition-colors"
           >
             <Plus className="w-3.5 h-3.5" />
@@ -388,13 +671,16 @@ export const CategoryDetailsScreen: React.FC<CategoryDetailsScreenProps> = ({
         ) : (
           <div className="divide-y divide-slate-100 dark:divide-slate-800">
             {filteredExpenses.map(item => {
-              const cat = CATEGORIES_BASE[item.category];
+              const cat = getCategoryInfo(item.category);
               const split = getExpenseSplit(
                 item.amount,
                 item.paidBy,
                 item.splitPartner1Pct,
                 item.splitPartner2Pct
               );
+
+              const isFundedByPiggy = item.fundingSource === 'piggy_bank';
+              const isFundedByReserve = item.fundingSource === 'reserve_excess';
 
               return (
                 <div
@@ -406,15 +692,38 @@ export const CategoryDetailsScreen: React.FC<CategoryDetailsScreenProps> = ({
                       {cat.emoji}
                     </span>
                     <div className="min-w-0">
-                      <div className="font-bold text-slate-900 dark:text-white text-sm truncate">
-                        {item.description}
+                      <div className="flex items-center gap-2">
+                        <span className="font-bold text-slate-900 dark:text-white text-sm truncate">
+                          {item.description}
+                        </span>
+                        {cat.isLegacy && (
+                          <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-200">
+                            Revisar
+                          </span>
+                        )}
                       </div>
+
                       <div className="text-xs text-slate-500 dark:text-slate-400 flex items-center gap-2 flex-wrap mt-0.5">
                         <span className="font-medium text-slate-600 dark:text-slate-300">{cat.name}</span>
                         <span>·</span>
                         <span>{item.date.split('-').reverse().join('/')}</span>
                         <span>·</span>
-                        {/* Clear who paid badge */}
+
+                        {/* Badges de Fonte de Financiamento */}
+                        {isFundedByPiggy && (
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-teal-50 dark:bg-teal-950 text-teal-700 dark:text-teal-300 border border-teal-200 dark:border-teal-800 flex items-center gap-1">
+                            <span>🎯</span>
+                            {item.fundingGoalName || 'Caixinha'}
+                          </span>
+                        )}
+                        {isFundedByReserve && (
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 dark:bg-amber-950 text-amber-800 dark:text-amber-300 border border-amber-200 dark:border-amber-800 flex items-center gap-1">
+                            <span>🛡️</span>
+                            Excesso Reserva
+                          </span>
+                        )}
+
+                        {/* Who Paid Badge */}
                         {item.paidBy === 'partner1' ? (
                           <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-accent-surface text-accent-themed border border-accent-themed">
                             Só {state.profile.partner1Name} (100%)
@@ -474,12 +783,167 @@ export const CategoryDetailsScreen: React.FC<CategoryDetailsScreenProps> = ({
         )}
       </div>
 
-      {/* Edit Expense Modal with Percentage and Payer Split Controls */}
+      {/* MODAL: Simular Remanejamento de Tetos */}
+      {isSimulatingCeiling && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-sm animate-in fade-in">
+          <div className="w-full max-w-xl bg-white dark:bg-slate-900 rounded-3xl p-6 shadow-2xl space-y-5 border border-slate-200 dark:border-slate-800 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-2xl bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 flex items-center justify-center font-bold">
+                  ⚖️
+                </div>
+                <div>
+                  <h3 className="font-bold text-slate-900 dark:text-white text-base font-display">
+                    Simulador de Remanejamento de Tetos
+                  </h3>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    Ajuste os limites das categorias para o mês sem inventar gastos artificiais.
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setIsSimulatingCeiling(false)}
+                className="w-8 h-8 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 flex items-center justify-center"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              {(Object.keys(CATEGORIES_BASE) as CategoryKey[]).map(key => {
+                const cat = getCategoryInfo(key);
+                const currentPct = simulatedPercentages[key] ?? 0;
+                const spend = categoriesSpending[key];
+                const simBudget = (totalIncome * currentPct) / 100;
+                const simRemaining = simBudget - spend.spent;
+                const isOver = simRemaining < 0;
+
+                return (
+                  <div
+                    key={key}
+                    className={`p-3.5 rounded-2xl border transition-all ${
+                      isOver
+                        ? 'bg-rose-50/40 dark:bg-rose-950/20 border-rose-200 dark:border-rose-900'
+                        : 'bg-slate-50/60 dark:bg-slate-800/40 border-slate-200/80 dark:border-slate-800'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between text-xs mb-2">
+                      <div className="flex items-center gap-2">
+                        <span className="text-base">{cat.emoji}</span>
+                        <span className="font-bold text-slate-900 dark:text-white">{cat.name}</span>
+                      </div>
+                      <div className="flex items-center gap-2 font-bold tabular-nums">
+                        <span className="text-slate-500">Teto: {formatCurrency(simBudget)}</span>
+                        <span className={isOver ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'}>
+                          {isOver ? `Estouro: ${formatCurrency(Math.abs(simRemaining))}` : `Sobra: ${formatCurrency(simRemaining)}`}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-3">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setSimulatedPercentages(prev => ({
+                            ...prev,
+                            [key]: Math.max(0, currentPct - 1),
+                          }))
+                        }
+                        className="w-7 h-7 rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 font-bold text-xs hover:bg-slate-100 flex items-center justify-center shrink-0"
+                      >
+                        -1%
+                      </button>
+
+                      <input
+                        type="range"
+                        min="0"
+                        max="60"
+                        value={currentPct}
+                        onChange={e => {
+                          const val = parseInt(e.target.value, 10) || 0;
+                          setSimulatedPercentages(prev => ({
+                            ...prev,
+                            [key]: val,
+                          }));
+                        }}
+                        className="w-full accent-amber-600"
+                      />
+
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setSimulatedPercentages(prev => ({
+                            ...prev,
+                            [key]: currentPct + 1,
+                          }))
+                        }
+                        className="w-7 h-7 rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 font-bold text-xs hover:bg-slate-100 flex items-center justify-center shrink-0"
+                      >
+                        +1%
+                      </button>
+
+                      <span className="w-12 text-right font-black text-xs text-slate-900 dark:text-white tabular-nums shrink-0">
+                        {currentPct}%
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Total percentage indicator */}
+            <div className="p-3 rounded-2xl bg-slate-100 dark:bg-slate-800 text-xs flex items-center justify-between font-bold">
+              <span className="text-slate-600 dark:text-slate-300">Total de Despesas Alocado:</span>
+              <span className="text-slate-900 dark:text-white tabular-nums">
+                {Object.values(simulatedPercentages).reduce((a, b) => a + b, 0)}%
+              </span>
+            </div>
+
+            <div className="flex items-center justify-between gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setSimulatedPercentages({
+                    moradia: activeLifeTier.percentages.moradia || 30,
+                    transporte: activeLifeTier.percentages.transporte || 10,
+                    comida: activeLifeTier.percentages.comida || 15,
+                    lazer: activeLifeTier.percentages.lazer || 10,
+                    protecao: activeLifeTier.percentages.protecao || 10,
+                    profissional: activeLifeTier.percentages.profissional || 5,
+                  });
+                }}
+                className="px-3.5 py-2 text-xs font-bold text-slate-500 hover:text-slate-800 dark:hover:text-slate-200"
+              >
+                Restaurar Padrão do Degrau
+              </button>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setIsSimulatingCeiling(false)}
+                  className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  onClick={handleApplySimulatedCeilings}
+                  className="btn-primary-accent px-5 py-2 rounded-xl text-xs font-bold text-white shadow-xs"
+                >
+                  Confirmar Novos Tetos
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Expense Modal with Percentage, Funding Source and Payer Controls */}
       {editingExpense && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-sm animate-in fade-in">
-          <div className="w-full max-w-md bg-white dark:bg-slate-900 rounded-3xl p-6 shadow-2xl space-y-4 border border-slate-200 dark:border-slate-800">
+          <div className="w-full max-w-md bg-white dark:bg-slate-900 rounded-3xl p-6 shadow-2xl space-y-4 border border-slate-200 dark:border-slate-800 max-h-[90vh] overflow-y-auto">
             <h3 className="font-bold text-slate-900 dark:text-white text-lg font-display">
-              Editar Gasto & Divisão
+              Editar Gasto, Fonte & Divisão
             </h3>
 
             <form onSubmit={handleSaveEdit} className="space-y-4">
@@ -536,8 +1000,69 @@ export const CategoryDetailsScreen: React.FC<CategoryDetailsScreenProps> = ({
                       {CATEGORIES_BASE[key].emoji} {CATEGORIES_BASE[key].name}
                     </option>
                   ))}
+                  {/* Option for legacy category if currently selected */}
+                  {editingExpense.category && !CATEGORIES_BASE[editingExpense.category as CategoryKey] && (
+                    <option value={editingExpense.category}>
+                      🏷️ {editingExpense.category} (Legada)
+                    </option>
+                  )}
                 </select>
               </div>
+
+              {/* Fonte de Financiamento */}
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">
+                  Fonte de Financiamento
+                </label>
+                <select
+                  value={editingExpense.fundingSource || 'month_budget'}
+                  onChange={e => {
+                    const src = e.target.value as FundingSourceType;
+                    setEditingExpense({
+                      ...editingExpense,
+                      fundingSource: src,
+                      isExcludedFromMonthlyBudget: src !== 'month_budget',
+                      fundingGoalId: src === 'piggy_bank' ? editingExpense.fundingGoalId : undefined,
+                      fundingGoalName: src === 'piggy_bank' ? editingExpense.fundingGoalName : undefined,
+                    });
+                  }}
+                  className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-sm bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:ring-2 focus:ring-accent-primary"
+                >
+                  <option value="month_budget">Orçamento do Mês (Rotina da Casa)</option>
+                  <option value="piggy_bank">Caixinha / Cofrinho de Objetivo</option>
+                  <option value="reserve_excess">Excesso da Reserva (acima de 3 meses)</option>
+                  <option value="personal_allowance">Mesada Individual</option>
+                </select>
+              </div>
+
+              {/* Se a fonte for Caixinha, selecionar qual */}
+              {editingExpense.fundingSource === 'piggy_bank' && (
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">
+                    Qual Caixinha / Cofrinho?
+                  </label>
+                  <select
+                    value={editingExpense.fundingGoalId || ''}
+                    onChange={e => {
+                      const goalId = e.target.value;
+                      const goal = state.piggyBanks.find(g => g.id === goalId);
+                      setEditingExpense({
+                        ...editingExpense,
+                        fundingGoalId: goalId,
+                        fundingGoalName: goal?.name || '',
+                      });
+                    }}
+                    className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-sm bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:ring-2 focus:ring-accent-primary"
+                  >
+                    <option value="">Selecione uma caixinha...</option>
+                    {state.piggyBanks.map(g => (
+                      <option key={g.id} value={g.id}>
+                        {g.name} (Saldo: {formatCurrency(g.currentAmount)})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
 
               {/* Quem Pagou / Divisão do Casal */}
               <div>
@@ -646,10 +1171,20 @@ export const CategoryDetailsScreen: React.FC<CategoryDetailsScreenProps> = ({
                       className="w-full accent-amber-600"
                     />
 
-                    <div className="flex items-center justify-between text-[11px] text-slate-500 dark:text-slate-400">
-                      <span>{formatCurrency((editingExpense.amount * (editingExpense.splitPartner1Pct ?? 60)) / 100)}</span>
-                      <span>{formatCurrency((editingExpense.amount * (100 - (editingExpense.splitPartner1Pct ?? 60))) / 100)}</span>
-                    </div>
+                    {(() => {
+                      const split = getExpenseSplit(
+                        editingExpense.amount,
+                        'custom',
+                        editingExpense.splitPartner1Pct ?? 60,
+                        100 - (editingExpense.splitPartner1Pct ?? 60)
+                      );
+                      return (
+                        <div className="flex items-center justify-between text-[11px] text-slate-500 dark:text-slate-400">
+                          <span>{formatCurrency(split.partner1Amount)}</span>
+                          <span>{formatCurrency(split.partner2Amount)}</span>
+                        </div>
+                      );
+                    })()}
                   </div>
                 )}
               </div>

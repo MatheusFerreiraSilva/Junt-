@@ -53,7 +53,8 @@ describe('Push Notification Engine', () => {
     checkAndTriggerScheduledPushNotifications(
       sampleState as AppState,
       mockUpdateSettings,
-      mockAddNotification
+      mockAddNotification,
+      new Date('2026-10-28T19:00:00')
     );
 
     expect(mockAddNotification).toHaveBeenCalledWith(

@@ -104,7 +104,8 @@ export async function sendTestNotification(): Promise<boolean> {
 export function checkAndTriggerScheduledPushNotifications(
   state: AppState,
   updatePushSettings: (updates: Partial<PushNotificationSettings>) => void,
-  addNotification: (notif: { title: string; message: string; type: 'alert' | 'success' | 'info' }) => void
+  addNotification: (notif: { title: string; message: string; type: 'alert' | 'success' | 'info' }) => void,
+  nowOverride?: Date
 ): void {
   const settings = state.pushSettings || DEFAULT_PUSH_SETTINGS;
   if (!settings.enabled) return;
@@ -114,8 +115,8 @@ export function checkAndTriggerScheduledPushNotifications(
     updatePushSettings({ permissionStatus: currentPermission });
   }
 
-  const todayStr = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
-  const now = new Date();
+  const now = nowOverride || new Date();
+  const todayStr = now.toISOString().split('T')[0]; // YYYY-MM-DD
   const hour = now.getHours();
   const currentMonthKey = state.currentMonth || todayStr.slice(0, 7);
 

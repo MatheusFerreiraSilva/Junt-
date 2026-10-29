@@ -9,6 +9,9 @@ import {
   selectTotalProtectedAssets,
   selectTotalNetWorth,
   validateDomainChecksum,
+  selectAnnualYield,
+  selectFreedomMetrics,
+  selectFIREMetrics,
 } from '../domainSelectors';
 import { AppState } from '../../types/finance';
 
@@ -200,15 +203,15 @@ describe('domainSelectors', () => {
     const state = createSampleState();
     const result = selectTotalProtectedAssets(state, 'casal');
     expect(result.protection).toBe(24000);
-    expect(result.freedom).toBe(10000);
+    expect(result.freedom).toBe(10400); // 10000 invested + 400 yield
     expect(result.goalsAndPiggyBanks).toBe(5000);
-    expect(result.totalProtected).toBe(39000);
+    expect(result.totalProtected).toBe(39400);
   });
 
   it('selectTotalNetWorth combines liquid cash and protected assets', () => {
     const state = createSampleState();
-    // 6000.50 + 39000 = 45000.50
-    expect(selectTotalNetWorth(state, 'casal')).toBe(45000.5);
+    // 6000.50 + 39400 = 45400.50
+    expect(selectTotalNetWorth(state, 'casal')).toBe(45400.5);
   });
 
   it('validateDomainChecksum verifies mathematical integrity between P1, P2 and couple totals', () => {
@@ -216,5 +219,39 @@ describe('domainSelectors', () => {
     const checksum = validateDomainChecksum(state, '2026-10');
     expect(checksum.isChecksumValid).toBe(true);
     expect(checksum.p1Income + checksum.p2Income).toBe(checksum.coupleIncome);
+  });
+
+  it('selectAnnualYield respects explicit 0 yield', () => {
+    const state = createSampleState();
+    state.profile.expectedYieldAnnual = 0;
+    expect(selectAnnualYield(state)).toBe(0);
+
+    delete (state.profile as any).expectedYieldAnnual;
+    expect(selectAnnualYield(state)).toBe(6.5);
+  });
+
+  it('selectFreedomMetrics preserves negative yield when market value drops below total invested', () => {
+    const state = createSampleState();
+    state.freedomTotalInvested = 10000;
+    state.freedomYieldAccumulated = -500;
+    const freedom = selectFreedomMetrics(state);
+    expect(freedom.totalInvested).toBe(10000);
+    expect(freedom.yieldAccumulated).toBe(-500);
+    expect(freedom.currentAmount).toBe(9500);
+  });
+
+  it('selectFIREMetrics computes target and returns Infinity when pace is 0 and target not reached', () => {
+    const state = createSampleState();
+    state.freedomTotalInvested = 10000;
+    state.freedomYieldAccumulated = 0;
+    state.piggyBanks = [];
+    state.coupleGoals = [];
+    state.profile.expectedYieldAnnual = 0; // 0% yield
+
+    // monthlyExpenses = 2000 => target = 600000
+    const fire = selectFIREMetrics(state, 2000, 0);
+    expect(fire.fireTargetNetWorth).toBe(600000);
+    expect(fire.fireEligibleCapital).toBe(10000);
+    expect(fire.estimatedYearsToFIRE).toBe(Infinity);
   });
 });

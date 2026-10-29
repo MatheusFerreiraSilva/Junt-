@@ -157,6 +157,37 @@ export const CATEGORIES_BASE: Record<CategoryKey, { name: string; emoji: string;
   },
 };
 
+export interface CategoryInfo {
+  key: string;
+  name: string;
+  emoji: string;
+  description: string;
+  colorHex: string;
+  bgLight: string;
+  borderHex: string;
+  isLegacy?: boolean;
+}
+
+export const getCategoryInfo = (catKey: string | undefined): CategoryInfo => {
+  if (catKey && (catKey in CATEGORIES_BASE)) {
+    return {
+      key: catKey,
+      ...CATEGORIES_BASE[catKey as CategoryKey],
+      isLegacy: false,
+    };
+  }
+  return {
+    key: catKey || 'outros',
+    name: catKey ? `${catKey.charAt(0).toUpperCase() + catKey.slice(1)} (Revisar)` : 'Outros / A Categorizar',
+    emoji: '🏷️',
+    description: 'Categoria não mapeada no padrão canônico — recomendada revisão ou reclassificação.',
+    colorHex: '#64748B',
+    bgLight: '#F8FAFC',
+    borderHex: '#CBD5E1',
+    isLegacy: true,
+  };
+};
+
 export const ACCENT_THEMES: Record<
   AccentTheme,
   {
@@ -266,8 +297,8 @@ const INITIAL_STATE: AppState = {
     city: 'Brasil',
     partner1Income: 0,
     partner2Income: 0,
-    emergencyReserveMonthsTarget: 10,
-    expectedYieldAnnual: 0,
+    emergencyReserveMonthsTarget: 6,
+    expectedYieldAnnual: 6.5,
     streakMonths: 0,
     themeMode: 'light',
     accentTheme: 'emerald',
@@ -440,6 +471,11 @@ export interface FinanceContextType {
   jointExpensesTotal: number;
   partner1SoleExpensesTotal: number;
   partner2SoleExpensesTotal: number;
+  monthlySpendingTotals: {
+    totalEconomicSpent: number;
+    budgetConsumedSpent: number;
+    cashOutflowSpent: number;
+  };
   getExpenseSplit: (
     amount: number,
     paidBy: PaidBy,
@@ -466,7 +502,12 @@ export interface FinanceContextType {
   displayedTotalSpent: number;
   displayedRemaining: number;
 
-  updateCoupleHub: (updates: Pick<Partial<AppState>, 'coupleGoals' | 'coupleWishlist' | 'coupleFixedBills' | 'dreamSimulations' | 'strategicIntents' | 'expenses'>) => void;
+  updateCoupleHub: (updates: Pick<Partial<AppState>, 'coupleGoals' | 'coupleWishlist' | 'coupleFixedBills' | 'dreamSimulations' | 'strategicIntents' | 'expenses' | 'piggyBanks'>) => void;
+  payFixedBill: (billId: string, monthKey?: string) => void;
+  unpayFixedBill: (billId: string, monthKey?: string) => void;
+  convertWishlistToGoal: (wishlistId: string) => void;
+  setGoalCoupleAgreement: (goalId: string, agreement: import('../types/finance').CoupleAgreement) => void;
+  recordWeeklyCheckIn: (date?: string) => void;
 
   // Meu Pluggy & Open Finance
   pluggyAccounts: PluggyBankConnection[];
@@ -1340,9 +1381,11 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
     label: string;
     isSplit: boolean;
   } => {
+    const totalCents = Math.round(amount * 100);
+
     if (paidBy === 'partner1') {
       return {
-        partner1Amount: amount,
+        partner1Amount: totalCents / 100,
         partner2Amount: 0,
         partner1Pct: 100,
         partner2Pct: 0,
@@ -1353,7 +1396,7 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
     if (paidBy === 'partner2') {
       return {
         partner1Amount: 0,
-        partner2Amount: amount,
+        partner2Amount: totalCents / 100,
         partner1Pct: 0,
         partner2Pct: 100,
         label: `${state.profile.partner2Name} (100%)`,
@@ -1361,11 +1404,11 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
       };
     }
     if (paidBy === 'custom' && p1Pct !== undefined && p2Pct !== undefined) {
-      const p1 = (amount * p1Pct) / 100;
-      const p2 = (amount * p2Pct) / 100;
+      const p1Cents = Math.round((totalCents * p1Pct) / 100);
+      const p2Cents = totalCents - p1Cents;
       return {
-        partner1Amount: p1,
-        partner2Amount: p2,
+        partner1Amount: p1Cents / 100,
+        partner2Amount: p2Cents / 100,
         partner1Pct: p1Pct,
         partner2Pct: p2Pct,
         label: `${p1Pct}% ${state.profile.partner1Name} / ${p2Pct}% ${state.profile.partner2Name}`,
@@ -1373,10 +1416,11 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
       };
     }
     // Default: 'both' 50/50
-    const half = amount / 2;
+    const p1Cents = Math.round(totalCents / 2);
+    const p2Cents = totalCents - p1Cents;
     return {
-      partner1Amount: half,
-      partner2Amount: half,
+      partner1Amount: p1Cents / 100,
+      partner2Amount: p2Cents / 100,
       partner1Pct: 50,
       partner2Pct: 50,
       label: '50% / 50% (Casal)',
@@ -1415,6 +1459,31 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
       .filter(exp => exp.paidBy === 'partner2')
       .reduce((sum, exp) => sum + exp.amount, 0);
   }, [currentMonthExpenses]);
+
+  // Três Totais Canônicos: Econômico Total, Consumo do Orçamento Rotineiro e Saída de Caixa
+  const monthlySpendingTotals = useMemo(() => {
+    const totalManualExpenses = currentMonthExpenses.reduce((sum, e) => sum + e.amount, 0);
+    const totalInstallmentsUncounted = activeInstallments.reduce((sum, inst) => {
+      const alreadyIn = currentMonthExpenses.some(e => e.installmentId === inst.id);
+      return alreadyIn ? sum : sum + installmentInMonth(inst, state.currentMonth);
+    }, 0);
+    const totalEconomicSpent = totalManualExpenses + totalInstallmentsUncounted;
+
+    const routineManualSpent = currentMonthExpenses
+      .filter(e => !e.isExcludedFromMonthlyBudget && (!e.fundingSource || e.fundingSource === 'month_budget'))
+      .reduce((sum, e) => sum + e.amount, 0);
+    const budgetConsumedSpent = routineManualSpent + totalInstallmentsUncounted;
+
+    const cashOutflowSpent = currentMonthExpenses
+      .filter(e => e.paymentMethod === 'pix' || e.paymentMethod === 'debit' || e.paymentMethod === 'cash')
+      .reduce((sum, e) => sum + e.amount, 0);
+
+    return {
+      totalEconomicSpent,
+      budgetConsumedSpent,
+      cashOutflowSpent,
+    };
+  }, [currentMonthExpenses, activeInstallments, state.currentMonth]);
 
   // Intelligent Couple Audit, Duplication Detection & Reconciliation
   const [settlementSplitMode, setSettlementSplitMode] = useState<'fifty_fifty' | 'proportional'>('fifty_fifty');
@@ -1590,7 +1659,7 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
   }, [totalIncome, activeLifeTier, state.categoryPercentages]);
 
   const autoCalculatedProtectionTarget = useMemo(() => {
-    const targetMonths = state.profile.emergencyReserveMonthsTarget || 10;
+    const targetMonths = state.profile.emergencyReserveMonthsTarget || 6;
     return monthlyFixedExpensesAvg * targetMonths;
   }, [monthlyFixedExpensesAvg, state.profile.emergencyReserveMonthsTarget]);
 
@@ -1960,11 +2029,16 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
   const addExpense = (expense: Omit<ExpenseItem, 'id'>) => {
     let finalCat = expense.category;
     let finalSub = expense.subcategory;
-    if (!finalSub && expense.description) {
+    if (expense.description) {
       const match = autoCategorizeDescription(expense.description);
       if (match.matchedKeyword) {
-        finalCat = match.category;
-        finalSub = match.subcategory;
+        // REGRA DE PROTEÇÃO: Nunca sobrescreve uma categoria explicitamente selecionada
+        if (!finalCat) {
+          finalCat = match.category;
+          if (!finalSub) finalSub = match.subcategory;
+        } else if (!finalSub && match.category === finalCat) {
+          finalSub = match.subcategory;
+        }
       }
     }
 
@@ -2021,6 +2095,7 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
 
       const newExpenses = [newExpense, ...prev.expenses];
       const newNotifications = [...prev.notifications];
+      const catInfo = getCategoryInfo(newExpense.category);
 
       if (isExcluded) {
         const sourceLabel =
@@ -2033,7 +2108,7 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
         newNotifications.unshift({
           id: `notif-exp-strat-${Date.now()}`,
           title: 'Gasto Estratégico Registrado 🎯',
-          message: `"${newExpense.description}" (R$ ${newExpense.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}) saiu de ${sourceLabel}. A margem da categoria ${CATEGORIES_BASE[newExpense.category]?.name} continua 100% protegida para o dia a dia!`,
+          message: `"${newExpense.description}" (R$ ${newExpense.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}) saiu de ${sourceLabel}. A margem da categoria ${catInfo.name} continua 100% protegida para o dia a dia!`,
           timestamp: 'Agora mesmo',
           type: 'success',
           isRead: false,
@@ -2042,7 +2117,7 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
         newNotifications.unshift({
           id: `notif-exp-${Date.now()}`,
           title: 'Gasto Relevante Registrado 💳',
-          message: `"${newExpense.description}" no valor de R$ ${newExpense.amount.toLocaleString('pt-BR')} foi adicionado em ${CATEGORIES_BASE[newExpense.category]?.name || 'Gastos'}.`,
+          message: `"${newExpense.description}" no valor de R$ ${newExpense.amount.toLocaleString('pt-BR')} foi adicionado em ${catInfo.name}.`,
           timestamp: 'Agora mesmo',
           type: 'info',
           isRead: false,
@@ -2067,10 +2142,7 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
   };
 
   const updateExpense = (id: string, updatedFields: Partial<ExpenseItem>) => {
-    setState(prev => ({
-      ...prev,
-      expenses: prev.expenses.map(e => (e.id === id ? { ...e, ...updatedFields } : e)),
-    }));
+    editExpense(id, updatedFields);
   };
 
   const deleteExpense = (id: string) => {
@@ -2434,22 +2506,38 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
   };
 
   const addPiggyBank = (piggy: Omit<SavingsPiggyBank, 'id'>) => {
+    const id = `piggy-${Date.now()}`;
     const newPiggy: SavingsPiggyBank = {
       ...piggy,
-      id: `piggy-${Date.now()}`,
+      id,
       currentAmount: piggy.currentAmount ?? 0,
+    };
+    const newCoupleGoal: import('../types/finance').CoupleGoal = {
+      id,
+      title: piggy.name,
+      category: 'reserva',
+      emoji: piggy.emoji || '🎯',
+      targetAmount: piggy.targetAmount,
+      currentAmount: piggy.currentAmount ?? 0,
+      partner1Contribution: (piggy.currentAmount ?? 0) / 2,
+      partner2Contribution: (piggy.currentAmount ?? 0) / 2,
+      monthlyPlannedDeposit: piggy.monthlyDeposit || 0,
+      isCompleted: (piggy.currentAmount ?? 0) >= piggy.targetAmount,
+      history: [],
+      createdAt: new Date().toISOString().split('T')[0],
+      coupleAgreement: piggy.coupleAgreement,
     };
     setState(prev => ({
       ...prev,
       piggyBanks: [...prev.piggyBanks, newPiggy],
+      coupleGoals: [...(prev.coupleGoals || []).filter(cg => cg.id !== id), newCoupleGoal],
     }));
     triggerCelebration();
   };
 
   const updatePiggyBank = (id: string, updates: Partial<SavingsPiggyBank>) => {
-    setState(prev => ({
-      ...prev,
-      piggyBanks: prev.piggyBanks.map(p => {
+    setState(prev => {
+      const updatedPiggy = prev.piggyBanks.map(p => {
         if (p.id === id) {
           const updated = { ...p, ...updates };
           if (updated.targetAmount !== undefined && updated.currentAmount !== undefined) {
@@ -2458,23 +2546,52 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
           return updated;
         }
         return p;
-      }),
-    }));
+      });
+
+      const updatedCoupleGoals = (prev.coupleGoals || []).map(cg => {
+        if (cg.id === id) {
+          const title = updates.name !== undefined ? updates.name : cg.title;
+          const emoji = updates.emoji !== undefined ? updates.emoji : cg.emoji;
+          const targetAmount = updates.targetAmount !== undefined ? updates.targetAmount : cg.targetAmount;
+          const currentAmount = updates.currentAmount !== undefined ? updates.currentAmount : cg.currentAmount;
+          const monthlyPlannedDeposit = updates.monthlyDeposit !== undefined ? updates.monthlyDeposit : cg.monthlyPlannedDeposit;
+          const coupleAgreement = updates.coupleAgreement !== undefined ? updates.coupleAgreement : cg.coupleAgreement;
+          return {
+            ...cg,
+            title,
+            emoji,
+            targetAmount,
+            currentAmount,
+            monthlyPlannedDeposit,
+            coupleAgreement,
+            isCompleted: currentAmount >= targetAmount,
+          };
+        }
+        return cg;
+      });
+
+      return {
+        ...prev,
+        piggyBanks: updatedPiggy,
+        coupleGoals: updatedCoupleGoals,
+      };
+    });
   };
 
   const deletePiggyBank = (id: string) => {
     setState(prev => ({
       ...prev,
       piggyBanks: prev.piggyBanks.filter(p => p.id !== id),
+      coupleGoals: (prev.coupleGoals || []).filter(cg => cg.id !== id),
     }));
   };
 
   const removePiggyBank = deletePiggyBank;
 
-  const depositPiggyBank = (id: string, amount: number) => {
+  const depositPiggyBank = (id: string, amount: number, contributor?: 'partner1' | 'partner2' | 'both', note?: string) => {
     setState(prev => {
       let justCompleted = false;
-      const updated = prev.piggyBanks.map(p => {
+      const updatedPiggy = prev.piggyBanks.map(p => {
         if (p.id === id) {
           const nextAmount = p.currentAmount + amount;
           if (nextAmount >= p.targetAmount && p.currentAmount < p.targetAmount) {
@@ -2489,9 +2606,44 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
         return p;
       });
 
+      const p1Name = prev.profile.partner1Name || 'Pessoa 1';
+      const p2Name = prev.profile.partner2Name === 'Aguardando Par...' ? 'Pessoa 2' : prev.profile.partner2Name || 'Pessoa 2';
+      const contrib = contributor || 'both';
+      const contributorName = contrib === 'partner1' ? p1Name : contrib === 'partner2' ? p2Name : `${p1Name} & ${p2Name}`;
+
+      let p1Add = 0;
+      let p2Add = 0;
+      if (contrib === 'partner1') p1Add = amount;
+      else if (contrib === 'partner2') p2Add = amount;
+      else { p1Add = amount / 2; p2Add = amount / 2; }
+
+      const updatedCoupleGoals = (prev.coupleGoals || []).map(cg => {
+        if (cg.id === id) {
+          const nextCur = Math.max(0, cg.currentAmount + amount);
+          const histItem: import('../types/finance').CoupleGoalContribution = {
+            id: `h-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`,
+            contributor: contrib,
+            contributorName,
+            amount: Math.abs(amount),
+            date: new Date().toISOString().split('T')[0],
+            type: amount >= 0 ? 'deposit' : 'withdrawal',
+            note,
+          };
+          return {
+            ...cg,
+            currentAmount: nextCur,
+            partner1Contribution: Math.max(0, cg.partner1Contribution + p1Add),
+            partner2Contribution: Math.max(0, cg.partner2Contribution + p2Add),
+            isCompleted: nextCur >= cg.targetAmount,
+            history: [histItem, ...(cg.history || [])],
+          };
+        }
+        return cg;
+      });
+
       const newNotifs = [...prev.notifications];
       if (justCompleted) {
-        const goal = updated.find(p => p.id === id);
+        const goal = updatedPiggy.find(p => p.id === id);
         newNotifs.unshift({
           id: `notif-goal-${Date.now()}`,
           title: 'Meta Alcançada com Sucesso! 🏆',
@@ -2505,7 +2657,8 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
 
       return {
         ...prev,
-        piggyBanks: updated,
+        piggyBanks: updatedPiggy,
+        coupleGoals: updatedCoupleGoals,
         notifications: newNotifs,
       };
     });
@@ -2514,15 +2667,137 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
   const depositToPiggyBank = depositPiggyBank;
 
   const withdrawPiggyBank = (id: string, amount: number) => {
-    setState(prev => ({
-      ...prev,
-      piggyBanks: prev.piggyBanks.map(p =>
-        p.id === id ? { ...p, currentAmount: Math.max(0, p.currentAmount - amount) } : p
-      ),
-    }));
+    depositPiggyBank(id, -Math.abs(amount));
   };
 
   const withdrawFromPiggyBank = withdrawPiggyBank;
+
+  const payFixedBill = (billId: string, monthKey?: string) => {
+    const todayStr = new Date().toISOString().split('T')[0];
+    setState(prev => {
+      const mKey = monthKey || prev.currentMonth;
+      const targetBill = (prev.coupleFixedBills || []).find(b => b.id === billId);
+      if (!targetBill) return prev;
+
+      const autoExpense: ExpenseItem = {
+        id: `exp-fb-${billId}-${mKey}`,
+        linkedBillId: billId,
+        billCompetenceMonth: mKey,
+        description: `[Conta Fixa] ${targetBill.title}`,
+        amount: targetBill.amount,
+        category: targetBill.category,
+        date: todayStr,
+        paidBy: targetBill.assignedPayer === 'both' ? 'both' : targetBill.assignedPayer,
+        notes: `Pagamento de conta fixa do mês de ${mKey} (Vencimento dia ${targetBill.dueDay})`,
+        fundingSource: 'month_budget',
+        assignedTo: 'couple',
+        paymentMethod: targetBill.autoPay ? 'debit' : 'pix',
+      };
+
+      const updatedBills = (prev.coupleFixedBills || []).map(b =>
+        b.id === billId ? { ...b, status: 'paid' as const, lastPaidMonth: mKey } : b
+      );
+
+      // Avoid duplicating if already present
+      const existingExp = prev.expenses.some(e => e.linkedBillId === billId && e.billCompetenceMonth === mKey);
+      const updatedExpenses = existingExp ? prev.expenses : [autoExpense, ...prev.expenses];
+
+      return {
+        ...prev,
+        coupleFixedBills: updatedBills,
+        expenses: updatedExpenses,
+      };
+    });
+  };
+
+  const unpayFixedBill = (billId: string, monthKey?: string) => {
+    setState(prev => {
+      const mKey = monthKey || prev.currentMonth;
+      const targetBill = (prev.coupleFixedBills || []).find(b => b.id === billId);
+      if (!targetBill) return prev;
+
+      const updatedBills = (prev.coupleFixedBills || []).map(b =>
+        b.id === billId ? { ...b, status: 'pending' as const } : b
+      );
+
+      // Remove strictly expenses linked by linkedBillId and billCompetenceMonth (or description match within competence month)
+      const updatedExpenses = prev.expenses.filter(e => {
+        if (e.linkedBillId === billId && e.billCompetenceMonth === mKey) return false;
+        if (!e.linkedBillId && e.description === `[Conta Fixa] ${targetBill.title}` && e.date.startsWith(mKey)) return false;
+        return true;
+      });
+
+      return {
+        ...prev,
+        coupleFixedBills: updatedBills,
+        expenses: updatedExpenses,
+      };
+    });
+  };
+
+  const convertWishlistToGoal = (wishlistId: string) => {
+    setState(prev => {
+      const item = (prev.coupleWishlist || []).find(w => w.id === wishlistId);
+      if (!item) return prev;
+
+      const newGoalId = `goal-${Date.now()}`;
+      const targetPrice = item.estimatedPrice;
+
+      const newPiggy: SavingsPiggyBank = {
+        id: newGoalId,
+        name: item.title,
+        emoji: item.emoji,
+        purpose: `Desejo do Casal convertido: ${item.notes || item.category}`,
+        targetAmount: targetPrice,
+        monthlyDeposit: Math.round(targetPrice / 6),
+        currentAmount: 0,
+        completed: false,
+      };
+
+      const newCoupleGoal: import('../types/finance').CoupleGoal = {
+        id: newGoalId,
+        title: item.title,
+        category: item.category === 'moradia' ? 'reforma' : item.category === 'transporte' ? 'veiculo' : 'outro',
+        emoji: item.emoji,
+        targetAmount: targetPrice,
+        currentAmount: 0,
+        partner1Contribution: 0,
+        partner2Contribution: 0,
+        monthlyPlannedDeposit: Math.round(targetPrice / 6),
+        isCompleted: false,
+        history: [],
+        createdAt: new Date().toISOString().split('T')[0],
+      };
+
+      const updatedWishlist = (prev.coupleWishlist || []).map(w =>
+        w.id === wishlistId ? { ...w, status: 'convertido_meta' as const, convertedGoalId: newGoalId } : w
+      );
+
+      return {
+        ...prev,
+        piggyBanks: [...prev.piggyBanks, newPiggy],
+        coupleGoals: [...(prev.coupleGoals || []), newCoupleGoal],
+        coupleWishlist: updatedWishlist,
+      };
+    });
+    triggerCelebration();
+  };
+
+  const setGoalCoupleAgreement = (goalId: string, agreement: import('../types/finance').CoupleAgreement) => {
+    setState(prev => ({
+      ...prev,
+      piggyBanks: prev.piggyBanks.map(p => p.id === goalId ? { ...p, coupleAgreement: agreement } : p),
+      coupleGoals: (prev.coupleGoals || []).map(cg => cg.id === goalId ? { ...cg, coupleAgreement: agreement } : cg),
+    }));
+  };
+
+  const recordWeeklyCheckIn = (date?: string) => {
+    const checkInDate = date || new Date().toISOString().slice(0, 10);
+    setState(prev => ({
+      ...prev,
+      lastWeeklyCheckInAt: checkInDate,
+    }));
+  };
 
   const syncBankAccounts = async () => {
     await syncPluggyData();
@@ -2742,17 +3017,69 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
   };
 
   const editExpense = (expenseOrId: string | ExpenseItem, updates?: Partial<ExpenseItem>) => {
-    if (typeof expenseOrId === 'object') {
-      setState(prev => ({
+    const targetId = typeof expenseOrId === 'object' ? expenseOrId.id : expenseOrId;
+    const incomingFields = typeof expenseOrId === 'object' ? expenseOrId : (updates || {});
+
+    setState(prev => {
+      const oldExp = prev.expenses.find(e => e.id === targetId);
+      if (!oldExp) return prev;
+
+      const newExp: ExpenseItem = {
+        ...oldExp,
+        ...incomingFields,
+      };
+
+      // Keep fundingSource and isExcludedFromMonthlyBudget consistent
+      const oldSource: FundingSourceType = oldExp.fundingSource || 'month_budget';
+      const newSource: FundingSourceType = incomingFields.fundingSource !== undefined
+        ? incomingFields.fundingSource
+        : (newExp.fundingSource || oldSource);
+      newExp.fundingSource = newSource;
+      newExp.isExcludedFromMonthlyBudget = newSource !== 'month_budget' || !!newExp.isExcludedFromMonthlyBudget;
+
+      let nextProtAmount = prev.protectionCurrentAmount;
+      let nextProtInvested = prev.protectionTotalInvested;
+      let nextPiggyBanks = prev.piggyBanks;
+
+      // 1. Reverter dedução anterior da fonte antiga
+      if (oldSource === 'reserve_excess') {
+        nextProtAmount += oldExp.amount;
+        nextProtInvested += oldExp.amount;
+      } else if (oldSource === 'piggy_bank' && oldExp.fundingGoalId) {
+        nextPiggyBanks = nextPiggyBanks.map(g => {
+          if (g.id === oldExp.fundingGoalId) {
+            const nextCur = g.currentAmount + oldExp.amount;
+            return { ...g, currentAmount: nextCur, completed: nextCur >= g.targetAmount };
+          }
+          return g;
+        });
+      }
+
+      // 2. Aplicar nova dedução sobre a nova fonte
+      if (newSource === 'reserve_excess') {
+        nextProtAmount = Math.max(0, nextProtAmount - newExp.amount);
+        nextProtInvested = Math.max(0, nextProtInvested - newExp.amount);
+      } else if (newSource === 'piggy_bank' && newExp.fundingGoalId) {
+        nextPiggyBanks = nextPiggyBanks.map(g => {
+          if (g.id === newExp.fundingGoalId) {
+            const nextCur = Math.max(0, g.currentAmount - newExp.amount);
+            return { ...g, currentAmount: nextCur, completed: nextCur >= g.targetAmount };
+          }
+          return g;
+        });
+      }
+
+      const nextProtComplete = nextProtAmount >= autoCalculatedProtectionTarget;
+
+      return {
         ...prev,
-        expenses: prev.expenses.map(e => (e.id === expenseOrId.id ? { ...e, ...expenseOrId } : e)),
-      }));
-    } else {
-      setState(prev => ({
-        ...prev,
-        expenses: prev.expenses.map(e => (e.id === expenseOrId ? { ...e, ...(updates || {}) } : e)),
-      }));
-    }
+        expenses: prev.expenses.map(e => (e.id === targetId ? newExp : e)),
+        protectionCurrentAmount: nextProtAmount,
+        protectionTotalInvested: nextProtInvested,
+        isProtectionComplete: nextProtComplete,
+        piggyBanks: nextPiggyBanks,
+      };
+    });
   };
 
   const clearAllNotifications = () => {
@@ -2850,7 +3177,7 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
       ...prev,
       protectionTotalInvested: totalInvested,
       protectionCurrentAmount: currentBankAmount,
-      protectionYieldAccumulated: Math.max(0, currentBankAmount - totalInvested),
+      protectionYieldAccumulated: currentBankAmount - totalInvested,
       isProtectionComplete: currentBankAmount >= autoCalculatedProtectionTarget,
     }));
   };
@@ -2859,7 +3186,7 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
     setState(prev => ({
       ...prev,
       freedomTotalInvested: totalInvested,
-      freedomYieldAccumulated: Math.max(0, currentBankAmount - totalInvested),
+      freedomYieldAccumulated: currentBankAmount - totalInvested,
     }));
   };
 
@@ -2872,7 +3199,7 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
             ...p,
             totalInvested,
             currentAmount: currentBankAmount,
-            yieldAccumulated: Math.max(0, currentBankAmount - totalInvested),
+            yieldAccumulated: currentBankAmount - totalInvested,
             completed: currentBankAmount >= p.targetAmount,
           };
         }
@@ -4311,6 +4638,7 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
         jointExpensesTotal,
         partner1SoleExpensesTotal,
         partner2SoleExpensesTotal,
+        monthlySpendingTotals,
         getExpenseSplit,
         currentAccent,
         activeModeThemeKey,
@@ -4322,6 +4650,11 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
         displayedTotalSpent,
         displayedRemaining,
         updateCoupleHub: (updates) => setState(prev => ({ ...prev, ...updates })),
+        payFixedBill,
+        unpayFixedBill,
+        convertWishlistToGoal,
+        setGoalCoupleAgreement,
+        recordWeeklyCheckIn,
         // Pluggy & Open finance
         pluggyAccounts: state.pluggyAccounts || INITIAL_STATE.pluggyAccounts!,
         keywordRules: state.keywordRules || DEFAULT_KEYWORD_RULES,

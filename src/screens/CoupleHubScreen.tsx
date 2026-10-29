@@ -21,6 +21,9 @@ import {
   PieChart,
   ArrowRight,
   BookmarkCheck,
+  Palmtree,
+  Plane,
+  Compass,
 } from 'lucide-react';
 import { useFinance } from '../context/FinanceContext';
 import {
@@ -36,7 +39,13 @@ import {
   SavingsPiggyBank,
 } from '../types/finance';
 
-type SubTab = 'goals' | 'wishlist' | 'fire' | 'dreams' | 'bills' | 'profile';
+import {
+  selectTotalNetWorth,
+  selectEmergencyReserveMetrics,
+  selectFIREMetrics,
+} from '../utils/domainSelectors';
+
+type SubTab = 'goals' | 'vacation' | 'wishlist' | 'fire' | 'dreams' | 'bills' | 'profile';
 
 export const CoupleHubScreen: React.FC = () => {
   const {
@@ -46,6 +55,10 @@ export const CoupleHubScreen: React.FC = () => {
     depositToGoal,
     depositToProtection,
     monthlyFixedExpensesAvg,
+    payFixedBill,
+    unpayFixedBill,
+    convertWishlistToGoal,
+    setGoalCoupleAgreement,
   } = useFinance();
 
   const [activeTab, setActiveTab] = useState<SubTab>('goals');
@@ -113,6 +126,13 @@ export const CoupleHubScreen: React.FC = () => {
     notes: '',
   });
 
+  const [vacationPlanner, setVacationPlanner] = useState({
+    destination: 'Litoral Nordestino',
+    days: '10',
+    estimatedCost: '7500',
+    monthsToSave: '6',
+  });
+
   // Partner names
   const p1Name = state.profile.partner1Name || 'Pessoa 1';
   const p2Name = state.profile.partner2Name === 'Aguardando Par...' ? 'Pessoa 2' : state.profile.partner2Name || 'Pessoa 2';
@@ -166,6 +186,17 @@ export const CoupleHubScreen: React.FC = () => {
 
     return Array.from(unifiedMap.values());
   }, [state.piggyBanks, state.coupleGoals]);
+
+  // Vacation & Travel Goals (Reserva de Férias)
+  const vacationGoals: CoupleGoal[] = useMemo(() => {
+    return goals.filter(
+      (g) =>
+        g.category === 'viagem' ||
+        g.title.toLowerCase().includes('férias') ||
+        g.title.toLowerCase().includes('ferias') ||
+        g.title.toLowerCase().includes('viagem')
+    );
+  }, [goals]);
 
   // Wishlist list
   const wishlist: CoupleWishlistItem[] = state.coupleWishlist || [];
@@ -239,13 +270,15 @@ export const CoupleHubScreen: React.FC = () => {
     };
   }, [state, goals, monthlyFixedExpensesAvg]);
 
-  // Expense Comparison
+  // Expense Comparison (filtered by active month)
   const expenseComparison = useMemo(() => {
     let p1Total = 0;
     let p2Total = 0;
     let sharedTotal = 0;
 
-    state.expenses.forEach((e) => {
+    const currentMonthExpenses = state.expenses.filter((e) => e.date.startsWith(state.currentMonth));
+
+    currentMonthExpenses.forEach((e) => {
       if (e.paidBy === 'partner1') p1Total += e.amount;
       else if (e.paidBy === 'partner2') p2Total += e.amount;
       else sharedTotal += e.amount;
@@ -262,7 +295,7 @@ export const CoupleHubScreen: React.FC = () => {
       p2Pct: grandTotal > 0 ? Math.round((p2Total / grandTotal) * 100) : 33,
       sharedPct: grandTotal > 0 ? Math.round((sharedTotal / grandTotal) * 100) : 34,
     };
-  }, [state.expenses]);
+  }, [state.expenses, state.currentMonth]);
 
   // Handle Create Unified Goal
   const handleCreateGoal = (e: React.FormEvent) => {
@@ -411,41 +444,7 @@ export const CoupleHubScreen: React.FC = () => {
 
   // Convert Wishlist item to Goal in BOTH Investimentos and Hub do Casal
   const handleConvertWishToGoal = (item: CoupleWishlistItem) => {
-    const targetPrice = item.estimatedPrice;
-
-    // 1. Create in piggyBanks for Investimentos
-    addPiggyBank({
-      name: item.title,
-      emoji: item.emoji,
-      purpose: `Desejo do Casal convertido: ${item.notes || item.category}`,
-      targetAmount: targetPrice,
-      monthlyDeposit: Math.round(targetPrice / 6),
-      currentAmount: 0,
-      completed: false,
-    });
-
-    // 2. Create in coupleGoals for Hub do Casal
-    const newGoal: CoupleGoal = {
-      id: `cg-${Date.now()}`,
-      title: item.title,
-      category: item.category === 'moradia' ? 'reforma' : item.category === 'transporte' ? 'veiculo' : 'outro',
-      emoji: item.emoji,
-      targetAmount: targetPrice,
-      currentAmount: 0,
-      partner1Contribution: 0,
-      partner2Contribution: 0,
-      monthlyPlannedDeposit: Math.round(targetPrice / 6),
-      isCompleted: false,
-      history: [],
-      createdAt: new Date().toISOString().split('T')[0],
-    };
-
-    const updatedGoals = [...goals, newGoal];
-    const updatedWishlist = wishlist.map((w) =>
-      w.id === item.id ? { ...w, status: 'convertido_meta' as const, convertedGoalId: newGoal.id } : w
-    );
-
-    updateCoupleHub({ coupleGoals: updatedGoals, coupleWishlist: updatedWishlist });
+    convertWishlistToGoal(item.id);
     setActiveTab('goals');
   };
 
@@ -484,47 +483,14 @@ export const CoupleHubScreen: React.FC = () => {
   // TOGGLE BILL STATUS WITH AUTOMATIC EXPENSE CREATION IN EXTRATO
   // =========================================================================
   const handleToggleBillStatus = (id: string) => {
-    const todayStr = new Date().toISOString().split('T')[0];
-
     const targetBill = fixedBills.find((b) => b.id === id);
     if (!targetBill) return;
 
-    const isNowPaid = targetBill.status !== 'paid';
-
-    const updatedBills = fixedBills.map((b) => {
-      if (b.id === id) {
-        return {
-          ...b,
-          status: isNowPaid ? ('paid' as const) : ('pending' as const),
-          lastPaidMonth: isNowPaid ? state.currentMonth : b.lastPaidMonth,
-        };
-      }
-      return b;
-    });
-
-    let updatedExpenses = [...state.expenses];
-
-    if (isNowPaid) {
-      // Create automatic expense in transaction history (Extrato)
-      const autoExpense: ExpenseItem = {
-        id: `exp-fb-${Date.now()}`,
-        description: `[Conta Fixa] ${targetBill.title}`,
-        amount: targetBill.amount,
-        category: targetBill.category,
-        date: todayStr,
-        paidBy: targetBill.assignedPayer === 'both' ? 'both' : targetBill.assignedPayer,
-        notes: `Pagamento de conta fixa do mês (Vencimento dia ${targetBill.dueDay})`,
-        fundingSource: 'month_budget',
-        assignedTo: 'couple',
-        paymentMethod: targetBill.autoPay ? 'debit' : 'pix',
-      };
-      updatedExpenses = [autoExpense, ...updatedExpenses];
+    if (targetBill.status === 'paid') {
+      unpayFixedBill(id, state.currentMonth);
     } else {
-      // Remove or keep expenses
-      updatedExpenses = updatedExpenses.filter((e) => !e.description.includes(targetBill.title));
+      payFixedBill(id, state.currentMonth);
     }
-
-    updateCoupleHub({ coupleFixedBills: updatedBills, expenses: updatedExpenses });
   };
 
   // Create Bill
@@ -658,81 +624,157 @@ export const CoupleHubScreen: React.FC = () => {
       </div>
 
       {/* ========================================================================= */}
-      {/* SUB-NAVIGATION TAB BAR                                                    */}
+      {/* BARRA HORIZONTAL / DOCK DE NAVEGAÇÃO ENTRE AS MICRO-ABAS DO HUB           */}
       {/* ========================================================================= */}
-      <div className="flex items-center gap-2 overflow-x-auto pb-2 scrollbar-none border-b border-slate-200 dark:border-slate-800">
-        <button
-          onClick={() => setActiveTab('goals')}
-          className={`flex items-center gap-2 px-4 py-2.5 rounded-2xl text-xs font-extrabold transition-all shrink-0 cursor-pointer ${
-            activeTab === 'goals'
-              ? 'bg-[#111318] text-white shadow-md'
-              : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700'
-          }`}
-        >
-          <Target className="w-4 h-4 text-emerald-400" />
-          <span>Cofrinhos &amp; Metas Unificadas ({goals.length})</span>
-        </button>
+      <nav
+        aria-label="Microabas do Hub do Casal"
+        className="w-full bg-white/90 dark:bg-slate-900/90 p-1.5 sm:p-2 rounded-2xl sm:rounded-3xl border border-slate-200/90 dark:border-slate-800 shadow-xs backdrop-blur-md sticky top-2 z-20"
+      >
+        <div className="grid grid-cols-2 xs:grid-cols-3 sm:grid-cols-4 lg:grid-cols-7 gap-1 sm:gap-1.5">
+          {/* 1. Cofres & Metas */}
+          <button
+            type="button"
+            onClick={() => setActiveTab('goals')}
+            className={`flex items-center justify-center gap-1.5 px-2.5 py-2 sm:py-2.5 rounded-xl sm:rounded-2xl text-[11px] sm:text-xs font-black transition-all cursor-pointer ${
+              activeTab === 'goals'
+                ? 'bg-[#111318] text-white shadow-md dark:bg-white dark:text-[#111318]'
+                : 'bg-slate-50/80 dark:bg-slate-800/60 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-200/60 dark:border-slate-700/60'
+            }`}
+          >
+            <Target className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+            <span className="truncate">Cofres &amp; Metas</span>
+            <span
+              className={`text-[10px] px-1.5 py-0.5 rounded-full font-extrabold ${
+                activeTab === 'goals'
+                  ? 'bg-white/20 text-white dark:bg-slate-900/20 dark:text-slate-900'
+                  : 'bg-slate-200/70 dark:bg-slate-700 text-slate-600 dark:text-slate-300'
+              }`}
+            >
+              {goals.length}
+            </span>
+          </button>
 
-        <button
-          onClick={() => setActiveTab('wishlist')}
-          className={`flex items-center gap-2 px-4 py-2.5 rounded-2xl text-xs font-extrabold transition-all shrink-0 cursor-pointer ${
-            activeTab === 'wishlist'
-              ? 'bg-[#111318] text-white shadow-md'
-              : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700'
-          }`}
-        >
-          <Gift className="w-4 h-4 text-rose-400" />
-          <span>Lista de Desejos ({wishlist.length})</span>
-        </button>
+          {/* 2. Reserva de Férias */}
+          <button
+            type="button"
+            onClick={() => setActiveTab('vacation')}
+            className={`flex items-center justify-center gap-1.5 px-2.5 py-2 sm:py-2.5 rounded-xl sm:rounded-2xl text-[11px] sm:text-xs font-black transition-all cursor-pointer ${
+              activeTab === 'vacation'
+                ? 'bg-[#111318] text-white shadow-md dark:bg-white dark:text-[#111318]'
+                : 'bg-slate-50/80 dark:bg-slate-800/60 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-200/60 dark:border-slate-700/60'
+            }`}
+          >
+            <Palmtree className="w-3.5 h-3.5 text-sky-500 shrink-0" />
+            <span className="truncate">Reserva Férias</span>
+            <span
+              className={`text-[10px] px-1.5 py-0.5 rounded-full font-extrabold ${
+                activeTab === 'vacation'
+                  ? 'bg-white/20 text-white dark:bg-slate-900/20 dark:text-slate-900'
+                  : 'bg-slate-200/70 dark:bg-slate-700 text-slate-600 dark:text-slate-300'
+              }`}
+            >
+              {vacationGoals.length}
+            </span>
+          </button>
 
-        <button
-          onClick={() => setActiveTab('fire')}
-          className={`flex items-center gap-2 px-4 py-2.5 rounded-2xl text-xs font-extrabold transition-all shrink-0 cursor-pointer ${
-            activeTab === 'fire'
-              ? 'bg-[#111318] text-white shadow-md'
-              : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700'
-          }`}
-        >
-          <Flame className="w-4 h-4 text-amber-500" />
-          <span>Reserva &amp; FIRE</span>
-        </button>
+          {/* 3. Lista de Desejos */}
+          <button
+            type="button"
+            onClick={() => setActiveTab('wishlist')}
+            className={`flex items-center justify-center gap-1.5 px-2.5 py-2 sm:py-2.5 rounded-xl sm:rounded-2xl text-[11px] sm:text-xs font-black transition-all cursor-pointer ${
+              activeTab === 'wishlist'
+                ? 'bg-[#111318] text-white shadow-md dark:bg-white dark:text-[#111318]'
+                : 'bg-slate-50/80 dark:bg-slate-800/60 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-200/60 dark:border-slate-700/60'
+            }`}
+          >
+            <Gift className="w-3.5 h-3.5 text-rose-500 shrink-0" />
+            <span className="truncate">Desejos</span>
+            <span
+              className={`text-[10px] px-1.5 py-0.5 rounded-full font-extrabold ${
+                activeTab === 'wishlist'
+                  ? 'bg-white/20 text-white dark:bg-slate-900/20 dark:text-slate-900'
+                  : 'bg-slate-200/70 dark:bg-slate-700 text-slate-600 dark:text-slate-300'
+              }`}
+            >
+              {wishlist.length}
+            </span>
+          </button>
 
-        <button
-          onClick={() => setActiveTab('dreams')}
-          className={`flex items-center gap-2 px-4 py-2.5 rounded-2xl text-xs font-extrabold transition-all shrink-0 cursor-pointer ${
-            activeTab === 'dreams'
-              ? 'bg-[#111318] text-white shadow-md'
-              : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700'
-          }`}
-        >
-          <Sparkles className="w-4 h-4 text-purple-400" />
-          <span>Simulador de Sonhos</span>
-        </button>
+          {/* 4. Reserva & FIRE */}
+          <button
+            type="button"
+            onClick={() => setActiveTab('fire')}
+            className={`flex items-center justify-center gap-1.5 px-2.5 py-2 sm:py-2.5 rounded-xl sm:rounded-2xl text-[11px] sm:text-xs font-black transition-all cursor-pointer ${
+              activeTab === 'fire'
+                ? 'bg-[#111318] text-white shadow-md dark:bg-white dark:text-[#111318]'
+                : 'bg-slate-50/80 dark:bg-slate-800/60 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-200/60 dark:border-slate-700/60'
+            }`}
+          >
+            <Flame className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+            <span className="truncate">Reserva &amp; FIRE</span>
+          </button>
 
-        <button
-          onClick={() => setActiveTab('bills')}
-          className={`flex items-center gap-2 px-4 py-2.5 rounded-2xl text-xs font-extrabold transition-all shrink-0 cursor-pointer ${
-            activeTab === 'bills'
-              ? 'bg-[#111318] text-white shadow-md'
-              : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700'
-          }`}
-        >
-          <Clock className="w-4 h-4 text-sky-400" />
-          <span>Alertas de Contas</span>
-        </button>
+          {/* 5. Simulador de Sonhos */}
+          <button
+            type="button"
+            onClick={() => setActiveTab('dreams')}
+            className={`flex items-center justify-center gap-1.5 px-2.5 py-2 sm:py-2.5 rounded-xl sm:rounded-2xl text-[11px] sm:text-xs font-black transition-all cursor-pointer ${
+              activeTab === 'dreams'
+                ? 'bg-[#111318] text-white shadow-md dark:bg-white dark:text-[#111318]'
+                : 'bg-slate-50/80 dark:bg-slate-800/60 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-200/60 dark:border-slate-700/60'
+            }`}
+          >
+            <Sparkles className="w-3.5 h-3.5 text-purple-500 shrink-0" />
+            <span className="truncate">Sonhos</span>
+            <span
+              className={`text-[10px] px-1.5 py-0.5 rounded-full font-extrabold ${
+                activeTab === 'dreams'
+                  ? 'bg-white/20 text-white dark:bg-slate-900/20 dark:text-slate-900'
+                  : 'bg-slate-200/70 dark:bg-slate-700 text-slate-600 dark:text-slate-300'
+              }`}
+            >
+              {dreams.length}
+            </span>
+          </button>
 
-        <button
-          onClick={() => setActiveTab('profile')}
-          className={`flex items-center gap-2 px-4 py-2.5 rounded-2xl text-xs font-extrabold transition-all shrink-0 cursor-pointer ${
-            activeTab === 'profile'
-              ? 'bg-[#111318] text-white shadow-md'
-              : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700'
-          }`}
-        >
-          <PieChart className="w-4 h-4 text-teal-400" />
-          <span>Comparativo Ele x Ela</span>
-        </button>
-      </div>
+          {/* 6. Alertas de Contas */}
+          <button
+            type="button"
+            onClick={() => setActiveTab('bills')}
+            className={`flex items-center justify-center gap-1.5 px-2.5 py-2 sm:py-2.5 rounded-xl sm:rounded-2xl text-[11px] sm:text-xs font-black transition-all cursor-pointer ${
+              activeTab === 'bills'
+                ? 'bg-[#111318] text-white shadow-md dark:bg-white dark:text-[#111318]'
+                : 'bg-slate-50/80 dark:bg-slate-800/60 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-200/60 dark:border-slate-700/60'
+            }`}
+          >
+            <Clock className="w-3.5 h-3.5 text-sky-400 shrink-0" />
+            <span className="truncate">Contas Fixas</span>
+            <span
+              className={`text-[10px] px-1.5 py-0.5 rounded-full font-extrabold ${
+                activeTab === 'bills'
+                  ? 'bg-white/20 text-white dark:bg-slate-900/20 dark:text-slate-900'
+                  : 'bg-slate-200/70 dark:bg-slate-700 text-slate-600 dark:text-slate-300'
+              }`}
+            >
+              {fixedBills.length}
+            </span>
+          </button>
+
+          {/* 7. Comparativo Ele x Ela */}
+          <button
+            type="button"
+            onClick={() => setActiveTab('profile')}
+            className={`flex items-center justify-center gap-1.5 px-2.5 py-2 sm:py-2.5 rounded-xl sm:rounded-2xl text-[11px] sm:text-xs font-black transition-all cursor-pointer ${
+              activeTab === 'profile'
+                ? 'bg-[#111318] text-white shadow-md dark:bg-white dark:text-[#111318]'
+                : 'bg-slate-50/80 dark:bg-slate-800/60 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-200/60 dark:border-slate-700/60'
+            }`}
+          >
+            <PieChart className="w-3.5 h-3.5 text-teal-400 shrink-0" />
+            <span className="truncate">Ele x Ela</span>
+          </button>
+        </div>
+      </nav>
 
       {/* ========================================================================= */}
       {/* TAB 1: COFRINHOS & METAS UNIFICADAS                                       */}
@@ -827,6 +869,52 @@ export const CoupleHubScreen: React.FC = () => {
                       <span>{p1Name}: R$ {goal.partner1Contribution.toLocaleString('pt-BR')}</span>
                       <span>{p2Name}: R$ {goal.partner2Contribution.toLocaleString('pt-BR')}</span>
                     </div>
+
+                    {/* Acordo do Casal para Aportes Futuros */}
+                    <div className="pt-2 border-t border-slate-200 dark:border-slate-700/60 space-y-1.5">
+                      <div className="flex items-center justify-between text-[10px] font-bold text-slate-500 uppercase tracking-wider">
+                        <span>Acordo do Casal</span>
+                        <span className="text-amber-600 dark:text-amber-400 font-extrabold">
+                          {goal.coupleAgreement?.type === 'proportional'
+                            ? `Proporcional (${goal.coupleAgreement.partner1SharePct}% / ${goal.coupleAgreement.partner2SharePct}%)`
+                            : goal.coupleAgreement?.type === 'custom'
+                            ? `Customizado (${goal.coupleAgreement.partner1SharePct}% / ${goal.coupleAgreement.partner2SharePct}%)`
+                            : '50% / 50%'}
+                        </span>
+                      </div>
+
+                      <div className="flex gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => setGoalCoupleAgreement(goal.id, { type: 'equal_50_50', partner1SharePct: 50, partner2SharePct: 50 })}
+                          className={`flex-1 py-1 px-2 rounded-xl text-[10px] font-black border transition-all cursor-pointer ${
+                            !goal.coupleAgreement || goal.coupleAgreement.type === 'equal_50_50'
+                              ? 'bg-amber-100 text-amber-900 border-amber-300 dark:bg-amber-950 dark:text-amber-200'
+                              : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-400 border-slate-200 dark:border-slate-700'
+                          }`}
+                        >
+                          50 / 50
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const p1Inc = state.profile.partner1Income || 0;
+                            const p2Inc = state.profile.partner2Income || 0;
+                            const tot = p1Inc + p2Inc;
+                            const p1P = tot > 0 ? Math.round((p1Inc / tot) * 100) : 50;
+                            setGoalCoupleAgreement(goal.id, { type: 'proportional', partner1SharePct: p1P, partner2SharePct: 100 - p1P });
+                          }}
+                          className={`flex-1 py-1 px-2 rounded-xl text-[10px] font-black border transition-all cursor-pointer ${
+                            goal.coupleAgreement?.type === 'proportional'
+                              ? 'bg-amber-100 text-amber-900 border-amber-300 dark:bg-amber-950 dark:text-amber-200'
+                              : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-400 border-slate-200 dark:border-slate-700'
+                          }`}
+                        >
+                          Proporcional Renda
+                        </button>
+                      </div>
+                    </div>
                   </div>
 
                   <div className="grid grid-cols-2 gap-2 pt-1">
@@ -862,7 +950,341 @@ export const CoupleHubScreen: React.FC = () => {
       )}
 
       {/* ========================================================================= */}
-      {/* TAB 2: LISTA DE DESEJOS (WISHLIST INTERATIVA & INTENÇÕES ESTRATÉGICAS)   */}
+      {/* TAB 2: RESERVA DE FÉRIAS & VIAGENS DO CASAL                               */}
+      {/* ========================================================================= */}
+      {activeTab === 'vacation' && (
+        <div className="space-y-6">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div>
+              <h2 className="text-xl font-black text-[#111318] dark:text-white font-display flex items-center gap-2">
+                <span>Reserva de Férias &amp; Viagens do Casal</span>
+                <span className="text-[10px] bg-sky-100 dark:bg-sky-950 text-sky-800 dark:text-sky-200 px-2 py-0.5 rounded-full font-black uppercase">
+                  Descanso &amp; Recesso Médico
+                </span>
+              </h2>
+              <p className="text-xs text-slate-600 dark:text-slate-400 font-medium">
+                Planejem viagens, recessos de fim de ano e congressos sem desestabilizar o orçamento do mês
+              </p>
+            </div>
+
+            <button
+              onClick={() => {
+                setGoalForm({
+                  title: 'Férias dos Sonhos',
+                  category: 'viagem',
+                  emoji: '✈️',
+                  targetAmount: '8000',
+                  monthlyPlannedDeposit: '1000',
+                  deadlineDate: '',
+                });
+                setIsGoalModalOpen(true);
+              }}
+              className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-2xl bg-[#111318] text-white text-xs font-black shadow-md hover:bg-slate-800 active:scale-95 transition-all cursor-pointer"
+            >
+              <Plus className="w-4 h-4 stroke-[3]" />
+              <span>+ Nova Meta de Férias</span>
+            </button>
+          </div>
+
+          {/* Cards de Métricas de Férias */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="clay-card p-5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl space-y-2">
+              <div className="flex items-center gap-2 text-sky-600 dark:text-sky-400 font-black text-xs uppercase tracking-wider">
+                <Palmtree className="w-4 h-4" />
+                <span>Poupado para Férias</span>
+              </div>
+              <div className="text-2xl font-black text-[#111318] dark:text-white">
+                R$ {vacationGoals.reduce((s, g) => s + g.currentAmount, 0).toLocaleString('pt-BR')}
+              </div>
+              <p className="text-[11px] text-slate-500 font-medium">Acumulado especificamente para viagens</p>
+            </div>
+
+            <div className="clay-card p-5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl space-y-2">
+              <div className="flex items-center gap-2 text-emerald-600 dark:text-emerald-400 font-black text-xs uppercase tracking-wider">
+                <Target className="w-4 h-4" />
+                <span>Meta Total Férias</span>
+              </div>
+              <div className="text-2xl font-black text-[#111318] dark:text-white">
+                R$ {vacationGoals.reduce((s, g) => s + g.targetAmount, 0).toLocaleString('pt-BR')}
+              </div>
+              <p className="text-[11px] text-slate-500 font-medium">Custo total das viagens planejadas</p>
+            </div>
+
+            <div className="clay-card p-5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl space-y-2">
+              <div className="flex items-center gap-2 text-amber-600 dark:text-amber-400 font-black text-xs uppercase tracking-wider">
+                <Plane className="w-4 h-4" />
+                <span>Aporte Mensal Previsto</span>
+              </div>
+              <div className="text-2xl font-black text-[#111318] dark:text-white">
+                R$ {vacationGoals.reduce((s, g) => s + g.monthlyPlannedDeposit, 0).toLocaleString('pt-BR')}/mês
+              </div>
+              <p className="text-[11px] text-slate-500 font-medium">Comprometimento mensal conjunto</p>
+            </div>
+
+            <div className="clay-card p-5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl space-y-2">
+              <div className="flex items-center gap-2 text-purple-600 dark:text-purple-400 font-black text-xs uppercase tracking-wider">
+                <Sparkles className="w-4 h-4" />
+                <span>Cobertura em Plantões</span>
+              </div>
+              <div className="text-2xl font-black text-[#111318] dark:text-white">
+                {(() => {
+                  const targetTot = vacationGoals.reduce((s, g) => s + g.targetAmount, 0) || parseFloat(vacationPlanner.estimatedCost) || 6000;
+                  const shiftsCount = Math.max(1, Math.ceil(targetTot / 1500));
+                  return `~${shiftsCount} Plantões`;
+                })()}
+              </div>
+              <p className="text-[11px] text-slate-500 font-medium">Plantões extras cobrem 100% da viagem</p>
+            </div>
+          </div>
+
+          {/* Lista de Metas de Férias */}
+          <div className="space-y-4">
+            <h3 className="text-sm font-black text-slate-700 dark:text-slate-300 uppercase tracking-wider">
+              Metas de Viagem &amp; Férias Ativas ({vacationGoals.length})
+            </h3>
+
+            {vacationGoals.length === 0 ? (
+              <div className="py-10 px-6 border border-dashed border-slate-300 dark:border-slate-700 rounded-3xl text-center bg-sky-50/20 dark:bg-sky-950/20">
+                <Palmtree className="w-10 h-10 text-sky-500 mx-auto mb-2 opacity-80" />
+                <p className="text-base font-semibold text-slate-800 dark:text-slate-100">
+                  Nenhuma viagem ou férias cadastrada ainda.
+                </p>
+                <p className="text-xs text-slate-500 mt-1 max-w-md mx-auto leading-relaxed">
+                  Definam um destino a dois (recesso de fim de ano, praia, congresso ou viagem internacional) e comecem a guardar juntos!
+                </p>
+                <button
+                  onClick={() => {
+                    setGoalForm({
+                      title: 'Férias a Dois 🏖️',
+                      category: 'viagem',
+                      emoji: '✈️',
+                      targetAmount: '6000',
+                      monthlyPlannedDeposit: '1000',
+                      deadlineDate: '',
+                    });
+                    setIsGoalModalOpen(true);
+                  }}
+                  className="mt-4 inline-flex items-center gap-2 px-4 py-2 rounded-2xl bg-sky-600 text-white text-xs font-black shadow-xs hover:bg-sky-700 transition-all cursor-pointer"
+                >
+                  <Plus className="w-4 h-4 stroke-[3]" />
+                  <span>Criar Primeira Meta de Férias</span>
+                </button>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+                {vacationGoals.map((goal) => {
+                  const progressPct = Math.min(100, Math.round((goal.currentAmount / goal.targetAmount) * 100));
+                  const p1Pct = goal.currentAmount > 0 ? Math.round((goal.partner1Contribution / goal.currentAmount) * 100) : 50;
+                  const p2Pct = 100 - p1Pct;
+
+                  return (
+                    <div
+                      key={goal.id}
+                      className="clay-card p-5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl space-y-4 shadow-sm hover:shadow-md transition-shadow relative"
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="flex items-center gap-3">
+                          <span className="w-12 h-12 rounded-2xl bg-sky-50 dark:bg-sky-950/50 border border-sky-200 dark:border-sky-800/60 flex items-center justify-center text-2xl shrink-0">
+                            {goal.emoji || '✈️'}
+                          </span>
+                          <div>
+                            <h4 className="font-black text-base text-[#111318] dark:text-white leading-snug">
+                              {goal.title}
+                            </h4>
+                            <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">
+                              Meta: R$ {goal.targetAmount.toLocaleString('pt-BR')}
+                            </span>
+                          </div>
+                        </div>
+
+                        {goal.isCompleted && (
+                          <span className="px-2.5 py-1 rounded-full bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-200 text-[10px] font-black uppercase flex items-center gap-1 border border-emerald-300 dark:border-emerald-700">
+                            <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                            Pronta para Decolar!
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <div className="flex items-center justify-between text-xs font-bold">
+                          <span className="text-slate-600 dark:text-slate-300">
+                            Poupado: R$ {goal.currentAmount.toLocaleString('pt-BR')}
+                          </span>
+                          <span className="text-sky-600 dark:text-sky-400 font-black">{progressPct}%</span>
+                        </div>
+
+                        <div className="w-full h-3 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden p-0.5 border border-slate-200 dark:border-slate-700">
+                          <div
+                            className="h-full rounded-full bg-gradient-to-r from-sky-400 via-teal-400 to-emerald-400 transition-all duration-500"
+                            style={{ width: `${progressPct}%` }}
+                          />
+                        </div>
+                      </div>
+
+                      <div className="p-3 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/80 space-y-2">
+                        <div className="text-[11px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider flex justify-between">
+                          <span>Aportes no Cofrinho de Férias</span>
+                          <span>{p1Name} ({p1Pct}%) | {p2Name} ({p2Pct}%)</span>
+                        </div>
+
+                        <div className="flex h-2.5 rounded-full overflow-hidden border border-slate-200 dark:border-slate-700">
+                          <div className="bg-rose-500 transition-all" style={{ width: `${p1Pct}%` }} title={`${p1Name}: R$ ${goal.partner1Contribution.toLocaleString('pt-BR')}`} />
+                          <div className="bg-amber-400 transition-all" style={{ width: `${p2Pct}%` }} title={`${p2Name}: R$ ${goal.partner2Contribution.toLocaleString('pt-BR')}`} />
+                        </div>
+
+                        <div className="flex justify-between text-[11px] font-extrabold text-slate-700 dark:text-slate-300">
+                          <span>{p1Name}: R$ {goal.partner1Contribution.toLocaleString('pt-BR')}</span>
+                          <span>{p2Name}: R$ {goal.partner2Contribution.toLocaleString('pt-BR')}</span>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-2 pt-1">
+                        <button
+                          onClick={() => {
+                            setSelectedGoalId(goal.id);
+                            setContributionType('deposit');
+                            setIsContributionModalOpen(true);
+                          }}
+                          className="flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-2xl bg-sky-100/70 dark:bg-sky-950/60 hover:bg-sky-200/80 text-sky-900 dark:text-sky-200 border border-sky-300 dark:border-sky-700 text-xs font-black transition-all cursor-pointer"
+                        >
+                          <ArrowUpRight className="w-4 h-4 text-sky-700 dark:text-sky-400" />
+                          <span>+ Guardar</span>
+                        </button>
+
+                        <button
+                          onClick={() => {
+                            setSelectedGoalId(goal.id);
+                            setContributionType('withdrawal');
+                            setIsContributionModalOpen(true);
+                          }}
+                          className="flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-2xl bg-amber-100/60 dark:bg-amber-950/40 hover:bg-amber-200/70 text-amber-900 dark:text-amber-200 border border-amber-300 dark:border-amber-700 text-xs font-black transition-all cursor-pointer"
+                        >
+                          <ArrowDownLeft className="w-4 h-4 text-amber-700 dark:text-amber-400" />
+                          <span>- Usar</span>
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* Simulador Rápido de Férias e Viagens */}
+          <div className="clay-card p-6 bg-gradient-to-br from-white via-sky-50/20 to-teal-50/30 dark:from-slate-900 dark:via-slate-900 dark:to-sky-950/20 border border-sky-200 dark:border-sky-800/60 rounded-3xl space-y-4">
+            <div className="flex items-center gap-3">
+              <span className="w-10 h-10 rounded-2xl bg-sky-500/10 border border-sky-500/30 flex items-center justify-center text-sky-600 dark:text-sky-400 text-xl shrink-0">
+                <Compass className="w-5 h-5" />
+              </span>
+              <div>
+                <h3 className="text-base font-black text-[#111318] dark:text-white font-display">
+                  Simulador de Férias &amp; Recesso Médico
+                </h3>
+                <p className="text-xs text-slate-500 font-medium">
+                  Estime o custo do destino e descubra o ritmo de aportes ideal para viabilizar as férias
+                </p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+              <div>
+                <label className="text-xs font-extrabold text-slate-700 dark:text-slate-300 block mb-1">
+                  Destino da Viagem
+                </label>
+                <input
+                  type="text"
+                  value={vacationPlanner.destination}
+                  onChange={(e) => setVacationPlanner({ ...vacationPlanner, destination: e.target.value })}
+                  placeholder="Ex: Praia dos Carneiros / PE"
+                  className="w-full px-3 py-2 rounded-2xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-bold text-[#111318] dark:text-white focus:outline-none focus:ring-2 focus:ring-sky-500"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs font-extrabold text-slate-700 dark:text-slate-300 block mb-1">
+                  Dias de Férias
+                </label>
+                <input
+                  type="number"
+                  value={vacationPlanner.days}
+                  onChange={(e) => setVacationPlanner({ ...vacationPlanner, days: e.target.value })}
+                  placeholder="10"
+                  className="w-full px-3 py-2 rounded-2xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-bold text-[#111318] dark:text-white focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs font-extrabold text-slate-700 dark:text-slate-300 block mb-1">
+                  Custo Estimado (R$)
+                </label>
+                <input
+                  type="number"
+                  value={vacationPlanner.estimatedCost}
+                  onChange={(e) => setVacationPlanner({ ...vacationPlanner, estimatedCost: e.target.value })}
+                  placeholder="7500"
+                  className="w-full px-3 py-2 rounded-2xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-bold text-[#111318] dark:text-white focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs font-extrabold text-slate-700 dark:text-slate-300 block mb-1">
+                  Meses até a Viagem
+                </label>
+                <input
+                  type="number"
+                  value={vacationPlanner.monthsToSave}
+                  onChange={(e) => setVacationPlanner({ ...vacationPlanner, monthsToSave: e.target.value })}
+                  placeholder="6"
+                  className="w-full px-3 py-2 rounded-2xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-bold text-[#111318] dark:text-white focus:outline-none"
+                />
+              </div>
+            </div>
+
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-2 border-t border-sky-100 dark:border-sky-900/60">
+              <div className="text-xs font-bold text-slate-600 dark:text-slate-300">
+                Aporte mensal conjunto sugerido:{' '}
+                <strong className="text-sky-600 dark:text-sky-400 text-sm">
+                  R${' '}
+                  {Math.round(
+                    (parseFloat(vacationPlanner.estimatedCost) || 0) /
+                      (parseInt(vacationPlanner.monthsToSave) || 1)
+                  ).toLocaleString('pt-BR')}
+                  /mês
+                </strong>{' '}
+                (~R${' '}
+                {Math.round(
+                  ((parseFloat(vacationPlanner.estimatedCost) || 0) /
+                    (parseInt(vacationPlanner.monthsToSave) || 1)) /
+                    2
+                ).toLocaleString('pt-BR')}{' '}
+                cada)
+              </div>
+
+              <button
+                onClick={() => {
+                  const cost = parseFloat(vacationPlanner.estimatedCost) || 5000;
+                  const months = parseInt(vacationPlanner.monthsToSave) || 6;
+                  addPiggyBank({
+                    name: `Férias: ${vacationPlanner.destination || 'Viagem'}`,
+                    emoji: '✈️',
+                    purpose: `Reserva de Férias (${vacationPlanner.days || 10} dias)`,
+                    targetAmount: cost,
+                    monthlyDeposit: Math.round(cost / months),
+                    currentAmount: 0,
+                    completed: false,
+                  });
+                }}
+                className="px-4 py-2 rounded-2xl bg-sky-600 text-white text-xs font-black shadow-xs hover:bg-sky-700 transition-all cursor-pointer shrink-0"
+              >
+                + Transformar em Meta de Férias
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* TAB 3: LISTA DE DESEJOS (WISHLIST INTERATIVA & INTENÇÕES ESTRATÉGICAS)   */}
       {/* ========================================================================= */}
       {activeTab === 'wishlist' && (
         <div className="space-y-6">
@@ -1048,7 +1470,11 @@ export const CoupleHubScreen: React.FC = () => {
                 <span>Tempo para FIRE</span>
               </div>
               <div className="text-2xl font-black text-[#111318] dark:text-white">
-                {fireMetrics.monthlyCoupleExpenses > 0 && fireMetrics.monthlyInvestmentPace > 0 ? fireMetrics.estimatedYearsToFIRE + ' anos' : 'Faltam dados'}
+                {fireMetrics.estimatedYearsToFIRE === 0
+                  ? 'Meta Atingida! 🎉'
+                  : fireMetrics.estimatedYearsToFIRE === Infinity
+                  ? 'Inalcançável sem aportes'
+                  : `${fireMetrics.estimatedYearsToFIRE} anos`}
               </div>
               <p className="text-[11px] text-slate-500 font-medium">
                 Aportes planejados: R$ {fireMetrics.monthlyInvestmentPace.toLocaleString('pt-BR')}/mês

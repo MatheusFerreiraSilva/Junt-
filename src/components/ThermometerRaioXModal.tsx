@@ -36,7 +36,7 @@ export const ThermometerRaioXModal: React.FC<ThermometerRaioXModalProps> = ({
   onOpenExpenseModal,
   onNavigateTransactions,
 }) => {
-  const { state, triggerCelebration } = useFinance();
+  const { state, triggerCelebration, recordWeeklyCheckIn } = useFinance();
 
   // Local interactive simulation state for exceptional weekend reservations
   const [reservations, setReservations] = useState<ExceptionalReservation[]>([]);
@@ -79,6 +79,8 @@ export const ThermometerRaioXModal: React.FC<ThermometerRaioXModalProps> = ({
     safeDailyLimit,
     baseProjectedClosingSpent,
     baseProjectedClosingMargin,
+    ceilingScenarioSpent,
+    ceilingScenarioMargin,
     tightProjectedClosingSpent,
     tightProjectedClosingMargin,
     projectionHypotheses,
@@ -128,6 +130,7 @@ export const ThermometerRaioXModal: React.FC<ThermometerRaioXModalProps> = ({
       : 0;
 
   const handleWeeklyCheckIn = () => {
+    recordWeeklyCheckIn();
     triggerCelebration();
     setCheckedInSuccess(true);
     setTimeout(() => setCheckedInSuccess(false), 4000);
@@ -375,28 +378,40 @@ export const ThermometerRaioXModal: React.FC<ThermometerRaioXModalProps> = ({
               </button>
             </div>
 
-            <div className="grid grid-cols-2 gap-3 text-xs">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 text-xs">
               <div className="p-3 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700">
                 <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 block">
-                  Cenário Base Previsto
+                  Ritmo Realizado
                 </span>
                 <div className="text-base font-black text-slate-950 dark:text-white tabular-nums mt-0.5">
                   {formatCurrency(baseProjectedClosingSpent)}
                 </div>
-                <span className="text-[10px] text-emerald-600 font-bold block mt-0.5">
-                  Margem final: {formatCurrency(baseProjectedClosingMargin)}
+                <span className={`text-[10px] font-bold block mt-0.5 ${baseProjectedClosingMargin >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                  Margem: {formatCurrency(baseProjectedClosingMargin)}
+                </span>
+              </div>
+
+              <div className="p-3 rounded-xl bg-sky-50 dark:bg-sky-950/40 border border-sky-200 dark:border-sky-800">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-sky-900 dark:text-sky-300 block">
+                  Cenário Teto Limite
+                </span>
+                <div className="text-base font-black text-sky-950 dark:text-sky-100 tabular-nums mt-0.5">
+                  {formatCurrency(ceilingScenarioSpent ?? expenseBudget)}
+                </div>
+                <span className="text-[10px] text-sky-700 dark:text-sky-300 font-bold block mt-0.5">
+                  Margem: {formatCurrency(ceilingScenarioMargin ?? 0)}
                 </span>
               </div>
 
               <div className="p-3 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800">
                 <span className="text-[10px] font-bold uppercase tracking-wider text-amber-900 dark:text-amber-300 block">
-                  Cenário de Aperto Simulado
+                  Aperto Simulado
                 </span>
                 <div className="text-base font-black text-amber-950 dark:text-amber-100 tabular-nums mt-0.5">
                   {formatCurrency(tightProjectedClosingSpent)}
                 </div>
-                <span className="text-[10px] text-amber-800 dark:text-amber-300 font-bold block mt-0.5">
-                  Margem final: {formatCurrency(tightProjectedClosingMargin)}
+                <span className={`text-[10px] font-bold block mt-0.5 ${tightProjectedClosingMargin >= 0 ? 'text-amber-800 dark:text-amber-300' : 'text-rose-600'}`}>
+                  Margem: {formatCurrency(tightProjectedClosingMargin)}
                 </span>
               </div>
             </div>

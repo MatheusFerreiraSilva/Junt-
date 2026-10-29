@@ -55,6 +55,8 @@ export interface ExpenseItem {
   reconciledWithIntent?: boolean;
   paymentMethod?: 'pix' | 'debit' | 'credit' | 'cash';
   assignedTo?: 'couple' | 'partner1' | 'partner2';
+  linkedBillId?: string;
+  billCompetenceMonth?: string; // YYYY-MM
 }
 
 export type FundingSourceType =
@@ -129,6 +131,13 @@ export interface AdvanceInstallmentPayload {
   note?: string;
 }
 
+export interface CoupleAgreement {
+  type: 'equal_50_50' | 'proportional' | 'custom';
+  partner1SharePct: number;
+  partner2SharePct: number;
+  notes?: string;
+}
+
 export interface SavingsPiggyBank {
   id: string;
   name: string;
@@ -142,6 +151,7 @@ export interface SavingsPiggyBank {
   totalInvested?: number;
   yieldAccumulated?: number;
   completed?: boolean;
+  coupleAgreement?: CoupleAgreement;
 }
 
 export interface FiscalProfile {
@@ -430,6 +440,7 @@ export interface AppState {
   categoryFloors?: Record<string, number>; // Minimum floor values in R$ (or % for investimentos)
   isCustomizedPercentages?: boolean;
   lastAcknowledgedTierKey?: LifeTierKey;
+  lastWeeklyCheckInAt?: string; // YYYY-MM-DD
   expenses: ExpenseItem[];
   incomes: IncomeItem[];
   installments: InstallmentPurchase[];
@@ -703,6 +714,7 @@ export interface CoupleGoal {
   isCompleted: boolean;
   history: CoupleGoalContribution[];
   createdAt: string;
+  coupleAgreement?: CoupleAgreement;
 }
 
 export interface CoupleWishlistItem {

@@ -8,6 +8,9 @@ import {
   MedicalShift,
   PaidBy,
 } from '../types/finance';
+import { installmentInMonth } from './installmentMoney';
+
+export const roundMoney = (val: number): number => Math.round(val * 100) / 100;
 
 export type ThermometerScope = 'couple' | 'partner1' | 'partner2';
 
@@ -89,6 +92,8 @@ export interface ThermometerEngineResult {
   // Closing Projections (Scenarios)
   baseProjectedClosingSpent: number;
   baseProjectedClosingMargin: number;
+  ceilingScenarioSpent?: number;
+  ceilingScenarioMargin?: number;
   tightProjectedClosingSpent: number;
   tightProjectedClosingMargin: number;
   projectionHypotheses: string[];
@@ -174,15 +179,16 @@ export function calculateThermometerEngine(
   } else {
     declaredIncome = (state.profile.partner1Income || 0) + (state.profile.partner2Income || 0);
   }
+  declaredIncome = roundMoney(declaredIncome);
 
   // Programmed savings / investments (default 10% or profile setting)
   const investmentsPct = state.profile.investmentsPercentage ?? 10;
-  const programmedSavings = Math.round(declaredIncome * (investmentsPct / 100));
+  const programmedSavings = roundMoney(declaredIncome * (investmentsPct / 100));
 
   // Expense budget (excluding savings)
-  const expenseBudget = Math.max(0, declaredIncome - programmedSavings);
+  const expenseBudget = Math.max(0, roundMoney(declaredIncome - programmedSavings));
 
-  // 3. Filter current month expenses matching scope and EXCLUDING non-economic expenses
+  // 3. Filter current month expenses EXCLUDING non-economic expenses
   const currentMonthExpenses = (state.expenses || []).filter(exp => {
     if (!exp.date.startsWith(currentMonthKey)) return false;
 
@@ -203,70 +209,128 @@ export function calculateThermometerEngine(
     return !isExcluded;
   });
 
-  // Calculate spent so far
+  // Calculate spent so far with scope-precise apportioning
   let partner1Spent = 0;
   let partner2Spent = 0;
   let bothSpent = 0;
   let spentSoFar = 0;
 
   currentMonthExpenses.forEach(exp => {
-    spentSoFar += exp.amount;
-    if (exp.paidBy === 'partner1') partner1Spent += exp.amount;
-    else if (exp.paidBy === 'partner2') partner2Spent += exp.amount;
-    else bothSpent += exp.amount;
+    let p1Amount = 0;
+    let p2Amount = 0;
+
+    if (exp.paidBy === 'partner1') {
+      p1Amount = exp.amount;
+    } else if (exp.paidBy === 'partner2') {
+      p2Amount = exp.amount;
+    } else {
+      // both or custom
+      const p1Pct = typeof exp.splitPartner1Pct === 'number' ? exp.splitPartner1Pct : 50;
+      const p2Pct = typeof exp.splitPartner2Pct === 'number' ? exp.splitPartner2Pct : (100 - p1Pct);
+      p1Amount = roundMoney(exp.amount * (p1Pct / 100));
+      p2Amount = roundMoney(exp.amount * (p2Pct / 100));
+      bothSpent += exp.amount;
+    }
+
+    partner1Spent += p1Amount;
+    partner2Spent += p2Amount;
+
+    if (scope === 'couple') {
+      spentSoFar += exp.amount;
+    } else if (scope === 'partner1') {
+      spentSoFar += p1Amount;
+    } else if (scope === 'partner2') {
+      spentSoFar += p2Amount;
+    }
   });
+
+  spentSoFar = roundMoney(spentSoFar);
+  partner1Spent = roundMoney(partner1Spent);
+  partner2Spent = roundMoney(partner2Spent);
+  bothSpent = roundMoney(bothSpent);
 
   // 4. Canonical pending commitments (Fixed bills + Active installments not yet in expenses)
   const pendingCommitmentsList: { id: string; title: string; amount: number; type: 'bill' | 'installment' | 'pending_expense'; dueDate?: string }[] = [];
 
-  // A) Fixed bills due in current month not yet paid
+  // A) Fixed bills due in current month not yet paid (canonical matching via linkedBillId / lastPaidMonth)
   (state.coupleFixedBills || []).forEach(bill => {
-    if (bill.status === 'pending' || (bill.status !== 'paid' && bill.lastPaidMonth !== currentMonthKey)) {
+    // Check canonical payment proof in expenses or bill metadata
+    const alreadyPaidCanonical = currentMonthExpenses.some(
+      exp =>
+        (exp.linkedBillId === bill.id && (exp.billCompetenceMonth === currentMonthKey || exp.date.startsWith(currentMonthKey))) ||
+        exp.id === `exp-fb-${bill.id}-${currentMonthKey}`
+    );
+    const isAlreadyPaid =
+      bill.lastPaidMonth === currentMonthKey ||
+      (bill.status === 'paid' && bill.lastPaidMonth === currentMonthKey) ||
+      alreadyPaidCanonical;
+
+    if (!isAlreadyPaid) {
       if (scope === 'partner1' && bill.assignedPayer === 'partner2') return;
       if (scope === 'partner2' && bill.assignedPayer === 'partner1') return;
 
       const dueDay = Math.min(daysInMonth, bill.dueDay || 10);
       const dueDate = `${currentMonthKey}-${String(dueDay).padStart(2, '0')}`;
 
-      // Check if bill is already represented in currentMonthExpenses
-      const alreadyInExpenses = currentMonthExpenses.some(
-        exp => exp.description.toLowerCase().includes(bill.title.toLowerCase())
-      );
-
-      if (!alreadyInExpenses) {
-        pendingCommitmentsList.push({
-          id: `bill-${bill.id}`,
-          title: bill.title,
-          amount: bill.amount,
-          type: 'bill',
-          dueDate,
-        });
+      let billAmount = bill.amount;
+      if (scope === 'partner1') {
+        billAmount = bill.assignedPayer === 'both' || bill.assignedPayer === 'custom' ? roundMoney(bill.amount * 0.5) : bill.amount;
+      } else if (scope === 'partner2') {
+        billAmount = bill.assignedPayer === 'both' || bill.assignedPayer === 'custom' ? roundMoney(bill.amount * 0.5) : bill.amount;
       }
+
+      pendingCommitmentsList.push({
+        id: `bill-${bill.id}`,
+        title: bill.title,
+        amount: billAmount,
+        type: 'bill',
+        dueDate,
+      });
     }
   });
 
   // B) Active installments due in current month not yet in expenses
   (state.installments || []).forEach(inst => {
     if (!inst.active) return;
+    const activeMonthAmount = installmentInMonth(inst, currentMonthKey);
+    if (activeMonthAmount <= 0) return; // Not active/due in current month (future or expired)
+
     if (scope === 'partner1' && inst.paidBy === 'partner2') return;
     if (scope === 'partner2' && inst.paidBy === 'partner1') return;
 
     const alreadyInExpenses = currentMonthExpenses.some(exp => exp.installmentId === inst.id);
     if (!alreadyInExpenses) {
+      const instDueDay = Math.min(daysInMonth, inst.dueDay || 10);
+      const dueDate = `${currentMonthKey}-${String(instDueDay).padStart(2, '0')}`;
+
+      let instAmount = activeMonthAmount;
+      if (scope === 'partner1') {
+        if (inst.paidBy === 'both' || inst.paidBy === 'custom') {
+          const p1Pct = typeof inst.splitPartner1Pct === 'number' ? inst.splitPartner1Pct : 50;
+          instAmount = roundMoney(activeMonthAmount * (p1Pct / 100));
+        }
+      } else if (scope === 'partner2') {
+        if (inst.paidBy === 'both' || inst.paidBy === 'custom') {
+          const p2Pct = typeof inst.splitPartner2Pct === 'number' ? inst.splitPartner2Pct : (100 - (inst.splitPartner1Pct ?? 50));
+          instAmount = roundMoney(activeMonthAmount * (p2Pct / 100));
+        }
+      }
+
       pendingCommitmentsList.push({
         id: `inst-${inst.id}`,
         title: `${inst.title} (${inst.paidInstallmentsCount + 1}/${inst.installmentsCount})`,
-        amount: inst.installmentAmount,
+        amount: instAmount,
         type: 'installment',
+        dueDate,
       });
     }
   });
 
-  const pendingCommitmentsAmount = pendingCommitmentsList.reduce((sum, item) => sum + item.amount, 0);
-  const totalConsumedAmount = spentSoFar + pendingCommitmentsAmount;
+  const pendingCommitmentsAmount = roundMoney(pendingCommitmentsList.reduce((sum, item) => sum + item.amount, 0));
+  const totalConsumedAmount = roundMoney(spentSoFar + pendingCommitmentsAmount);
 
   // 5. Signed margin & Deficit
-  const signedMargin = expenseBudget - totalConsumedAmount;
+  const signedMargin = roundMoney(expenseBudget - totalConsumedAmount);
   const suggestedNewMargin = Math.max(0, signedMargin);
   const deficitAmount = Math.max(0, -signedMargin);
   const isOverBudget = signedMargin < 0;
@@ -324,50 +388,87 @@ export function calculateThermometerEngine(
   // 8. Reading B: Caixa Informado & Cobertura de Extrato
   let reconciledBankBalance = 0;
   let hasCashReconciliation = false;
+  let protectedFunds = 0;
+  let availableCash = 0;
 
-  const userAccounts = (state.pluggyAccounts || []).concat(
-    (state.linkedAccounts || []).map(a => ({
-      id: a.id,
-      name: a.bankName,
-      balance: a.balance,
-      lastSynced: a.lastSynced,
-      owner: a.holder,
-    } as any))
-  );
+  // Use only verified linked accounts with valid balances (no unverified duplicate open finance accounts)
+  const validAccounts = (state.linkedAccounts || []).filter(acc => {
+    if (acc.status === 'error') return false;
+    if (typeof acc.balance !== 'number' || Number.isNaN(acc.balance)) return false;
+    if (scope === 'partner1' && acc.holder === 'partner2') return false;
+    if (scope === 'partner2' && acc.holder === 'partner1') return false;
+    return true;
+  });
 
-  userAccounts.forEach(acc => {
-    if (scope === 'partner1' && acc.owner === 'partner2') return;
-    if (scope === 'partner2' && acc.owner === 'partner1') return;
-    if (typeof acc.balance === 'number') {
-      reconciledBankBalance += acc.balance;
-      hasCashReconciliation = true;
+  if (validAccounts.length > 0) {
+    hasCashReconciliation = true;
+    reconciledBankBalance = roundMoney(validAccounts.reduce((sum, acc) => sum + acc.balance, 0));
+
+    // Protected Funds (Reserves + Piggy Banks) partitioned by scope
+    if (scope === 'couple') {
+      protectedFunds = (state.protectionCurrentAmount || 0) + (state.piggyBanks || []).reduce((sum, b) => sum + (b.currentAmount || 0), 0);
+    } else if (scope === 'partner1') {
+      const reserveShare = roundMoney((state.protectionCurrentAmount || 0) * 0.5);
+      const piggyShare = (state.piggyBanks || []).reduce((sum, b) => {
+        const sharePct = b.coupleAgreement?.type === 'proportional' ? (b.coupleAgreement.partner1SharePct / 100) : 0.5;
+        return sum + roundMoney((b.currentAmount || 0) * sharePct);
+      }, 0);
+      protectedFunds = reserveShare + piggyShare;
+    } else {
+      const reserveShare = roundMoney((state.protectionCurrentAmount || 0) * 0.5);
+      const piggyShare = (state.piggyBanks || []).reduce((sum, b) => {
+        const sharePct = b.coupleAgreement?.type === 'proportional' ? (b.coupleAgreement.partner2SharePct / 100) : 0.5;
+        return sum + roundMoney((b.currentAmount || 0) * sharePct);
+      }, 0);
+      protectedFunds = reserveShare + piggyShare;
     }
-  });
-
-  // Protected Funds (Reserves + Piggy Banks)
-  let protectedFunds = state.protectionCurrentAmount || 0;
-  (state.piggyBanks || []).forEach(b => {
-    protectedFunds += b.currentAmount || 0;
-  });
-
-  const availableCash = reconciledBankBalance - protectedFunds;
+    protectedFunds = roundMoney(protectedFunds);
+    availableCash = roundMoney(reconciledBankBalance - protectedFunds);
+  }
 
   // Medical Receivables (Pending vs Confirmed)
   let pendingMedicalReceivables = 0;
   let confirmedMedicalReceivables = 0;
 
   (state.medicalShifts || []).forEach(shift => {
-    if (!shift.dateWorked.startsWith(currentMonthKey)) return;
+    // Exclude cancelled shifts
+    if (shift.executionStatus === 'cancelled') return;
     if (scope === 'partner1' && shift.partner === 'partner2') return;
     if (scope === 'partner2' && shift.partner === 'partner1') return;
 
-    const amt = shift.netAmount || shift.grossAmount || 0;
+    const totalCents = Math.round((shift.netAmount ?? shift.grossAmount ?? 0) * 100);
+    const allocatedCents = (state.shiftIncomeAllocations || []).reduce(
+      (sum, ledger) => sum + (ledger.allocations[shift.id] || 0),
+      0
+    );
+    const outstandingCents = Math.max(0, totalCents - allocatedCents);
+
+    const payMonth = (shift.estimatedPayDate || shift.dateWorked).slice(0, 7);
+    const actualPayMonth = shift.actualPayDate ? shift.actualPayDate.slice(0, 7) : undefined;
+
     if (shift.status === 'received') {
-      confirmedMedicalReceivables += amt;
-    } else if (shift.status === 'pending') {
-      pendingMedicalReceivables += amt;
+      if ((actualPayMonth && actualPayMonth === currentMonthKey) || (!actualPayMonth && payMonth === currentMonthKey)) {
+        confirmedMedicalReceivables += totalCents / 100;
+      }
+    } else {
+      // Pending or overdue
+      const isDueOrOverdue =
+        payMonth === currentMonthKey ||
+        shift.status === 'overdue' ||
+        (Boolean(shift.estimatedPayDate) && shift.estimatedPayDate < todayDateStr);
+
+      if (isDueOrOverdue) {
+        pendingMedicalReceivables += outstandingCents / 100;
+      }
+
+      if (allocatedCents > 0 && ((actualPayMonth && actualPayMonth === currentMonthKey) || payMonth === currentMonthKey)) {
+        confirmedMedicalReceivables += allocatedCents / 100;
+      }
     }
   });
+
+  pendingMedicalReceivables = roundMoney(pendingMedicalReceivables);
+  confirmedMedicalReceivables = roundMoney(confirmedMedicalReceivables);
 
   // 9. Moving 7-Day Window & Daily Limit
   const exceptionalReservations = options?.exceptionalReservations || [];
@@ -383,7 +484,7 @@ export function calculateThermometerEngine(
 
   const effectiveDailyLimitAfterReservations = safeDailyLimit;
 
-  // Next 7 days commitments
+  // Next 7 days commitments (includes both bills and active installments)
   const next7DaysEnd = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
   const moving7DayCommitments = pendingCommitmentsList
     .filter(c => c.dueDate && c.dueDate >= todayDateStr && c.dueDate <= next7DaysEnd)
@@ -394,25 +495,33 @@ export function calculateThermometerEngine(
       date: c.dueDate || todayDateStr,
     }));
 
-  const moving7DayCommitmentsAmount = moving7DayCommitments.reduce((sum, c) => sum + c.amount, 0);
+  const moving7DayCommitmentsAmount = roundMoney(moving7DayCommitments.reduce((sum, c) => sum + c.amount, 0));
 
-  // 10. Closing Projections
-  const estimatedRemainingVariable = safeDailyLimit * daysRemainingInMonth;
-  const baseProjectedClosingSpent = totalConsumedAmount + estimatedRemainingVariable;
-  const baseProjectedClosingMargin = expenseBudget - baseProjectedClosingSpent;
+  // 10. Closing Projections: separate historical run-rate from ceiling scenario
+  const elapsedDays = Math.max(1, currentDayOfMonth);
+  const dailyRunRate = spentSoFar / elapsedDays;
+  const remainingDays = Math.max(0, daysInMonth - currentDayOfMonth);
+  const projectedVariableRemaining = roundMoney(dailyRunRate * remainingDays);
 
-  // Tight scenario (e.g. delayed medical shift or +15% variable spend)
+  const baseProjectedClosingSpent = roundMoney(spentSoFar + pendingCommitmentsAmount + projectedVariableRemaining);
+  const baseProjectedClosingMargin = roundMoney(expenseBudget - baseProjectedClosingSpent);
+
+  const ceilingScenarioSpent = isOverBudget ? totalConsumedAmount : expenseBudget;
+  const ceilingScenarioMargin = roundMoney(expenseBudget - ceilingScenarioSpent);
+
+  // Tight scenario (e.g. delayed medical shift or +10% variable spend)
   const tightShiftDelay = options?.tightShiftDelayAmount || 0;
-  const tightProjectedClosingSpent = baseProjectedClosingSpent + (isOverBudget ? 0 : Math.round(expenseBudget * 0.1));
-  const tightProjectedClosingMargin = baseProjectedClosingMargin - tightShiftDelay - (isOverBudget ? 0 : Math.round(expenseBudget * 0.1));
+  const tightProjectedClosingSpent = roundMoney(baseProjectedClosingSpent + (isOverBudget ? 0 : expenseBudget * 0.1));
+  const tightProjectedClosingMargin = roundMoney(expenseBudget - tightProjectedClosingSpent - tightShiftDelay);
 
   const projectionHypotheses = [
     `Compromissos fixos e parcelas de ${formatCurrency(pendingCommitmentsAmount)} contados exatamente 1x`,
-    `Ritmo diário variável de ${formatCurrency(safeDailyLimit)} nos ${daysRemainingInMonth} dias restantes`,
-    `Aportes programados de ${formatCurrency(programmedSavings)} já blindados no início do mês`,
+    `Projeção histórica por ritmo realizado de ${formatCurrency(roundMoney(dailyRunRate))}/dia (${remainingDays} dias restantes)`,
+    `Cenário teto limitando gastos a ${formatCurrency(safeDailyLimit)}/dia nos ${daysRemainingInMonth} dias`,
+    `Aportes programados de ${formatCurrency(programmedSavings)} blindados no início do mês`,
   ];
 
-  // 11. Coverage & Confidence Status
+  // 11. Coverage & Confidence Status (Explicit check-in)
   let lastImportDate: string | undefined;
   let lastEntryDate: string | undefined;
 
@@ -426,17 +535,17 @@ export function calculateThermometerEngine(
     lastImportDate = dates[dates.length - 1];
   }
 
-  const lastConferredDate = options?.lastWeeklyCheckInAt || state.lastAcknowledgedTierKey || todayDateStr;
+  const lastConferredDate = options?.lastWeeklyCheckInAt || state.lastWeeklyCheckInAt;
 
-  let coverageStatus: 'conferido' | 'parcial' | 'pendente_conferencia' = 'conferido';
-  let coverageMessage = 'Registros do casal revisados e alinhados com o plano.';
+  let coverageStatus: 'conferido' | 'parcial' | 'pendente_conferencia' = 'pendente_conferencia';
+  let coverageMessage = 'Nenhuma conferência semanal registrada pelo casal ainda neste mês.';
 
-  if (!lastImportDate && !lastEntryDate) {
-    coverageStatus = 'pendente_conferencia';
-    coverageMessage = 'Nenhum lançamento registrado neste mês ainda.';
-  } else if (lastImportDate && lastImportDate < `${currentMonthKey}-10`) {
+  if (lastConferredDate) {
+    coverageStatus = 'conferido';
+    coverageMessage = `Conferência do casal realizada em ${lastConferredDate}.`;
+  } else if (lastImportDate || lastEntryDate) {
     coverageStatus = 'parcial';
-    coverageMessage = 'Extrato bancário precisa de atualização para a segunda metade do mês.';
+    coverageMessage = 'Lançamentos presentes, mas conferência semanal do casal ainda pendente.';
   }
 
   // 12. Top 3 Prioritized Decision Actions
@@ -479,10 +588,15 @@ export function calculateThermometerEngine(
     });
   }
 
-  // What Changed Summary
+  // What Changed Summary (Diff since last check-in)
+  let newEntriesSinceConference = currentMonthExpenses;
+  if (lastConferredDate) {
+    newEntriesSinceConference = currentMonthExpenses.filter(e => e.date > lastConferredDate);
+  }
+
   const whatChangedSummary = {
-    newEntriesCount: currentMonthExpenses.length,
-    newEntriesTotal: spentSoFar,
+    newEntriesCount: newEntriesSinceConference.length,
+    newEntriesTotal: roundMoney(newEntriesSinceConference.reduce((sum, e) => sum + e.amount, 0)),
     marginDelta: signedMargin,
     lastCheckedAt: lastConferredDate,
   };
@@ -528,6 +642,8 @@ export function calculateThermometerEngine(
     moving7DayCommitments,
     baseProjectedClosingSpent,
     baseProjectedClosingMargin,
+    ceilingScenarioSpent,
+    ceilingScenarioMargin,
     tightProjectedClosingSpent,
     tightProjectedClosingMargin,
     projectionHypotheses,

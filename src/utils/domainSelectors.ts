@@ -202,6 +202,175 @@ export function selectLiquidOperationalCash(
 }
 
 /**
+  * Selects configured annual yield percentage (above inflation), respecting explicit 0%.
+  */
+export function selectAnnualYield(state: AppState): number {
+  if (state.profile?.expectedYieldAnnual !== undefined && state.profile?.expectedYieldAnnual !== null) {
+    return state.profile.expectedYieldAnnual;
+  }
+  return 6.5; // Default fallback only when undefined or null
+}
+
+/**
+  * Selects emergency reserve metrics (Block 1).
+  */
+export function selectEmergencyReserveMetrics(state: AppState, monthlyExpenses: number) {
+  const currentAmount = state.protectionCurrentAmount || 0;
+  const totalInvested = state.protectionTotalInvested || 0;
+  const yieldAccumulated = state.protectionYieldAccumulated ?? (currentAmount - totalInvested);
+  const targetMonths = state.profile?.emergencyReserveMonthsTarget || 6;
+  const targetAmount = roundMoney(monthlyExpenses * targetMonths);
+  const monthsCovered = monthlyExpenses > 0 ? Number((currentAmount / monthlyExpenses).toFixed(1)) : 0;
+
+  return {
+    currentAmount: roundMoney(currentAmount),
+    totalInvested: roundMoney(totalInvested),
+    yieldAccumulated: roundMoney(yieldAccumulated),
+    targetMonths,
+    targetAmount,
+    monthsCovered,
+    isComplete: currentAmount >= targetAmount && targetAmount > 0,
+  };
+}
+
+/**
+  * Selects Freedom Investment metrics (Block 3).
+  * Preserves negative yield returns when market value drops below invested amount.
+  */
+export function selectFreedomMetrics(state: AppState) {
+  const totalInvested = state.freedomTotalInvested || 0;
+  const yieldAccumulated = state.freedomYieldAccumulated ?? 0;
+  const currentAmount = roundMoney(totalInvested + yieldAccumulated);
+
+  return {
+    totalInvested: roundMoney(totalInvested),
+    yieldAccumulated: roundMoney(yieldAccumulated),
+    currentAmount,
+  };
+}
+
+/**
+  * Selects Piggy Banks and Couple Goals metrics (Block 2).
+  * Separates short-term consumption goals from FIRE-eligible long-term capital.
+  */
+export function selectPiggyAndGoalsMetrics(state: AppState) {
+  const piggyBanks = state.piggyBanks || [];
+  const coupleGoals = state.coupleGoals || [];
+
+  let totalPiggyAmount = 0;
+  let totalPiggyInvested = 0;
+  let totalPiggyYield = 0;
+  let fireEligibleGoalsAmount = 0;
+  let monthlyPlannedPace = 0;
+
+  piggyBanks.forEach((pb) => {
+    const cur = pb.currentAmount || 0;
+    const inv = pb.totalInvested ?? cur;
+    const yld = pb.yieldAccumulated ?? (cur - inv);
+    totalPiggyAmount += cur;
+    totalPiggyInvested += inv;
+    totalPiggyYield += yld;
+    monthlyPlannedPace += pb.monthlyDeposit || 0;
+
+    if (pb.isFireEligible) {
+      fireEligibleGoalsAmount += cur;
+    }
+  });
+
+  coupleGoals.forEach((cg) => {
+    const existsInPiggy = piggyBanks.some((pb) => pb.id === cg.id);
+    if (!existsInPiggy) {
+      const cur = cg.currentAmount || 0;
+      totalPiggyAmount += cur;
+      monthlyPlannedPace += cg.monthlyPlannedDeposit || 0;
+      if (cg.category === 'liberdade' || cg.category === 'reserva') {
+        fireEligibleGoalsAmount += cur;
+      }
+    }
+  });
+
+  return {
+    totalPiggyAmount: roundMoney(totalPiggyAmount),
+    totalPiggyInvested: roundMoney(totalPiggyInvested),
+    totalPiggyYield: roundMoney(totalPiggyYield),
+    fireEligibleGoalsAmount: roundMoney(fireEligibleGoalsAmount),
+    monthlyPlannedPace: roundMoney(monthlyPlannedPace),
+  };
+}
+
+/**
+  * Computes canonical FIRE metrics using Block 3 + FIRE eligible goals.
+  */
+export function selectFIREMetrics(
+  state: AppState,
+  monthlyExpenses: number,
+  customInvestmentPace?: number
+) {
+  const annualYieldPct = selectAnnualYield(state);
+  const annualYield = annualYieldPct / 100;
+  const monthlyRate = annualYield / 12;
+
+  const freedomMetrics = selectFreedomMetrics(state);
+  const piggyMetrics = selectPiggyAndGoalsMetrics(state);
+
+  // Eligible FIRE Capital strictly = Block 3 (Freedom) + FIRE Eligible Goals
+  const fireEligibleCapital = roundMoney(freedomMetrics.currentAmount + piggyMetrics.fireEligibleGoalsAmount);
+  const fireTargetNetWorth = roundMoney(monthlyExpenses * 300); // 300x monthly (25x annual)
+  const fireProgressPct = fireTargetNetWorth > 0
+    ? Math.min(100, Math.round((fireEligibleCapital / fireTargetNetWorth) * 100))
+    : 0;
+
+  const monthlyInvestmentPace = customInvestmentPace !== undefined
+    ? customInvestmentPace
+    : piggyMetrics.monthlyPlannedPace;
+
+  let estimatedYearsToFIRE: number = Infinity;
+
+  if (fireTargetNetWorth <= 0) {
+    estimatedYearsToFIRE = 0;
+  } else if (fireEligibleCapital >= fireTargetNetWorth) {
+    estimatedYearsToFIRE = 0;
+  } else if (monthlyInvestmentPace <= 0) {
+    if (monthlyRate > 0 && fireEligibleCapital > 0) {
+      let sim = fireEligibleCapital;
+      let months = 0;
+      while (sim < fireTargetNetWorth && months < 600) {
+        sim = sim * (1 + monthlyRate);
+        months++;
+      }
+      if (sim >= fireTargetNetWorth) {
+        estimatedYearsToFIRE = Number((months / 12).toFixed(1));
+      } else {
+        estimatedYearsToFIRE = Infinity;
+      }
+    } else {
+      estimatedYearsToFIRE = Infinity;
+    }
+  } else {
+    let sim = fireEligibleCapital;
+    let months = 0;
+    while (sim < fireTargetNetWorth && months < 600) {
+      sim = (sim + monthlyInvestmentPace) * (1 + monthlyRate);
+      months++;
+    }
+    if (sim >= fireTargetNetWorth) {
+      estimatedYearsToFIRE = Number((months / 12).toFixed(1));
+    } else {
+      estimatedYearsToFIRE = Infinity;
+    }
+  }
+
+  return {
+    fireEligibleCapital,
+    fireTargetNetWorth,
+    fireProgressPct,
+    estimatedYearsToFIRE,
+    monthlyInvestmentPace,
+    annualYieldPct,
+  };
+}
+
+/**
   * Computes total protected assets (Emergency Reserve + Freedom Investments + Piggy Banks / Couple Goals).
   */
 export function selectTotalProtectedAssets(
@@ -214,17 +383,12 @@ export function selectTotalProtectedAssets(
   totalProtected: number;
 } {
   const protection = roundMoney(state.protectionCurrentAmount || 0);
-  const freedom = roundMoney(state.freedomTotalInvested || 0);
+  const freedom = selectFreedomMetrics(state).currentAmount;
+  const goalsAndPiggyBanks = selectPiggyAndGoalsMetrics(state).totalPiggyAmount;
 
-  let goalsAndPiggyBanks = 0;
-  (state.piggyBanks || []).forEach((pb) => {
-    goalsAndPiggyBanks += pb.currentAmount || 0;
-  });
-
-  // Scale by 0.5 for partner scopes if joint
   let protectionShare = protection;
   let freedomShare = freedom;
-  let goalsShare = roundMoney(goalsAndPiggyBanks);
+  let goalsShare = goalsAndPiggyBanks;
 
   if (scope !== 'casal') {
     protectionShare = roundMoney(protection / 2);
