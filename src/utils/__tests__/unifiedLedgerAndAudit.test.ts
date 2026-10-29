@@ -14,6 +14,7 @@ describe('Unified Ledger and Statement Traceability', () => {
         expectedYieldAnnual: 6,
         streakMonths: 0,
         themeMode: 'light',
+        city: 'São Paulo',
         accentTheme: 'emerald',
       },
       expenses: [
@@ -70,6 +71,7 @@ describe('Unified Ledger and Statement Traceability', () => {
         expectedYieldAnnual: 6,
         streakMonths: 0,
         themeMode: 'light',
+        city: 'São Paulo',
         accentTheme: 'emerald',
       },
       expenses: [],
@@ -137,6 +139,7 @@ describe('Unified Ledger and Statement Traceability', () => {
         expectedYieldAnnual: 6,
         streakMonths: 0,
         themeMode: 'light',
+        city: 'São Paulo',
         accentTheme: 'emerald',
       },
       expenses: [

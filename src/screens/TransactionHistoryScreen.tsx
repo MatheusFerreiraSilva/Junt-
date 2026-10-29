@@ -598,6 +598,7 @@ export const TransactionHistoryScreen: React.FC<TransactionHistoryScreenProps> =
       {/* Triage Bottom Sheet Modal for Editing Expenses */}
       {triageExpense && (
         <TransactionTriageBottomSheet
+          isOpen={!!triageExpense}
           expense={triageExpense}
           onClose={() => setTriageExpense(null)}
         />

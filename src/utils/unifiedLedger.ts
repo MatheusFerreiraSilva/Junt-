@@ -170,7 +170,7 @@ export function buildUnifiedLedger(
 
     let linkedEvent: string | undefined = undefined;
     if (linkedShift) {
-      linkedEvent = `Plantão ${linkedShift.hospitalName || 'Médico'} (${linkedShift.date.split('-').reverse().join('/')})`;
+      linkedEvent = `Plantão ${linkedShift.hospitalName || 'Médico'} (${linkedShift.dateWorked.split('-').reverse().join('/')})`;
     } else if (inc.type === 'salario') {
       linkedEvent = 'Salário / Pro-labore Regular';
     } else if (inc.type === 'bonus') {
@@ -204,7 +204,7 @@ export function buildUnifiedLedger(
         linkedEvent,
         linkedEntityId: linkedShift?.id,
         shiftHospitalName: linkedShift?.hospitalName,
-        shiftDate: linkedShift?.date,
+        shiftDate: linkedShift?.dateWorked,
       },
       rawIncome: inc,
     });

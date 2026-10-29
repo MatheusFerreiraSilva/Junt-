@@ -2436,6 +2436,7 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
       if (!forceUnlink && ((allocated && Object.keys(allocated.allocations).length > 0) || linkedShifts.length > 0)) {
         return {
           ...prev,
+          incomes: prev.incomes,
           notifications: [
             {
               id: 'linked-income:' + id,
@@ -2455,8 +2456,7 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
         if (shift.linkedIncomeId === id) {
           return {
             ...shift,
-            status: 'completed' as const,
-            payoutReceived: false,
+            status: 'pending' as const,
             linkedIncomeId: undefined,
           };
         }
