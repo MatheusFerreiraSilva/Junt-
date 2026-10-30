@@ -18,6 +18,18 @@ describe.skipIf(!enabled)('Firestore couple isolation (emulator only)', () => {
     });
   });
   afterAll(async () => { await env?.cleanup(); });
+  it('preserves custom splits already supported by expenses, installments and income', async () => {
+    const db = env.authenticatedContext('alice').firestore();
+    for (const field of ['expenses', 'installments', 'incomes']) {
+      await assertSucceeds(setDoc(doc(db, 'couples/a/entities/custom-' + field), {
+        field, record: { id: 'custom-' + field, amount: 100, paidBy: 'custom', recipient: 'custom', splitPartner1Pct: 35, splitPartner2Pct: 65 },
+        deleted: false, schemaVersion: 1,
+      }));
+    }
+    await assertFails(setDoc(doc(db, 'couples/a/entities/invalid-payer'), {
+      field: 'expenses', record: { id: 'invalid', amount: 100, paidBy: 'unknown-person' }, deleted: false, schemaVersion: 1,
+    }));
+  });
   it('denies unauthenticated and unrelated couple reads', async () => {
     await assertFails(getDoc(doc(env.unauthenticatedContext().firestore(), 'couples/a')));
     await assertFails(getDoc(doc(env.authenticatedContext('mallory').firestore(), 'couples/a')));

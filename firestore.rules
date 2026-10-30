@@ -17,8 +17,8 @@ service cloud.firestore {
         && !record.keys().hasAny(['pluggyCredentials', 'clientSecret', 'apiKey', 'accessToken'])
         && (!(field in ['expenses', 'incomes', 'bankImportedTransactions']) ||
           (record.amount is number && record.amount >= 0 && record.amount <= 90071992547409))
-        && (!('paidBy' in record) || record.paidBy in ['partner1', 'partner2', 'both'])
-        && (!('recipient' in record) || record.recipient in ['partner1', 'partner2', 'both']);
+        && (!('paidBy' in record) || record.paidBy in ['partner1', 'partner2', 'both', 'custom'])
+        && (!('recipient' in record) || record.recipient in ['partner1', 'partner2', 'both', 'custom']);
     }
     function validEntity(data) {
       return data.keys().hasOnly(['field', 'record', 'deleted', 'schemaVersion'])
