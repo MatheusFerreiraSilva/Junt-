@@ -1,0 +1,33 @@
+.junto-avatar-art {
+  display: inline-block;
+  flex-shrink: 0;
+  vertical-align: middle;
+  overflow: visible;
+  isolation: isolate;
+}
+.junto-avatar-halo {
+  fill: #ede6da;
+}
+.dark .junto-avatar-halo {
+  fill: #343640;
+}
+.junto-avatar-head {
+  transform-origin: 100px 130px;
+  transition: transform 240ms ease;
+}
+.junto-avatar-art:hover .junto-avatar-head {
+  transform: rotate(-3deg) translateY(-1px);
+}
+@media (prefers-reduced-motion: reduce) {
+  .junto-avatar-head {
+    transition: none;
+  }
+  .junto-avatar-art:hover .junto-avatar-head {
+    transform: none;
+  }
+}
+
+.junto-avatar-art {
+  max-width: 100%;
+  height: auto;
+}

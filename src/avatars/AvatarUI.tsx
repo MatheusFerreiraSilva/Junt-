@@ -1,0 +1,282 @@
+import { Component, lazy, Suspense, useState, type ReactNode } from 'react';
+import { ArrowUpRight, Palette, X } from 'lucide-react';
+import { useFinance } from '../context/FinanceContext';
+import { useDialogFocus } from '../hooks/useDialogFocus';
+import { Avatar } from './Avatar';
+import { DEFAULT_AVATAR } from './avatarConfig';
+import { useAvatars, type AvatarRole } from './AvatarProvider';
+
+const AvatarEditor = lazy(() =>
+  import('./AvatarEditor').then((m) => ({ default: m.AvatarEditor }))
+);
+
+export function MemberAvatar({
+  member,
+  size = 28,
+  body = false,
+}: {
+  member: AvatarRole;
+  size?: number;
+  body?: boolean;
+}) {
+  const { records } = useAvatars();
+  const { state } = useFinance();
+  const name = member === 'partner1' ? state.profile.partner1Name : state.profile.partner2Name;
+  const config = records[member]?.config;
+  if (config || body)
+    return (
+      <Avatar config={config || DEFAULT_AVATAR} variant={body ? 'body' : 'face'} size={size} />
+    );
+  const initials =
+    name
+      .trim()
+      .split(/\s+/)
+      .slice(0, 2)
+      .map((n) => n[0])
+      .join('') || '?';
+  return (
+    <span
+      aria-hidden="true"
+      className="inline-flex shrink-0 items-center justify-center rounded-full border border-stone-300 bg-stone-100 font-semibold text-stone-700 dark:border-slate-600 dark:bg-slate-800 dark:text-stone-200"
+      style={{ width: size, height: size, fontSize: Math.max(9, size * 0.34) }}
+    >
+      {initials}
+    </span>
+  );
+}
+
+export function CoupleFaces({ size = 25 }: { size?: number }) {
+  return (
+    <span className="inline-flex shrink-0 items-center -space-x-1.5" aria-hidden="true">
+      <MemberAvatar member="partner1" size={size} />
+      <MemberAvatar member="partner2" size={size} />
+    </span>
+  );
+}
+
+export function AvatarHero() {
+  const { state, viewMode } = useFinance();
+  const { openEditor, editableRole, localOnly } = useAvatars();
+  const roles: AvatarRole[] = viewMode === 'couple' ? ['partner1', 'partner2'] : [viewMode];
+  const target = viewMode === 'couple' ? editableRole || 'partner1' : viewMode;
+  const canPersonalize = localOnly || target === editableRole;
+  return (
+    <section
+      className="relative flex items-center justify-between gap-3 overflow-hidden rounded-3xl border border-stone-200 bg-stone-50 px-5 pt-5 dark:border-slate-700 dark:bg-slate-900 sm:px-7"
+      aria-label="Os rostos do seu Juntô"
+    >
+      <div className="min-w-0 pb-5">
+        <p className="mb-1 text-[10px] font-bold uppercase tracking-[.18em] text-accent-themed">
+          Do jeito de vocês
+        </p>
+        <h2 className="font-display text-lg font-bold text-slate-900 dark:text-slate-100 sm:text-xl">
+          {viewMode === 'couple' ? 'Duas histórias. Um plano.' : 'Seu espaço, sua presença.'}
+        </h2>
+        <button
+          type="button"
+          onClick={() => openEditor(viewMode === 'couple' ? editableRole || 'partner1' : viewMode)}
+          className="mt-3 inline-flex min-h-11 items-center gap-1.5 rounded-xl text-left text-xs font-semibold text-slate-700 underline decoration-stone-300 underline-offset-4 hover:text-accent-themed focus-visible:outline focus-visible:outline-2 dark:text-slate-300"
+        >
+          {localOnly ? 'Experimentar nossos avatares' : canPersonalize ? 'Personalizar meu avatar' : 'Ver avatar'}{' '}
+          <ArrowUpRight size={14} />
+        </button>
+      </div>
+      <div className="flex shrink-0 items-end -space-x-4 sm:-space-x-3" aria-hidden="true">
+        {roles.map((role) => (
+          <div key={role} className="w-[60px] sm:w-[100px]">
+            <MemberAvatar member={role} body size={100} />
+            <span className="sr-only">
+              {state.profile[(role + 'Name') as 'partner1Name' | 'partner2Name']}
+            </span>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+export function AvatarSettings() {
+  const { state } = useFinance();
+  const { localOnly, editableRole, ready, error, openEditor, records } = useAvatars();
+  return (
+    <section className="space-y-5 rounded-3xl border border-stone-200 bg-white p-5 dark:border-slate-700 dark:bg-slate-900 sm:p-7">
+      <div>
+        <p className="text-xs font-semibold uppercase tracking-widest text-accent-themed">
+          Um toque de vocês
+        </p>
+        <h3 className="mt-2 font-display text-2xl font-bold text-slate-900 dark:text-white">
+          Rostos que contam histórias
+        </h3>
+        <p className="mt-2 max-w-xl text-sm leading-relaxed text-slate-600 dark:text-slate-300">
+          Pele, cabelo, expressão e roupa. Todas as combinações estão abertas para cada pessoa. Sem
+          rótulos, sem precisar de foto.
+        </p>
+      </div>
+      {localOnly && (
+        <p
+          role="status"
+          className="rounded-xl bg-amber-50 p-3 text-sm text-amber-900 dark:bg-amber-950/40 dark:text-amber-200"
+        >
+          Modo de demonstração: vocês podem experimentar os dois avatares. As escolhas ficam somente
+          neste aparelho e não são copiadas para uma conta ao entrar.
+        </p>
+      )}
+      {error && (
+        <p role="alert" className="text-sm text-rose-700 dark:text-rose-300">
+          {error}
+        </p>
+      )}
+      <div className="grid gap-4 sm:grid-cols-2">
+        {(['partner1', 'partner2'] as const).map((role) => {
+          const name =
+            role === 'partner1' ? state.profile.partner1Name : state.profile.partner2Name;
+          const canEdit = localOnly || editableRole === role;
+          return (
+            <div
+              key={role}
+              className="flex flex-col items-center rounded-2xl border border-stone-200 bg-stone-50 p-4 dark:border-slate-700 dark:bg-slate-800/50"
+            >
+              <MemberAvatar member={role} body size={160} />
+              <h4 className="mt-2 max-w-full break-words text-center text-base font-semibold text-slate-900 dark:text-white">
+                {name}
+              </h4>
+              <p className="mt-1 text-center text-xs text-slate-500 dark:text-slate-400">
+                {records[role]
+                  ? 'Um jeito só seu de estar aqui'
+                  : 'Uma página em branco para sua imaginação'}
+              </p>
+              <button
+                type="button"
+                disabled={!ready}
+                onClick={() => openEditor(role)}
+                className="btn-primary-accent mt-4 inline-flex min-h-11 items-center justify-center gap-2 rounded-xl px-4 py-2 text-sm font-bold text-white disabled:opacity-50"
+              >
+                <Palette size={16} />
+                {canEdit ? 'Personalizar' : 'Ver avatar'}
+              </button>
+              {!localOnly && !canEdit && (
+                <p className="mt-2 text-center text-xs text-slate-500 dark:text-slate-400">
+                  Cada pessoa salva o seu pela própria conta.
+                </p>
+              )}
+            </div>
+          );
+        })}
+      </div>
+      {!localOnly && !editableRole && ready && !error && (
+        <p className="text-sm text-slate-600 dark:text-slate-300">
+          Conclua o vínculo do casal para salvar seu avatar na nuvem. Você pode visualizar as opções
+          enquanto isso.
+        </p>
+      )}
+    </section>
+  );
+}
+
+class EditorBoundary extends Component<
+  { children: ReactNode; onClose: () => void },
+  { failed: boolean }
+> {
+  state = { failed: false };
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+  render() {
+    if (!this.state.failed) return this.props.children;
+    return (
+      <div role="alert" className="p-6 text-slate-800 dark:text-slate-200">
+        <p>Não foi possível abrir o editor. Suas finanças não foram alteradas.</p>
+        <button type="button" onClick={this.props.onClose} className="mt-4 min-h-11 underline">
+          Voltar ao aplicativo
+        </button>
+      </div>
+    );
+  }
+}
+
+function EditorDialog({ role }: { role: AvatarRole }) {
+  const { state } = useFinance();
+  const { records, localOnly, editableRole, save, closeEditor } = useAvatars();
+  const [dirty, setDirty] = useState(false);
+  const [saving, setSaving] = useState(false);
+  // Freeze the editing base: a remote update must cause a conflict, not erase a draft.
+  const [base] = useState(() => records[role]);
+  const canEdit = localOnly || editableRole === role;
+  const close = () => {
+    if (saving) return;
+    if (!dirty || window.confirm('Descartar as alterações deste avatar?')) closeEditor();
+  };
+  const focusRef = useDialogFocus(true, close);
+  const name = role === 'partner1' ? state.profile.partner1Name : state.profile.partner2Name;
+  return (
+    <div
+      className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-950/65 p-2 sm:p-5"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) close();
+      }}
+    >
+      <div
+        ref={focusRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="avatar-dialog-title"
+        tabIndex={-1}
+        className="max-h-[94dvh] w-full max-w-4xl overflow-y-auto overscroll-contain rounded-3xl bg-stone-50 shadow-2xl dark:bg-slate-950"
+      >
+        <div className="sticky top-0 z-10 flex items-center justify-between gap-3 border-b border-stone-200 bg-stone-50 px-5 py-3 dark:border-slate-700 dark:bg-slate-950">
+          <h2
+            id="avatar-dialog-title"
+            className="truncate text-sm font-bold text-slate-900 dark:text-white"
+          >
+            O avatar de {name}
+          </h2>
+          <button
+            type="button"
+            disabled={saving}
+            onClick={close}
+            aria-label="Fechar editor de avatar"
+            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full hover:bg-stone-200 focus-visible:outline focus-visible:outline-2 disabled:opacity-50 dark:text-white dark:hover:bg-slate-800"
+          >
+            <X size={20} />
+          </button>
+        </div>
+        {canEdit ? (
+          <EditorBoundary onClose={closeEditor}>
+            <Suspense
+              fallback={
+                <p role="status" className="p-8 text-slate-700 dark:text-slate-200">
+                  Preparando seu ateliê…
+                </p>
+              }
+            >
+              <AvatarEditor
+                initialConfig={base?.config || DEFAULT_AVATAR}
+                name={name}
+                localOnly={localOnly}
+                onDirtyChange={setDirty}
+                onSavingChange={setSaving}
+                onCancel={closeEditor}
+                onSave={async (config) => {
+                  await save(role, config, base?.revision || 0);
+                  closeEditor();
+                }}
+              />
+            </Suspense>
+          </EditorBoundary>
+        ) : (
+          <div className="flex flex-col items-center p-8">
+            <MemberAvatar member={role} body size={220} />
+            <p className="mt-4 text-center text-sm text-slate-700 dark:text-slate-300">
+              Para personalizar, entre na conta vinculada a {name}.
+            </p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+export function AvatarEditorOutlet() {
+  const { editorRole } = useAvatars();
+  return editorRole ? <EditorDialog key={editorRole} role={editorRole} /> : null;
+}

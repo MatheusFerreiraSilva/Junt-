@@ -6,6 +6,7 @@ import dotenv from 'dotenv';
 import { requireAuth, userQuota } from './server/security';
 import { registerPluggy } from './server/pluggy';
 import { registerCouples } from './server/couples';
+import { registerAvatars } from './server/avatars';
 import { buildBudgetFallback, validBudget } from './server/budget';
 import path from 'path';
 import fs from 'fs';
@@ -61,6 +62,7 @@ app.use('/api', (_req, res, next) => { res.setHeader('Cache-Control', 'no-store'
 app.use('/api', requireAuth);
 registerPluggy(app);
 registerCouples(app);
+registerAvatars(app);
 
 // -------------------------------------------------------------
 // Length bounds for untrusted context (not an injection security boundary)
