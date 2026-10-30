@@ -72,6 +72,33 @@ service cloud.firestore {
         allow delete: if false;
       }
     }
+
+    // Account avatars are read-only from the browser. The authenticated API
+    // validates and writes the owner's compact recipe through Firebase Admin.
+    function avatarAccountSignedIn() {
+      return signedIn() && request.auth.token.firebase.sign_in_provider != 'anonymous';
+    }
+    function avatarPairInCouple(coupleId, targetUid) {
+      let couple = get(/databases/$(database)/documents/couples/$(coupleId)).data;
+      return member(couple)
+        && (couple.partner1Uid == targetUid || couple.partner2Uid == targetUid)
+        && (!('departedMembers' in couple) || !(targetUid in couple.departedMembers) || couple.departedMembers[targetUid] != true);
+    }
+    function avatarSharedWith(targetUid) {
+      let readerPath = /databases/$(database)/documents/users/$(request.auth.uid);
+      let targetPath = /databases/$(database)/documents/users/$(targetUid);
+      return exists(readerPath) && exists(targetPath)
+        && get(readerPath).data.coupleId is string
+        && get(readerPath).data.coupleId.size() > 0
+        && get(targetPath).data.coupleId == get(readerPath).data.coupleId
+        && avatarPairInCouple(get(readerPath).data.coupleId, targetUid);
+    }
+    match /avatars/{uid} {
+      allow get: if avatarAccountSignedIn()
+        && (request.auth.uid == uid || avatarSharedWith(uid));
+      allow list, create, update, delete: if false;
+    }
+
     // Invite hashes, provider tokens, item ownership and rate-limit records are server-only.
     match /coupleInvites/{code} { allow read, write: if false; }
     match /{document=**} { allow read, write: if false; }

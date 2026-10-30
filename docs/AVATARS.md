@@ -1,26 +1,22 @@
-# Avatares do casal
+# Avatares pessoais e compartilhamento
 
-O editor fica em Ajustes → Nossos avatares e no atalho do dashboard. Usa arte SVG local de rosto/corpo, sem IA, fotos ou dependências novas. Catálogo e configuração são versionados e validados por whitelist, sem aceitar SVG/HTML externo. Todas as opções estão disponíveis a qualquer integrante.
+O avatar pertence à conta autenticada (UID). O casal apenas determina quem pode visualizar o outro perfil. Editor, arte, animações, temas e cálculos financeiros foram preservados.
 
-## Comportamento
+## Armazenamento e API
 
-- Prévia, grupos de aparência, desfazer/refazer, combinação aleatória e reinício alteram somente o rascunho. Cancelar não publica; fechar com alterações pede confirmação.
-- Tema claro/escuro preserva cores escolhidas. Hover suave respeita redução de movimento.
-- Seletores mostram rosto ou iniciais; dashboard mostra uma pessoa ou o casal conforme o filtro, sem alterar a identidade autenticada.
-- Demonstração: escolhas de ambas as pessoas ficam em junto-demo-avatars-v1 no aparelho. Não são copiadas automaticamente ao entrar em conta.
-- Conta vinculada: cada UID salva apenas seu avatar. O parceiro pode visualizá-lo. Não é possível editar um convidado ainda não vinculado.
-- Sem rede, o rascunho permanece aberto com erro de confirmação; não há promessa de publicação offline nem fila automática de salvamento.
+Documento avatars/{uid}: ownerUid, revision, config (com versão própria). POST /api/avatars/save recebe config e expectedRevision sem depender de coupleId. Autorização vem da sessão verificada, nunca do payload. Revisão otimista e repetição idempotente evitam duplicidade. Conflito409 fornece currentAvatar para resolver explicitamente sem perder o rascunho. A rota antiga valida seu contexto e adapta a gravação para o documento pessoal.
 
-## Persistência e integridade
+POST /api/avatars/migrate copia legado próprio de avatarProfiles do casal somente se não existe perfil pessoal e o vínculo/proprietário são válidos. Dados pessoais existentes vencem; legado não é apagado. Demonstração fica local e importação exige escolha/prévia/confirmar como avatar próprio.
 
-POST /api/couples/avatar usa a autenticação existente e recebe coupleId, config e expectedRevision. O servidor deriva o integrante dos UIDs reais e revalida perfil/vínculo/saída em transação. Salva apenas avatarProfiles no documento do casal, em registros ownerUid/revision/config. Revisão antiga conflita; repetir a última gravação idêntica após perda de resposta é idempotente. Alterações de ambos os integrantes preservam as duas receitas de avatar. Não altera saldos, categorias, contratos financeiros ou inicialização Firebase/Gemini.
+## Leitura e sessão
 
-A rota e sua cota usam o firestoreDatabaseId já configurado no frontend. A extensão opcional de fábrica em userQuota não muda as demais rotas. Regras existentes permitem leitura do documento aos membros e impedem que clientes escrevam avatarProfiles diretamente; nenhum deploy de regras ou nova variável é necessário. Servidor e frontend devem ser publicados juntos usando a build existente. O ambiente precisa ter a autenticação e as credenciais Admin atuais funcionais.
+Firestore permite get próprio a contas não anônimas e get do parceiro apenas quando ambos os perfis apontam ao mesmo casal e os UIDs do casal estão ativos. Não permite listar coleção ou gravar diretamente. Não compartilha documentos users nem dados financeiros. Listeners separados acompanham o próprio avatar e o parceiro autorizado; saída do casal encerra acesso ao parceiro e mantém o próprio. Sessão/vínculo mudado limpa assinaturas antigas.
 
-Escolhas estão no documento do casal, vinculadas ao UID original. Trocar nome não troca avatar; sair do casal remove o acesso ao documento e não copia escolhas a outro vínculo. Exportar extrato CSV/OFX continua exportando transações, não perfil/avatar.
+## Publicação coordenada
 
-## Validação
+1. Aprovar testes unitários, tipos, lint, builds, smoke e regras em emulador/CI.
+2. Publicar firestore.rules no banco nomeado indicado por firestoreDatabaseId em firebase-applet-config.json, no projectId desse arquivo. Não aplicar por engano só ao banco(default). As novas permissões são aditivas; clientes antigos continuam operando.
+3. Integrar/públicar servidor e frontend juntos somente após regras confirmadas. Nenhuma migração destrutiva ou nova dependência é necessária.
+4. Em contas reais autorizadas, testar dois dispositivos, convite, alterações recíprocas e saída. Registrar evidência separadamente dos testes simulados.
 
-Testes automatizados cobrem whitelist, SVG seguro/IDs, edição e cancelamento, erros/retry, isolamento de sessão e modo local, autorização da API, banco configurado, concorrência e conflito. A suíte completa, lint, tipos, build cliente/PWA/servidor e smoke de produção devem passar antes da publicação. A validação de duas sessões reais no Firebase de produção exige acesso ao ambiente e não é simulada por esses testes.
-
-Uma alteração exclusivamente de avatar no documento do casal não reidrata metadados financeiros. A validação de vínculo continua ocorrendo antes desse filtro. Isso preserva alterações financeiras locais que ainda aguardam o debounce de salvamento. Respostas HTTP de avatar também não substituem uma revisão remota mais recente.
+Sem rede, o rascunho é mantido e a falha de confirmação aparece; não há fila automática nem promessa de salvamento offline. Não remova regras durante rollback de frontend sem considerar clientes já atualizados.

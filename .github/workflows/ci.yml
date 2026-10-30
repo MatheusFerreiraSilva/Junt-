@@ -38,6 +38,15 @@ jobs:
       - name: Unit tests
         run: npm run test
 
+      - name: Setup Java for Firestore rules tests
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Firestore rules (emulator only)
+        run: npx firebase emulators:exec --only firestore --project demo-junto-rules "npx vitest run --config vitest.rules.config.ts"
+
       - name: Build client and server
         run: npm run build:all
 

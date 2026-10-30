@@ -4,7 +4,12 @@ import { useFinance } from '../context/FinanceContext';
 import { useDialogFocus } from '../hooks/useDialogFocus';
 import { Avatar } from './Avatar';
 import { DEFAULT_AVATAR } from './avatarConfig';
-import { useAvatars, type AvatarRole } from './AvatarProvider';
+import {
+  AvatarConflictError,
+  useAvatars,
+  type AvatarRole,
+  type AvatarRecord,
+} from './AvatarProvider';
 
 const AvatarEditor = lazy(() =>
   import('./AvatarEditor').then((m) => ({ default: m.AvatarEditor }))
@@ -77,7 +82,11 @@ export function AvatarHero() {
           onClick={() => openEditor(viewMode === 'couple' ? editableRole || 'partner1' : viewMode)}
           className="mt-3 inline-flex min-h-11 items-center gap-1.5 rounded-xl text-left text-xs font-semibold text-slate-700 underline decoration-stone-300 underline-offset-4 hover:text-accent-themed focus-visible:outline focus-visible:outline-2 dark:text-slate-300"
         >
-          {localOnly ? 'Experimentar nossos avatares' : canPersonalize ? 'Personalizar meu avatar' : 'Ver avatar'}{' '}
+          {localOnly
+            ? 'Experimentar nossos avatares'
+            : canPersonalize
+              ? 'Personalizar meu avatar'
+              : 'Ver avatar'}{' '}
           <ArrowUpRight size={14} />
         </button>
       </div>
@@ -97,7 +106,18 @@ export function AvatarHero() {
 
 export function AvatarSettings() {
   const { state } = useFinance();
-  const { localOnly, editableRole, ready, error, openEditor, records } = useAvatars();
+  const {
+    localOnly,
+    editableRole,
+    ready,
+    error,
+    openEditor,
+    records,
+    demoRecords,
+    migrationPending,
+    migrationError,
+    retryMigration,
+  } = useAvatars();
   return (
     <section className="space-y-5 rounded-3xl border border-stone-200 bg-white p-5 dark:border-slate-700 dark:bg-slate-900 sm:p-7">
       <div>
@@ -126,6 +146,64 @@ export function AvatarSettings() {
           {error}
         </p>
       )}
+      {migrationPending && (
+        <p role="status" className="text-sm text-slate-600 dark:text-slate-300">
+          Recuperando seu avatar anterior para sua conta…
+        </p>
+      )}
+      {migrationError && (
+        <button
+          type="button"
+          onClick={retryMigration}
+          className="min-h-11 rounded-xl border border-stone-300 px-4 py-2 text-sm text-slate-800 dark:border-slate-600 dark:text-slate-100"
+        >
+          Tentar recuperar avatar anterior
+        </button>
+      )}
+      {!localOnly && editableRole && Object.keys(demoRecords).length > 0 && (
+        <section
+          aria-label="Escolhas da demonstração"
+          className="space-y-3 rounded-2xl border border-stone-200 p-4 dark:border-slate-700"
+        >
+          <h4 className="font-semibold text-slate-900 dark:text-white">
+            Gostou de um avatar da demonstração?
+          </h4>
+          <p className="text-sm text-slate-600 dark:text-slate-300">
+            Escolha um para revisar como seu avatar pessoal. Nada será atribuído ao seu par ou salvo
+            sem sua confirmação.
+          </p>
+          <div className="flex flex-wrap gap-4">
+            {(['partner1', 'partner2'] as const).map(
+              (demoRole, index) =>
+                demoRecords[demoRole] && (
+                  <div key={demoRole} className="flex flex-col items-center gap-2">
+                    <Avatar
+                      config={demoRecords[demoRole]!.config}
+                      variant="face"
+                      size={64}
+                      label={`Prévia da demonstração ${index + 1}`}
+                    />
+                    <button
+                      type="button"
+                      disabled={!ready}
+                      className="min-h-11 rounded-xl border border-stone-300 px-3 py-2 text-sm text-slate-800 dark:border-slate-600 dark:text-slate-100"
+                      onClick={() => {
+                        if (
+                          window.confirm(
+                            'Revisar este avatar como seu? Ele não será atribuído ao seu par nem salvo até você confirmar no editor.'
+                          )
+                        )
+                          openEditor(editableRole, demoRecords[demoRole]!.config);
+                      }}
+                    >
+                      Revisar opção {index + 1} como minha
+                    </button>
+                  </div>
+                )
+            )}
+          </div>
+        </section>
+      )}
       <div className="grid gap-4 sm:grid-cols-2">
         {(['partner1', 'partner2'] as const).map((role) => {
           const name =
@@ -142,7 +220,11 @@ export function AvatarSettings() {
               </h4>
               <p className="mt-1 text-center text-xs text-slate-500 dark:text-slate-400">
                 {records[role]
-                  ? 'Um jeito só seu de estar aqui'
+                  ? localOnly
+                    ? 'Salvo neste aparelho'
+                    : editableRole === role
+                      ? 'Avatar da sua conta'
+                      : 'Avatar da conta do seu par'
                   : 'Uma página em branco para sua imaginação'}
               </p>
               <button
@@ -165,8 +247,8 @@ export function AvatarSettings() {
       </div>
       {!localOnly && !editableRole && ready && !error && (
         <p className="text-sm text-slate-600 dark:text-slate-300">
-          Conclua o vínculo do casal para salvar seu avatar na nuvem. Você pode visualizar as opções
-          enquanto isso.
+          Seu avatar pertence à sua conta, mesmo sem um casal vinculado. Aguarde o carregamento do
+          perfil para personalizar.
         </p>
       )}
     </section>
@@ -196,11 +278,18 @@ class EditorBoundary extends Component<
 
 function EditorDialog({ role }: { role: AvatarRole }) {
   const { state } = useFinance();
-  const { records, localOnly, editableRole, save, closeEditor } = useAvatars();
+  const { records, localOnly, editableRole, save, closeEditor, editorInitialConfig } = useAvatars();
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
   // Freeze the editing base: a remote update must cause a conflict, not erase a draft.
   const [base] = useState(() => records[role]);
+  const [initialConfig, setInitialConfig] = useState(
+    () => editorInitialConfig || base?.config || DEFAULT_AVATAR
+  );
+  const [revision, setRevision] = useState(base?.revision || 0);
+  const [resetKey, setResetKey] = useState(0);
+  const [conflict, setConflict] = useState<AvatarRecord | null | undefined>(undefined);
+  const [notice, setNotice] = useState('');
   const canEdit = localOnly || editableRole === role;
   const close = () => {
     if (saving) return;
@@ -240,6 +329,59 @@ function EditorDialog({ role }: { role: AvatarRole }) {
             <X size={20} />
           </button>
         </div>
+        {canEdit && conflict !== undefined && (
+          <section
+            aria-label="Resolver conflito do avatar"
+            className="m-4 space-y-3 rounded-2xl border border-amber-300 bg-amber-50 p-4 text-amber-950 dark:border-amber-700 dark:bg-amber-950/60 dark:text-amber-100"
+          >
+            <h3 className="font-bold">Seu avatar mudou em outro dispositivo</h3>
+            <p className="text-sm">Seu rascunho continua preservado. Escolha qual versão usar.</p>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                className="min-h-11 rounded-xl border border-amber-500 px-3 py-2 text-sm"
+                onClick={() => {
+                  if (
+                    dirty &&
+                    !window.confirm('Descartar o rascunho e carregar a versão salva da sua conta?')
+                  )
+                    return;
+                  setInitialConfig(conflict?.config || DEFAULT_AVATAR);
+                  setRevision(conflict?.revision || 0);
+                  setConflict(undefined);
+                  setNotice('Versão da conta carregada.');
+                  setResetKey((value) => value + 1);
+                }}
+              >
+                Carregar versão salva
+              </button>
+              <button
+                type="button"
+                className="min-h-11 rounded-xl border border-amber-500 px-3 py-2 text-sm"
+                onClick={() => {
+                  if (
+                    !window.confirm(
+                      'Autorizar substituir a versão salva com seu rascunho na próxima tentativa de salvar?'
+                    )
+                  )
+                    return;
+                  setRevision(conflict?.revision || 0);
+                  setConflict(undefined);
+                  setNotice(
+                    'Rascunho preservado. Clique em Salvar meu avatar para enviar a versão que você escolheu.'
+                  );
+                }}
+              >
+                Autorizar meu rascunho
+              </button>
+            </div>
+          </section>
+        )}
+        {notice && (
+          <p role="status" className="px-5 py-3 text-sm text-slate-700 dark:text-slate-200">
+            {notice}
+          </p>
+        )}
         {canEdit ? (
           <EditorBoundary onClose={closeEditor}>
             <Suspense
@@ -250,15 +392,21 @@ function EditorDialog({ role }: { role: AvatarRole }) {
               }
             >
               <AvatarEditor
-                initialConfig={base?.config || DEFAULT_AVATAR}
+                key={resetKey}
+                initialConfig={initialConfig}
                 name={name}
                 localOnly={localOnly}
                 onDirtyChange={setDirty}
                 onSavingChange={setSaving}
                 onCancel={closeEditor}
                 onSave={async (config) => {
-                  await save(role, config, base?.revision || 0);
-                  closeEditor();
+                  try {
+                    await save(role, config, revision);
+                    closeEditor();
+                  } catch (cause) {
+                    if (cause instanceof AvatarConflictError) setConflict(cause.currentAvatar);
+                    throw cause;
+                  }
                 }}
               />
             </Suspense>

@@ -15,6 +15,7 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
     adminDb();
     const identity = await getAuth().verifyIdToken(bearer, true);
     res.locals.uid = identity.uid;
+    res.locals.authProvider = identity.firebase?.sign_in_provider || '';
     res.locals.email = identity.email || "";
     next();
   } catch { res.status(401).json({ error: 'Sessão inválida ou expirada. Entre novamente.' }); }
