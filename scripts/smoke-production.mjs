@@ -29,7 +29,11 @@ try {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
   });
   assert.equal(avatarResponse.status, 401, 'Avatar writes must require authentication');
-  console.log('Production smoke: health 200; unauthenticated bank sync and avatar writes 401.');
+  for (const endpoint of ['/api/avatars/save', '/api/avatars/migrate']) {
+    const result = await fetch(`http://127.0.0.1:${port}${endpoint}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+    assert.equal(result.status, 401, endpoint + ' must require authentication');
+  }
+  console.log('Production smoke: health 200; all avatar endpoints and bank sync require authentication.');
 } finally {
   child.kill();
 }

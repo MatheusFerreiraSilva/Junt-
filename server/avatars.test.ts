@@ -3,7 +3,6 @@ import express from 'express';
 import type { Server } from 'node:http';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_AVATAR, AVATAR_OPTIONS } from '../src/avatars/avatarConfig';
-import { getFirestore } from 'firebase-admin/firestore';
 import firebaseConfig from '../firebase-applet-config.json';
 
 const fake = vi.hoisted(() => {
@@ -12,19 +11,19 @@ const fake = vi.hoisted(() => {
   const rows = new Map<string, Row>();
   let serial = Promise.resolve<unknown>(undefined);
   return {
-    rows,
-    fail: false,
+    rows, fail: false,
     db: {
       doc: (path: string): Ref => ({ path }),
       runTransaction: (callback: (tx: object) => Promise<unknown>) => {
         const task = serial.then(async () => {
           const changes: (() => void)[] = [];
           const tx = {
-            get: async (ref: Ref) => ({ data: () => structuredClone(rows.get(ref.path)) }),
+            get: async (ref: Ref) => ({ exists: rows.has(ref.path), data: () => structuredClone(rows.get(ref.path)) }),
+            create: (ref: Ref, value: Row) => { if (rows.has(ref.path)) throw new Error('exists'); changes.push(() => rows.set(ref.path, structuredClone(value))); },
+            set: (ref: Ref, value: Row) => { changes.push(() => rows.set(ref.path, structuredClone(value))); },
             update: (ref: Ref, value: Row) => { changes.push(() => rows.set(ref.path, { ...rows.get(ref.path), ...structuredClone(value) })); },
           };
-          const result = await callback(tx);
-          changes.forEach(change => change()); return result;
+          const result = await callback(tx); changes.forEach(change => change()); return result;
         });
         serial = task.catch(() => undefined); return task;
       },
@@ -32,27 +31,40 @@ const fake = vi.hoisted(() => {
   };
 });
 vi.mock('./security', () => ({
-  adminDb: () => { if (fake.fail) throw new Error('offline'); return fake.db; },
+  adminDb: () => { if (fake.fail) throw new Error('offline'); return {}; },
   userQuota: (_max: number, _window: number, _global: number, dbFactory: () => unknown) => (_req: unknown, res: { status: (code: number) => { json: (body: unknown) => void } }, next: () => void) => {
     try { dbFactory(); next(); } catch { res.status(503).json({ error: 'offline' }); }
   },
 }));
 vi.mock('firebase-admin/app', () => ({ getApp: () => ({ name: 'configured-app' }) }));
-vi.mock('firebase-admin/firestore', () => ({ getFirestore: vi.fn(() => fake.db) }));
+vi.mock('firebase-admin/firestore', () => ({
+  getFirestore: (_app: unknown, databaseId: string) => {
+    if (databaseId !== firebaseConfig.firestoreDatabaseId) throw new Error('Wrong database');
+    return fake.db;
+  },
+}));
 import { registerAvatars } from './avatars';
 
 let server: Server;
 let origin = '';
 const couplePath = 'couples/couple-1';
+const stored = (uid: string) => fake.rows.get('avatars/' + uid);
+const different = () => ({ ...DEFAULT_AVATAR, mouth: AVATAR_OPTIONS.mouth.find(option => option.id !== DEFAULT_AVATAR.mouth)!.id });
+const record = (uid: string, revision = 1, config = DEFAULT_AVATAR) => ({ ownerUid: uid, revision, config });
+
 beforeEach(async () => {
-  fake.rows.clear(); fake.fail = false; vi.mocked(getFirestore).mockClear();
+  fake.rows.clear(); fake.fail = false;
   fake.rows.set(couplePath, {
-    id: 'couple-1', partner1Uid: 'alice', partner2Uid: 'bob',
-    partner1Income: 1000, categoryPercentages: { moradia: 30 }, avatarProfiles: {},
+    id: 'couple-1', partner1Uid: 'alice', partner2Uid: 'bob', partner1Income: 1000,
+    categoryPercentages: { moradia: 30 }, avatarProfiles: {},
   });
   for (const uid of ['alice', 'bob']) fake.rows.set('users/' + uid, { uid, coupleId: 'couple-1' });
   const app = express(); app.use(express.json());
-  app.use((req, res, next) => { res.locals.uid = req.header('X-Test-Uid'); next(); });
+  app.use((req, res, next) => {
+    res.locals.uid = req.header('X-Test-Uid');
+    res.locals.authProvider = req.header('X-Test-Provider') || 'password';
+    next();
+  });
   registerAvatars(app);
   server = app.listen(0, '127.0.0.1');
   await new Promise<void>(resolve => server.once('listening', resolve));
@@ -60,77 +72,131 @@ beforeEach(async () => {
   origin = `http://127.0.0.1:${address.port}`;
 });
 afterEach(async () => { await new Promise<void>(resolve => server.close(() => resolve())); });
-const save = (uid: string, overrides: Record<string, unknown> = {}) => fetch(origin + '/api/couples/avatar', {
-  method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Test-Uid': uid },
-  body: JSON.stringify({ coupleId: 'couple-1', config: DEFAULT_AVATAR, expectedRevision: 0, ...overrides }),
+const post = (path: string, uid: string, body: unknown, provider = 'password') => fetch(origin + path, {
+  method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Test-Uid': uid, 'X-Test-Provider': provider },
+  body: JSON.stringify(body),
 });
-const profiles = () => fake.rows.get(couplePath)?.avatarProfiles as Record<string, { ownerUid: string; revision: number; config: typeof DEFAULT_AVATAR }>;
-const different = () => ({ ...DEFAULT_AVATAR, mouth: AVATAR_OPTIONS.mouth.find(option => option.id !== DEFAULT_AVATAR.mouth)!.id });
+const save = (uid: string, overrides: Record<string, unknown> = {}) => post('/api/avatars/save', uid, {
+  config: DEFAULT_AVATAR, expectedRevision: 0, ...overrides,
+});
+const migrate = (uid: string) => post('/api/avatars/migrate', uid, {});
 
-describe('authenticated avatar persistence', () => {
-  it('derives role from membership, ignores a forged target and preserves finances', async () => {
-    const response = await save('alice', { role: 'partner2', ownerUid: 'bob' });
+describe('account-owned avatars', () => {
+  it('saves for an authenticated account without a couple in the configured database', async () => {
+    fake.rows.delete('users/alice');
+    const response = await save('alice');
     expect(response.status).toBe(200);
-    expect(getFirestore).toHaveBeenCalledWith({ name: 'configured-app' }, firebaseConfig.firestoreDatabaseId);
-    expect(await response.json()).toMatchObject({ role: 'partner1', avatar: { ownerUid: 'alice', revision: 1, config: DEFAULT_AVATAR } });
-    expect(profiles().partner2).toBeUndefined();
-    expect(fake.rows.get(couplePath)?.partner1Income).toBe(1000);
-    expect(fake.rows.get(couplePath)?.categoryPercentages).toEqual({ moradia: 30 });
+    expect(await response.json()).toEqual({ avatar: record('alice') });
+    expect(stored('alice')).toEqual(record('alice'));
+    expect(fake.rows.get(couplePath)?.avatarProfiles).toEqual({});
   });
-  it('rejects unsupported pieces, embedded markup, missing fields and invalid revisions', async () => {
+  it('derives ownership exclusively from the token and never overwrites financial or partner records', async () => {
+    const before = structuredClone(fake.rows.get(couplePath));
+    const response = await save('alice', { ownerUid: 'bob', uid: 'bob', role: 'partner2', coupleId: 'other' });
+    expect(response.status).toBe(200);
+    expect(stored('alice')).toEqual(record('alice'));
+    expect(stored('bob')).toBeUndefined();
+    expect(fake.rows.get(couplePath)).toEqual(before);
+  });
+  it('rejects anonymous and missing identities for save and migration', async () => {
+    for (const path of ['/api/avatars/save', '/api/avatars/migrate']) {
+      const body = { config: DEFAULT_AVATAR, expectedRevision: 0 };
+      expect((await post(path, 'anonymous-user', body, 'anonymous')).status).toBe(403);
+      expect((await post(path, '', body)).status).toBe(403);
+    }
+    expect(stored('anonymous-user')).toBeUndefined();
+  });
+  it('rejects unsupported pieces, markup, incomplete configs and unsafe revisions', async () => {
     for (const overrides of [
       { config: { ...DEFAULT_AVATAR, hair: '<svg onload=alert(1)>' } },
       { config: { ...DEFAULT_AVATAR, html: '<script>' } }, { config: {} }, { config: null },
       { expectedRevision: -1 }, { expectedRevision: 0.5 }, { expectedRevision: Number.MAX_SAFE_INTEGER },
-      { coupleId: '../other' },
     ]) expect((await save('alice', overrides)).status).toBe(400);
-    expect(profiles()).toEqual({});
+    expect(stored('alice')).toBeUndefined();
   });
-  it('denies outsiders, missing sessions, departed members and stale membership inside transaction', async () => {
-    expect((await save('outsider')).status).toBe(403);
-    expect((await save('')).status).toBe(403);
-    fake.rows.set(couplePath, { ...fake.rows.get(couplePath), departedMembers: { alice: true } });
-    expect((await save('alice')).status).toBe(403);
-    fake.rows.set('users/bob', { coupleId: 'other' });
-    expect((await save('bob')).status).toBe(403);
-    expect(profiles()).toEqual({});
-  });
-  it('rejects a stale couple context before writing', async () => {
-    expect((await save('alice', { coupleId: 'other-couple' })).status).toBe(403);
-    fake.rows.set('users/alice', { coupleId: 'other-couple' });
-    expect((await save('alice')).status).toBe(403);
-    expect(profiles()).toEqual({});
-  });
-  it('keeps simultaneous edits to different people and increments only each own revision', async () => {
-    const results = await Promise.all([save('alice'), save('bob', { config: different() })]);
-    expect(results.map(result => result.status)).toEqual([200, 200]);
-    expect(profiles().partner1.ownerUid).toBe('alice'); expect(profiles().partner2.ownerUid).toBe('bob');
-    expect(profiles().partner1.revision).toBe(1); expect(profiles().partner2.revision).toBe(1);
-  });
-  it('retries a lost response without duplicating revision, even if JSON key order differs', async () => {
+  it('returns the current personal record on revision conflict and preserves it', async () => {
     expect((await save('alice')).status).toBe(200);
-    const reversed = Object.fromEntries(Object.entries(DEFAULT_AVATAR).reverse());
-    expect((await save('alice', { config: reversed })).status).toBe(200);
-    expect(profiles().partner1.revision).toBe(1);
+    const response = await save('alice', { config: different() });
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ currentAvatar: record('alice') });
+    expect(stored('alice')).toEqual(record('alice'));
   });
-  it('rejects conflicting changes and permits an explicit updated revision', async () => {
+  it('retries a lost response without a duplicate revision despite JSON key order', async () => {
     expect((await save('alice')).status).toBe(200);
-    expect((await save('alice', { config: different() })).status).toBe(409);
-    expect(profiles().partner1.config).toEqual(DEFAULT_AVATAR);
+    expect((await save('alice', { config: Object.fromEntries(Object.entries(DEFAULT_AVATAR).reverse()) })).status).toBe(200);
+    expect(stored('alice')?.revision).toBe(1);
+  });
+  it('permits an explicit resolved revision and rejects outdated proposals', async () => {
+    await save('alice');
     expect((await save('alice', { config: different(), expectedRevision: 1 })).status).toBe(200);
-    expect(profiles().partner1.revision).toBe(2);
-    expect((await save('alice', { expectedRevision: 0 })).status).toBe(409);
+    expect(stored('alice')?.revision).toBe(2);
+    expect((await save('alice')).status).toBe(409);
   });
-  it('does not take ownership of an avatar belonging to another identity', async () => {
-    fake.rows.set(couplePath, { ...fake.rows.get(couplePath), avatarProfiles: { partner1: { ownerUid: 'former', revision: 1, config: DEFAULT_AVATAR } } });
-    expect((await save('alice', { expectedRevision: 1 })).status).toBe(409);
-    expect(profiles().partner1.ownerUid).toBe('former');
+  it('keeps concurrent saves from two accounts independent and same-account conflicts visible', async () => {
+    const responses = await Promise.all([save('alice'), save('bob')]);
+    expect(responses.map(response => response.status)).toEqual([200, 200]);
+    expect(stored('alice')?.ownerUid).toBe('alice'); expect(stored('bob')?.ownerUid).toBe('bob');
+    const contested = await Promise.all([
+      save('alice', { config: different(), expectedRevision: 1 }),
+      save('alice', { config: DEFAULT_AVATAR, expectedRevision: 1 }),
+    ]);
+    expect(contested.map(response => response.status).sort()).toEqual([200, 409]);
   });
-  it('returns a recoverable failure without writing when storage is unavailable', async () => {
+  it('does not claim a malformed record owned by another UID', async () => {
+    fake.rows.set('avatars/alice', record('bob'));
+    const response = await save('alice', { expectedRevision: 1 });
+    expect(response.status).toBe(409);
+    expect((await response.json()).currentAvatar).toBeNull();
+    expect(stored('alice')?.ownerUid).toBe('bob');
+  });
+  it('migrates only the active member own legacy avatar and leaves the couple untouched', async () => {
+    const legacy = record('alice', 3);
+    fake.rows.set(couplePath, { ...fake.rows.get(couplePath), avatarProfiles: { partner1: legacy, partner2: record('bob', 4) } });
+    const before = structuredClone(fake.rows.get(couplePath));
+    const response = await migrate('alice');
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ avatar: legacy });
+    expect(stored('alice')).toEqual(legacy); expect(stored('bob')).toBeUndefined();
+    expect(fake.rows.get(couplePath)).toEqual(before);
+  });
+  it('never overwrites an existing personal choice during repeated or concurrent migrations', async () => {
+    const personal = record('alice', 8, different());
+    fake.rows.set('avatars/alice', personal);
+    fake.rows.set(couplePath, { ...fake.rows.get(couplePath), avatarProfiles: { partner1: record('alice', 3) } });
+    const responses = await Promise.all([migrate('alice'), migrate('alice')]);
+    expect(responses.map(response => response.status)).toEqual([200, 200]);
+    expect(stored('alice')).toEqual(personal);
+  });
+  it('does not migrate from a stale, departed, foreign or mismatched legacy membership', async () => {
+    fake.rows.set(couplePath, { ...fake.rows.get(couplePath), avatarProfiles: { partner1: record('alice'), partner2: record('bob') }, departedMembers: { alice: true } });
+    expect((await migrate('alice')).status).toBe(200);
+    expect(stored('alice')).toBeUndefined();
+    fake.rows.set('users/outsider', { coupleId: 'couple-1', partnerRole: 'partner1' });
+    expect((await migrate('outsider')).status).toBe(200);
+    expect(stored('outsider')).toBeUndefined();
+    fake.rows.set('users/bob', { coupleId: 'other' });
+    expect((await migrate('bob')).status).toBe(200);
+    expect(stored('bob')).toBeUndefined();
+  });
+  it('does not migrate corrupt or wrong-owner legacy recipes', async () => {
+    fake.rows.set(couplePath, { ...fake.rows.get(couplePath), avatarProfiles: { partner1: record('bob') } });
+    expect((await migrate('alice')).status).toBe(200);
+    expect(stored('alice')).toBeUndefined();
+    fake.rows.set(couplePath, { ...fake.rows.get(couplePath), avatarProfiles: { partner1: { ...record('alice'), config: {} } } });
+    expect((await migrate('alice')).status).toBe(200);
+    expect(stored('alice')).toBeUndefined();
+  });
+  it('adapts the old route to personal storage while checking its couple context', async () => {
+    const response = await post('/api/couples/avatar', 'alice', { coupleId: 'couple-1', config: DEFAULT_AVATAR, expectedRevision: 0 });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ role: 'partner1', avatar: record('alice') });
+    expect(stored('alice')).toEqual(record('alice'));
+    expect(fake.rows.get(couplePath)?.avatarProfiles).toEqual({});
+    expect((await post('/api/couples/avatar', 'alice', { coupleId: 'other', config: DEFAULT_AVATAR, expectedRevision: 1 })).status).toBe(403);
+  });
+  it('returns a recoverable error without modifying records when storage fails', async () => {
     fake.fail = true;
-    const response = await save('alice');
-    expect(response.status).toBe(503);
-    expect(await response.json()).toHaveProperty('error');
-    expect(profiles()).toEqual({});
+    expect((await save('alice')).status).toBe(503);
+    expect(stored('alice')).toBeUndefined();
   });
 });

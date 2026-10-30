@@ -203,7 +203,7 @@ export function AvatarEditor({
             <p className="hidden max-w-60 text-center text-xs leading-relaxed text-slate-600 lg:block dark:text-slate-400">
               {localOnly
                 ? 'Modo de demonstração: suas escolhas ficam neste aparelho.'
-                : 'O avatar acompanha seu perfil. Você muda o seu; seu par muda o dele.'}
+                : 'Seu avatar acompanha sua conta, com ou sem um casal vinculado.'}
             </p>
           </div>
         </div>

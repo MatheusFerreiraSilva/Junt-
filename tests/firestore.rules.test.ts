@@ -1,7 +1,7 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { readFile } from 'node:fs/promises';
 import { initializeTestEnvironment, assertFails, assertSucceeds, type RulesTestEnvironment } from '@firebase/rules-unit-testing';
-import { doc, getDoc, setDoc, updateDoc, deleteDoc } from 'firebase/firestore';
+import { doc, getDoc, getDocs, collection, setDoc, updateDoc, deleteDoc } from 'firebase/firestore';
 
 const enabled = Boolean(process.env.FIRESTORE_EMULATOR_HOST);
 describe.skipIf(!enabled)('Firestore couple isolation (emulator only)', () => {
@@ -18,6 +18,18 @@ describe.skipIf(!enabled)('Firestore couple isolation (emulator only)', () => {
     });
   });
   afterAll(async () => { await env?.cleanup(); });
+  it('preserves custom splits already supported by expenses, installments and income', async () => {
+    const db = env.authenticatedContext('alice').firestore();
+    for (const field of ['expenses', 'installments', 'incomes']) {
+      await assertSucceeds(setDoc(doc(db, 'couples/a/entities/custom-' + field), {
+        field, record: { id: 'custom-' + field, amount: 100, paidBy: 'custom', recipient: 'custom', splitPartner1Pct: 35, splitPartner2Pct: 65 },
+        deleted: false, schemaVersion: 1,
+      }));
+    }
+    await assertFails(setDoc(doc(db, 'couples/a/entities/invalid-payer'), {
+      field: 'expenses', record: { id: 'invalid', amount: 100, paidBy: 'unknown-person' }, deleted: false, schemaVersion: 1,
+    }));
+  });
   it('denies unauthenticated and unrelated couple reads', async () => {
     await assertFails(getDoc(doc(env.unauthenticatedContext().firestore(), 'couples/a')));
     await assertFails(getDoc(doc(env.authenticatedContext('mallory').firestore(), 'couples/a')));
@@ -60,5 +72,146 @@ describe.skipIf(!enabled)('Firestore couple isolation (emulator only)', () => {
     await assertFails(updateDoc(ref, { field: 'incomes' }));
     await assertFails(deleteDoc(ref));
     await assertSucceeds(setDoc(ref, { field: 'expenses', record: null, deleted: true, schemaVersion: 1 }));
+  });
+
+  describe('account avatars', () => {
+    beforeEach(async () => {
+      await env.withSecurityRulesDisabled(async (context) => {
+        const db = context.firestore();
+        await Promise.all([
+          setDoc(doc(db, 'users/avatar-alice'), {
+            uid: 'avatar-alice',
+            coupleId: 'avatar-couple',
+            partnerRole: 'partner1',
+          }),
+          setDoc(doc(db, 'users/avatar-bob'), {
+            uid: 'avatar-bob',
+            coupleId: 'avatar-couple',
+            partnerRole: 'partner2',
+          }),
+          setDoc(doc(db, 'users/avatar-mallory'), {
+            uid: 'avatar-mallory',
+            coupleId: 'avatar-other',
+            partnerRole: 'partner1',
+          }),
+          setDoc(doc(db, 'couples/avatar-couple'), {
+            partner1Uid: 'avatar-alice',
+            partner2Uid: 'avatar-bob',
+            departedMembers: {},
+          }),
+          setDoc(doc(db, 'couples/avatar-other'), {
+            partner1Uid: 'avatar-mallory',
+            partner2Uid: '',
+            departedMembers: {},
+          }),
+          setDoc(doc(db, 'avatars/avatar-alice'), {
+            ownerUid: 'avatar-alice',
+            revision: 1,
+            config: { version: 1, skin: 'honey' },
+          }),
+          setDoc(doc(db, 'avatars/avatar-bob'), {
+            ownerUid: 'avatar-bob',
+            revision: 1,
+            config: { version: 1, skin: 'cocoa' },
+          }),
+        ]);
+      });
+    });
+
+    it('lets an authenticated owner get the avatar even without a couple', async () => {
+      await env.withSecurityRulesDisabled(async (context) => {
+        await updateDoc(doc(context.firestore(), 'users/avatar-alice'), {
+          coupleId: '',
+          partnerRole: '',
+        });
+      });
+      await assertSucceeds(
+        getDoc(doc(env.authenticatedContext('avatar-alice').firestore(), 'avatars/avatar-alice'))
+      );
+    });
+
+    it('lets both active partners get each other account avatars', async () => {
+      await assertSucceeds(
+        getDoc(doc(env.authenticatedContext('avatar-alice').firestore(), 'avatars/avatar-bob'))
+      );
+      await assertSucceeds(
+        getDoc(doc(env.authenticatedContext('avatar-bob').firestore(), 'avatars/avatar-alice'))
+      );
+    });
+
+    it('denies outsiders, unauthenticated readers and anonymous owners', async () => {
+      await assertFails(
+        getDoc(doc(env.authenticatedContext('avatar-mallory').firestore(), 'avatars/avatar-alice'))
+      );
+      await assertFails(
+        getDoc(doc(env.unauthenticatedContext().firestore(), 'avatars/avatar-alice'))
+      );
+      const anonymous = env
+        .authenticatedContext('avatar-alice', { firebase: { sign_in_provider: 'anonymous' } })
+        .firestore();
+      await assertFails(getDoc(doc(anonymous, 'avatars/avatar-alice')));
+    });
+
+    it('denies avatar listing and every direct client mutation including own writes', async () => {
+      const db = env.authenticatedContext('avatar-alice').firestore();
+      await assertFails(getDocs(collection(db, 'avatars')));
+      await assertFails(
+        setDoc(doc(db, 'avatars/avatar-alice'), {
+          ownerUid: 'avatar-alice',
+          revision: 2,
+          config: {},
+        })
+      );
+      await assertFails(updateDoc(doc(db, 'avatars/avatar-bob'), { revision: 99 }));
+      await assertFails(deleteDoc(doc(db, 'avatars/avatar-alice')));
+      await assertFails(setDoc(doc(db, 'avatars/new-avatar'), { ownerUid: 'avatar-alice' }));
+    });
+
+    it('does not trust a forged users profile when the couple does not contain the reader', async () => {
+      await env.withSecurityRulesDisabled(async (context) => {
+        await updateDoc(doc(context.firestore(), 'users/avatar-mallory'), {
+          coupleId: 'avatar-couple',
+          partnerRole: 'partner1',
+        });
+      });
+      await assertFails(
+        getDoc(doc(env.authenticatedContext('avatar-mallory').firestore(), 'avatars/avatar-bob'))
+      );
+    });
+
+    it('revokes reading in both directions when either member departs but keeps own read', async () => {
+      await env.withSecurityRulesDisabled(async (context) => {
+        await updateDoc(doc(context.firestore(), 'couples/avatar-couple'), {
+          'departedMembers.avatar-bob': true,
+        });
+      });
+      await assertFails(
+        getDoc(doc(env.authenticatedContext('avatar-bob').firestore(), 'avatars/avatar-alice'))
+      );
+      await assertFails(
+        getDoc(doc(env.authenticatedContext('avatar-alice').firestore(), 'avatars/avatar-bob'))
+      );
+      await assertSucceeds(
+        getDoc(doc(env.authenticatedContext('avatar-bob').firestore(), 'avatars/avatar-bob'))
+      );
+    });
+
+    it('ignores historical couple membership when the reader current profile changed', async () => {
+      await env.withSecurityRulesDisabled(async (context) => {
+        const db = context.firestore();
+        await setDoc(doc(db, 'couples/avatar-new'), {
+          partner1Uid: 'avatar-alice',
+          partner2Uid: 'avatar-charlie',
+          departedMembers: {},
+        });
+        await updateDoc(doc(db, 'users/avatar-alice'), { coupleId: 'avatar-new' });
+      });
+      await assertFails(
+        getDoc(doc(env.authenticatedContext('avatar-alice').firestore(), 'avatars/avatar-bob'))
+      );
+      await assertFails(
+        getDoc(doc(env.authenticatedContext('avatar-bob').firestore(), 'avatars/avatar-alice'))
+      );
+    });
   });
 });
