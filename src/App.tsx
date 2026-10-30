@@ -1,3 +1,5 @@
+import { AvatarProvider } from './avatars/AvatarProvider';
+import { AvatarEditorOutlet } from './avatars/AvatarUI';
 import { lazy, Suspense, useEffect, useState } from 'react';
 import { FinanceProvider, useFinance } from './context/FinanceContext';
 import { Navigation, ScreenId } from './components/Navigation';
@@ -502,7 +504,10 @@ function MainApp() {
 export default function App() {
   return (
     <FinanceProvider>
-      <MainApp />
+      <AvatarProvider>
+        <MainApp />
+        <AvatarEditorOutlet />
+      </AvatarProvider>
     </FinanceProvider>
   );
 }

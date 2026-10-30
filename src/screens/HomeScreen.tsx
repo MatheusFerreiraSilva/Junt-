@@ -1,3 +1,4 @@
+import { AvatarHero, MemberAvatar, CoupleFaces } from '../avatars/AvatarUI';
 import React, { useState, useMemo } from 'react';
 import {
   AlertTriangle,
@@ -282,6 +283,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
     return (
       <div className="space-y-6 pb-20">
       <header className="pt-2 pb-1"><p className="text-[10px] tracking-[0.16em] font-semibold uppercase text-slate-500 mb-2">O cotidiano de vocês</p><h1 className="text-3xl sm:text-4xl text-slate-900 dark:text-white" style={{ fontFamily: 'Georgia, serif', fontWeight: 400, letterSpacing: '-0.04em' }}>Um mês de cada vez.</h1><p className="text-sm text-slate-500 mt-2 leading-relaxed">Veja o que entrou, cuide dos próximos gastos e abra espaço para os seus planos.</p></header>
+        <AvatarHero />
         <MonthSelector />
         <CollegeModeView onOpenExpenseModal={() => onOpenExpenseModal()} />
       </div>
@@ -298,6 +300,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
       {/* ========================================================================= */}
       {/* HEADER DE CONTEXTO: SELETOR DE MÊS & VISÃO ATIVA                          */}
       {/* ========================================================================= */}
+      <AvatarHero />
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div className="flex-1">
           <MonthSelector />
@@ -307,7 +310,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
         <div className="flex items-center gap-2 self-start sm:self-center">
           <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-2xl bg-white dark:bg-slate-900 border-2 border-slate-300 dark:border-slate-800 shadow-2xs">
             <span className="text-sm">
-              {viewMode === 'couple' ? '👥' : viewMode === 'partner1' ? '👩' : '👨'}
+              {viewMode === 'couple' ? <CoupleFaces size={24} /> : <MemberAvatar member={viewMode} size={26} />}
             </span>
             <span className="text-xs font-black text-slate-900 dark:text-white">
               {viewMode === 'couple' ? 'Visão Casal' : activePersonName}

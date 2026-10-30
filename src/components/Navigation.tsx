@@ -1,3 +1,4 @@
+import { MemberAvatar, CoupleFaces } from '../avatars/AvatarUI';
 import React, { useState } from 'react';
 import {
   Home,
@@ -168,7 +169,7 @@ export const Navigation: React.FC<NavigationProps> = ({
               }`}
               title="Visão Integrada do Casal"
             >
-              <span>👥</span>
+              <CoupleFaces size={20} />
               <span className="truncate">Casal</span>
             </button>
 
@@ -181,7 +182,7 @@ export const Navigation: React.FC<NavigationProps> = ({
               }`}
               title={`Ver apenas ${state.profile.partner1Name}`}
             >
-              <span>👩</span>
+              <MemberAvatar member="partner1" size={22} />
               <span className="truncate">{p1Short}</span>
             </button>
 
@@ -194,7 +195,7 @@ export const Navigation: React.FC<NavigationProps> = ({
               }`}
               title={`Ver apenas ${state.profile.partner2Name}`}
             >
-              <span>👨</span>
+              <MemberAvatar member="partner2" size={22} />
               <span className="truncate">{p2Short}</span>
             </button>
           </div>

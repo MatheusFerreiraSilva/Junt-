@@ -3,6 +3,7 @@ import React, { createContext, useContext, useState, useEffect, useMemo, useCall
 import confetti from 'canvas-confetti';
 import { applyShiftAllocation, undoShiftAllocations, migrateLegacyShiftAllocations } from '../utils/shiftReconciliation';
 import { authenticatedApi } from '../lib/authenticatedApi';
+import { isAvatarOnlySnapshot } from '../lib/coupleSnapshot';
 import { ENTITY_FIELDS, migrateEntities, subscribeEntities, saveEntities, rebaseEntities, conflictAwareBaseline, type EntityState } from '../lib/entitySync';
 import {
   onAuthStateChanged,
@@ -784,6 +785,7 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
 
             if (profileData.coupleId) {
               const coupleRef = doc(db, 'couples', profileData.coupleId);
+              let previousCoupleSnapshot: Record<string, unknown> | null = null;
               coupleListener.current = onSnapshot(coupleRef, (cSnap) => {
                 if (disposed || generation !== sessionGeneration.current) return;
                 if (cSnap.exists()) {
@@ -791,6 +793,11 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
 
                   // Membership is assigned by the authenticated backend only.
                   if ((cData.partner1Uid !== user.uid && cData.partner2Uid !== user.uid) || cData.departedMembers?.[user.uid]) { setCloudLoadError('O vínculo desta conta precisa ser validado pelo responsável do sistema.'); return; }
+                  // Avatars share this document, but must not replace a pending financial edit.
+                  // Membership is always validated above; initial and other metadata updates hydrate normally.
+                  const avatarOnly = isAvatarOnlySnapshot(previousCoupleSnapshot, cData);
+                  previousCoupleSnapshot = cData;
+                  if (avatarOnly) return;
                   if (!entityListener.current) {
                     const legacy = Object.fromEntries(ENTITY_FIELDS.map(field => [field, Array.isArray(cData[field]) ? cData[field] : []])) as EntityState;
                     // Mark listener creation immediately to avoid duplicate migrations.

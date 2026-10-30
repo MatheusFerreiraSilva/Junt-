@@ -31,14 +31,14 @@ export async function authorizedCouple(uid: string): Promise<string | null> {
 }
 
 // Shared Firestore quotas work across instances; never fall back to an IP-only quota.
-export function userQuota(max: number, windowMs: number, globalMax = 500) {
+export function userQuota(max: number, windowMs: number, globalMax = 500, dbFactory: typeof adminDb = adminDb) {
   return async (req: Request, res: Response, next: NextFunction) => {
     const now = Date.now();
     const window = Math.floor(now / windowMs);
     const route = req.path.replace(/[^a-z0-9]/gi, '_');
     const uid = String(res.locals.uid);
     try {
-      const db = adminDb();
+      const db = dbFactory();
       const refs = [db.doc(`apiQuotas/${route}_${window}_${uid}`), db.doc(`apiQuotas/${route}_${window}_global`)];
       const allowed = await db.runTransaction(async tx => {
         const snapshots = await Promise.all(refs.map(ref => tx.get(ref)));
