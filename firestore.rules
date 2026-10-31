@@ -96,7 +96,12 @@ service cloud.firestore {
     match /avatars/{uid} {
       allow get: if avatarAccountSignedIn()
         && (request.auth.uid == uid || avatarSharedWith(uid));
-      allow list, create, update, delete: if false;
+      allow create, update: if avatarAccountSignedIn()
+        && (request.auth.uid == uid || avatarSharedWith(uid))
+        && request.resource.data.ownerUid == uid
+        && request.resource.data.revision is int
+        && request.resource.data.config is map;
+      allow delete: if false;
     }
 
     // Invite hashes, provider tokens, item ownership and rate-limit records are server-only.

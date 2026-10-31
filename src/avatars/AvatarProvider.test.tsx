@@ -179,15 +179,19 @@ describe('account avatar ownership, sessions and persistence', () => {
     act(() => previous.next({ data: () => avatar('b', 'bald', 99) }));
     expect(screen.getByTestId('one')).toHaveTextContent('empty');
   });
-  it('rejects editing a partner even though their record is readable', async () => {
+  it('allows editing a partner when integrated as a couple', async () => {
     login('b', 'pair', 'partner2');
     render(app());
     emit('avatars/b', avatar('b'));
     emit('couples/pair', { partner1Uid: 'a', partner2Uid: 'b' });
     emit('avatars/a', avatar('a'));
+    fake.save.mockResolvedValueOnce({ avatar: avatar('a', 'bald', 2) });
     fireEvent.click(screen.getByText('Save partner1'));
-    await waitFor(() => expect(failure).toBeInstanceOf(Error));
-    expect(fake.save).not.toHaveBeenCalled();
+    await waitFor(() => expect(screen.getByTestId('one')).toHaveTextContent('bald'));
+    expect(fake.save).toHaveBeenCalledWith(
+      '/api/avatars/save',
+      expect.objectContaining({ targetUid: 'a' })
+    );
   });
   it('preserves the saved record on failure and returns current conflict metadata', async () => {
     login();

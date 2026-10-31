@@ -61,44 +61,73 @@ export function CoupleFaces({ size = 25 }: { size?: number }) {
 
 export function AvatarHero() {
   const { state, viewMode } = useFinance();
-  const { openEditor, editableRole, localOnly } = useAvatars();
+  const { openEditor, editableRole, canEditRole, localOnly } = useAvatars();
   const roles: AvatarRole[] = viewMode === 'couple' ? ['partner1', 'partner2'] : [viewMode];
   const target = viewMode === 'couple' ? editableRole || 'partner1' : viewMode;
-  const canPersonalize = localOnly || target === editableRole;
+  const canPersonalize = localOnly || (canEditRole ? canEditRole(target) : target === editableRole);
+  const otherRole: AvatarRole = target === 'partner1' ? 'partner2' : 'partner1';
+  const partnerName = state.profile[(otherRole + 'Name') as 'partner1Name' | 'partner2Name'];
+
   return (
     <section
-      className="relative flex items-center justify-between gap-3 overflow-hidden rounded-3xl border border-stone-200 bg-stone-50 px-5 pt-5 dark:border-slate-700 dark:bg-slate-900 sm:px-7"
+      className="relative flex items-center justify-between gap-3 overflow-hidden rounded-3xl border border-stone-200/90 bg-gradient-to-r from-stone-50 via-stone-100/90 to-amber-50/40 p-5 shadow-sm dark:border-slate-850 dark:from-slate-900 dark:via-slate-850 dark:to-emerald-950/20 sm:p-7"
       aria-label="Os rostos do seu Juntô"
     >
-      <div className="min-w-0 pb-5">
-        <p className="mb-1 text-[10px] font-bold uppercase tracking-[.18em] text-accent-themed">
-          Do jeito de vocês
-        </p>
+      <div className="min-w-0 z-10">
+        <div className="flex items-center gap-2 mb-1">
+          <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
+          <p className="text-[10px] font-bold uppercase tracking-[.18em] text-accent-themed">
+            {viewMode === 'couple' ? 'Palco do Casal' : 'Identidade Pessoal'}
+          </p>
+        </div>
         <h2 className="font-display text-lg font-bold text-slate-900 dark:text-slate-100 sm:text-xl">
-          {viewMode === 'couple' ? 'Duas histórias. Um plano.' : 'Seu espaço, sua presença.'}
+          {viewMode === 'couple' ? 'Duas histórias. Um plano médico.' : 'Seu espaço, sua presença.'}
         </h2>
-        <button
-          type="button"
-          onClick={() => openEditor(viewMode === 'couple' ? editableRole || 'partner1' : viewMode)}
-          className="mt-3 inline-flex min-h-11 items-center gap-1.5 rounded-xl text-left text-xs font-semibold text-slate-700 underline decoration-stone-300 underline-offset-4 hover:text-accent-themed focus-visible:outline focus-visible:outline-2 dark:text-slate-300"
-        >
-          {localOnly
-            ? 'Experimentar nossos avatares'
-            : canPersonalize
-              ? 'Personalizar meu avatar'
-              : 'Ver avatar'}{' '}
-          <ArrowUpRight size={14} />
-        </button>
+        <p className="mt-1 text-xs text-slate-600 dark:text-slate-400 max-w-sm hidden sm:block">
+          {viewMode === 'couple'
+            ? 'Personalizem seus trajes cirúrgicos, jalecos e detalhes da rotina de plantões.'
+            : 'Seu avatar individual acompanha todas as suas conquistas financeiras.'}
+        </p>
+
+        <div className="mt-4 flex flex-wrap items-center gap-3">
+          <button
+            type="button"
+            onClick={() => openEditor(viewMode === 'couple' ? editableRole || 'partner1' : viewMode)}
+            className="inline-flex min-h-11 items-center gap-1.5 rounded-xl text-left text-xs font-semibold text-slate-700 underline decoration-stone-300 underline-offset-4 hover:text-accent-themed focus-visible:outline focus-visible:outline-2 dark:text-slate-300"
+          >
+            {localOnly
+              ? 'Experimentar nossos avatares'
+              : canPersonalize
+                ? 'Personalizar meu avatar'
+                : 'Ver avatar'}{' '}
+            <ArrowUpRight size={14} />
+          </button>
+
+          {viewMode === 'couple' && (canEditRole ? canEditRole(otherRole) : localOnly) && (
+            <button
+              type="button"
+              onClick={() => openEditor(otherRole)}
+              className="inline-flex min-h-11 items-center gap-1.5 rounded-xl text-left text-xs font-semibold text-slate-600 hover:text-accent-themed focus-visible:outline focus-visible:outline-2 dark:text-slate-400"
+            >
+              Editar {partnerName}
+              <ArrowUpRight size={14} />
+            </button>
+          )}
+        </div>
       </div>
-      <div className="flex shrink-0 items-end -space-x-4 sm:-space-x-3" aria-hidden="true">
-        {roles.map((role) => (
-          <div key={role} className="w-[60px] sm:w-[100px]">
-            <MemberAvatar member={role} body size={100} />
-            <span className="sr-only">
-              {state.profile[(role + 'Name') as 'partner1Name' | 'partner2Name']}
-            </span>
-          </div>
-        ))}
+
+      {/* Studio Stage with Pedestal and Overlap */}
+      <div className="relative flex shrink-0 items-end justify-center rounded-2xl bg-gradient-to-b from-stone-200/40 via-stone-200/80 to-stone-300/60 p-2 pt-4 shadow-inner dark:from-slate-800/40 dark:via-slate-800/80 dark:to-slate-900/90 sm:px-4" aria-hidden="true">
+        <div className="flex items-end -space-x-5 sm:-space-x-3">
+          {roles.map((role) => (
+            <div key={role} className="w-[68px] sm:w-[104px] transition-transform duration-300 hover:scale-105">
+              <MemberAvatar member={role} body size={104} />
+              <span className="sr-only">
+                {state.profile[(role + 'Name') as 'partner1Name' | 'partner2Name']}
+              </span>
+            </div>
+          ))}
+        </div>
       </div>
     </section>
   );
@@ -109,6 +138,7 @@ export function AvatarSettings() {
   const {
     localOnly,
     editableRole,
+    canEditRole,
     ready,
     error,
     openEditor,
@@ -128,8 +158,8 @@ export function AvatarSettings() {
           Rostos que contam histórias
         </h3>
         <p className="mt-2 max-w-xl text-sm leading-relaxed text-slate-600 dark:text-slate-300">
-          Pele, cabelo, expressão e roupa. Todas as combinações estão abertas para cada pessoa. Sem
-          rótulos, sem precisar de foto.
+          Silhuetas, jalecos, scrubs e acessórios. Cada conta personaliza seu boneco individual e,
+          quando vinculados como casal, ambos podem visualizar e editar os dois avatares.
         </p>
       </div>
       {localOnly && (
@@ -137,8 +167,8 @@ export function AvatarSettings() {
           role="status"
           className="rounded-xl bg-amber-50 p-3 text-sm text-amber-900 dark:bg-amber-950/40 dark:text-amber-200"
         >
-          Modo de demonstração: vocês podem experimentar os dois avatares. As escolhas ficam somente
-          neste aparelho e não são copiadas para uma conta ao entrar.
+          Modo de demonstração: vocês podem experimentar os dois avatares. As escolhas ficam salvas
+          neste aparelho como rascunho até que entrem em uma conta.
         </p>
       )}
       {error && (
@@ -208,14 +238,14 @@ export function AvatarSettings() {
         {(['partner1', 'partner2'] as const).map((role) => {
           const name =
             role === 'partner1' ? state.profile.partner1Name : state.profile.partner2Name;
-          const canEdit = localOnly || editableRole === role;
+          const canEdit = localOnly || (canEditRole ? canEditRole(role) : editableRole === role);
           return (
             <div
               key={role}
-              className="flex flex-col items-center rounded-2xl border border-stone-200 bg-stone-50 p-4 dark:border-slate-700 dark:bg-slate-800/50"
+              className="flex flex-col items-center rounded-3xl border border-stone-200 bg-gradient-to-b from-stone-50 via-white to-stone-100/60 p-5 dark:border-slate-700 dark:from-slate-850 dark:via-slate-900 dark:to-slate-950 shadow-sm"
             >
-              <MemberAvatar member={role} body size={160} />
-              <h4 className="mt-2 max-w-full break-words text-center text-base font-semibold text-slate-900 dark:text-white">
+              <MemberAvatar member={role} body size={164} />
+              <h4 className="mt-3 max-w-full break-words text-center text-base font-bold text-slate-900 dark:text-white">
                 {name}
               </h4>
               <p className="mt-1 text-center text-xs text-slate-500 dark:text-slate-400">
@@ -224,23 +254,18 @@ export function AvatarSettings() {
                     ? 'Salvo neste aparelho'
                     : editableRole === role
                       ? 'Avatar da sua conta'
-                      : 'Avatar da conta do seu par'
+                      : 'Avatar do casal (editável por ambos)'
                   : 'Uma página em branco para sua imaginação'}
               </p>
               <button
                 type="button"
                 disabled={!ready}
                 onClick={() => openEditor(role)}
-                className="btn-primary-accent mt-4 inline-flex min-h-11 items-center justify-center gap-2 rounded-xl px-4 py-2 text-sm font-bold text-white disabled:opacity-50"
+                className="btn-primary-accent mt-4 inline-flex min-h-11 items-center justify-center gap-2 rounded-xl px-5 py-2 text-sm font-bold text-white disabled:opacity-50"
               >
                 <Palette size={16} />
                 {canEdit ? 'Personalizar' : 'Ver avatar'}
               </button>
-              {!localOnly && !canEdit && (
-                <p className="mt-2 text-center text-xs text-slate-500 dark:text-slate-400">
-                  Cada pessoa salva o seu pela própria conta.
-                </p>
-              )}
             </div>
           );
         })}
@@ -278,7 +303,7 @@ class EditorBoundary extends Component<
 
 function EditorDialog({ role }: { role: AvatarRole }) {
   const { state } = useFinance();
-  const { records, localOnly, editableRole, save, closeEditor, editorInitialConfig } = useAvatars();
+  const { records, localOnly, editableRole, canEditRole, save, closeEditor, editorInitialConfig } = useAvatars();
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
   // Freeze the editing base: a remote update must cause a conflict, not erase a draft.
@@ -290,7 +315,7 @@ function EditorDialog({ role }: { role: AvatarRole }) {
   const [resetKey, setResetKey] = useState(0);
   const [conflict, setConflict] = useState<AvatarRecord | null | undefined>(undefined);
   const [notice, setNotice] = useState('');
-  const canEdit = localOnly || editableRole === role;
+  const canEdit = localOnly || (canEditRole ? canEditRole(role) : editableRole === role);
   const close = () => {
     if (saving) return;
     if (!dirty || window.confirm('Descartar as alterações deste avatar?')) closeEditor();

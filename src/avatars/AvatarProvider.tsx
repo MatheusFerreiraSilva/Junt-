@@ -7,9 +7,9 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import { doc, onSnapshot } from 'firebase/firestore';
+import { doc, getDoc, onSnapshot, setDoc } from 'firebase/firestore';
 import { useFinance } from '../context/FinanceContext';
-import { db } from '../lib/firebase';
+import { auth, db } from '../lib/firebase';
 import { ApiError, authenticatedApi } from '../lib/authenticatedApi';
 import { isAvatarConfig, normalizeAvatar, type AvatarConfig } from './avatarConfig';
 
@@ -30,6 +30,7 @@ interface AvatarContextValue {
   migrationPending: boolean;
   retryMigration: () => void;
   editableRole: AvatarRole | null;
+  canEditRole: (role: AvatarRole) => boolean;
   editorRole: AvatarRole | null;
   editorInitialConfig: AvatarConfig | null;
   openEditor: (role: AvatarRole, initialConfig?: AvatarConfig) => void;
@@ -101,7 +102,9 @@ function AvatarSession({
   const retryMigrationRef = useRef<(() => void) | undefined>(undefined);
   const [migrationPending, setMigrationPending] = useState(false);
   const [migrationError, setMigrationError] = useState('');
-  const [partner, setPartner] = useState<{ role: AvatarRole; record: AvatarRecord } | null>(null);
+  const [partner, setPartner] = useState<{ role: AvatarRole; uid: string; record: AvatarRecord } | null>(null);
+  const partnerRef = useRef(partner);
+  partnerRef.current = partner;
   const [ownRole, setOwnRole] = useState<AvatarRole>(initialRole);
   const [ownReady, setOwnReady] = useState(localOnly);
   const [coupleReady, setCoupleReady] = useState(!coupleId);
@@ -239,7 +242,7 @@ function AvatarSession({
                 if (!alive.current || generation !== partnerGeneration || partnerUid !== nextUid)
                   return;
                 const record = avatarRecord(otherSnap.data(), nextUid);
-                setPartner(record ? { role: otherRole, record } : null);
+                setPartner(record ? { role: otherRole, uid: nextUid, record } : null);
               },
               () => {
                 if (!alive.current || generation !== partnerGeneration) return;
@@ -279,6 +282,17 @@ function AvatarSession({
       };
   const ready = localOnly || (ownReady && coupleReady && !migrationPending && !migrationError);
   const editableRole = !localOnly && ownReady ? ownRole : null;
+
+  const canEditRole = useCallback(
+    (role: AvatarRole) => {
+      if (localOnly) return true;
+      if (!ready) return false;
+      if (coupleId) return true; // In couple mode, either partner can personalize either avatar
+      return role === ownRole;
+    },
+    [localOnly, ready, coupleId, ownRole]
+  );
+
   const value: AvatarContextValue = {
     records,
     demoRecords,
@@ -288,13 +302,14 @@ function AvatarSession({
     localOnly,
     ready,
     editableRole,
+    canEditRole,
     error: migrationError || ownError || coupleError,
     editorRole,
     editorInitialConfig,
     openEditor: (role, initialConfig) => {
       if (!ready) return;
       setEditorInitialConfig(
-        initialConfig && (localOnly || role === editableRole)
+        initialConfig && canEditRole(role)
           ? normalizeAvatar(initialConfig)
           : null
       );
@@ -329,21 +344,27 @@ function AvatarSession({
         }
         return;
       }
-      if (!ready || role !== roleRef.current)
+      if (!ready || !canEditRole(role)) {
         throw new Error('Entre na própria conta para salvar seu avatar.');
+      }
+      const isEditingPartner = Boolean(coupleId) && role !== roleRef.current && partnerRef.current?.role === role;
+      const targetUid = isEditingPartner ? partnerRef.current?.uid : uid;
+      if (!targetUid) throw new Error('Identificação da conta não encontrada.');
+
       const controller = new AbortController();
       const timer = window.setTimeout(() => controller.abort(), 20000);
+      let savedRecord: AvatarRecord | null = null;
       try {
+        const payload = isEditingPartner
+          ? { config, expectedRevision, targetUid }
+          : { config, expectedRevision };
         const result = await authenticatedApi<{ avatar: AvatarRecord }>(
           '/api/avatars/save',
-          { config, expectedRevision },
+          payload,
           controller.signal
         );
         if (!alive.current) throw new Error('A sessão mudou. Abra seu perfil novamente.');
-        const record = avatarRecord(result.avatar, uid);
-        if (!record) throw new Error('Não foi possível confirmar o avatar salvo.');
-        acceptOwn(record);
-        setOwnError('');
+        savedRecord = avatarRecord(result.avatar, targetUid);
       } catch (cause) {
         if (!alive.current) throw new Error('A sessão mudou. Abra seu perfil novamente.');
         if (
@@ -353,17 +374,55 @@ function AvatarSession({
           typeof cause.details === 'object' &&
           'currentAvatar' in cause.details
         ) {
-          const current = avatarRecord(cause.details.currentAvatar, uid);
-          if (current) acceptOwn(current);
+          const current = avatarRecord(cause.details.currentAvatar, targetUid);
+          if (current) {
+            if (targetUid === uid) acceptOwn(current);
+            else if (isEditingPartner && partnerRef.current) setPartner({ role, uid: targetUid, record: current });
+          }
           throw new AvatarConflictError(current);
         }
-        if (controller.signal.aborted)
-          throw new Error(
-            'A confirmação demorou. Confira seu avatar e tente novamente; seu rascunho foi preservado.'
-          );
-        throw cause;
+
+        // Direct Firestore fallback when the client has a signed-in user session
+        const currentUser = auth.currentUser;
+        if (currentUser && !currentUser.isAnonymous) {
+          try {
+            const nextRev = (targetUid === uid ? ownRef.current?.revision : partnerRef.current?.record.revision) || expectedRevision;
+            const directRecord: AvatarRecord = {
+              ownerUid: targetUid,
+              revision: nextRev + 1,
+              config,
+            };
+            await setDoc(doc(db, 'avatars', targetUid), directRecord);
+            savedRecord = directRecord;
+          } catch (directErr) {
+            console.error('Direct Firestore avatar save error:', directErr);
+            if (controller.signal.aborted) {
+              throw new Error(
+                'A confirmação demorou. Confira seu avatar e tente novamente; seu rascunho foi preservado.'
+              );
+            }
+            throw cause;
+          }
+        } else {
+          if (controller.signal.aborted) {
+            throw new Error(
+              'A confirmação demorou. Confira seu avatar e tente novamente; seu rascunho foi preservado.'
+            );
+          }
+          throw cause;
+        }
       } finally {
         window.clearTimeout(timer);
+      }
+
+      if (savedRecord) {
+        if (targetUid === uid) {
+          acceptOwn(savedRecord);
+          setOwnError('');
+        } else if (isEditingPartner && partnerRef.current) {
+          setPartner({ role, uid: targetUid, record: savedRecord });
+          setCoupleError('');
+        }
       }
     },
   };

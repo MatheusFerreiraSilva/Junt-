@@ -33,7 +33,7 @@ describe('local avatar recipes', () => {
     expect(source.skin).toBe(DEFAULT_AVATAR.skin);
   });
 
-  it('returns valid random combinations with no gender field or restrictions', () => {
+  it('returns valid random combinations across all catalog options', () => {
     for (let i = 0; i < 30; i++) expect(isAvatarConfig(randomAvatar())).toBe(true);
   });
 
@@ -58,7 +58,7 @@ describe('local avatar recipes', () => {
     const { rerender, container } = render(<Avatar />);
     for (const item of AVATAR_OPTIONS.hair) {
       rerender(<Avatar config={{ ...DEFAULT_AVATAR, hair: item.id }} variant="body" />);
-      expect(container.querySelector('svg')?.getAttribute('viewBox')).toBe('0 0 200 264');
+      expect(container.querySelector('svg')?.getAttribute('viewBox')).toBe('0 0 200 268');
     }
     rerender(<Avatar config={normalizeAvatar({ skin: '<script>' })} variant="face" />);
     expect(container.querySelector('svg')?.getAttribute('viewBox')).toBe('25 12 150 150');

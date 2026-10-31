@@ -35,6 +35,7 @@ vi.mock('./AvatarProvider', () => ({
     ready: true,
     error: '',
     editableRole: fake.editableRole,
+    canEditRole: (role: string) => role === fake.editableRole,
     openEditor: fake.open,
     closeEditor: fake.close,
     save: fake.save,

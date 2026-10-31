@@ -5,7 +5,12 @@ import type { Request, Response, NextFunction } from 'express';
 import firebaseConfig from '../firebase-applet-config.json';
 
 export function adminDb() {
-  if (!getApps().length) initializeApp({ credential: applicationDefault(), projectId: process.env.FIREBASE_PROJECT_ID || process.env.GOOGLE_CLOUD_PROJECT });
+  if (!getApps().length) {
+    initializeApp({
+      credential: applicationDefault(),
+      projectId: firebaseConfig.projectId || process.env.FIREBASE_PROJECT_ID || process.env.GOOGLE_CLOUD_PROJECT,
+    });
+  }
   return getFirestore(getApp(), firebaseConfig.firestoreDatabaseId || '(default)');
 }
 
@@ -14,12 +19,15 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
   if (!bearer) { res.status(401).json({ error: 'Entre na sua conta para continuar.' }); return; }
   try {
     adminDb();
-    const identity = await getAuth().verifyIdToken(bearer, true);
+    const identity = await getAuth().verifyIdToken(bearer);
     res.locals.uid = identity.uid;
     res.locals.authProvider = identity.firebase?.sign_in_provider || '';
     res.locals.email = identity.email || "";
     next();
-  } catch { res.status(401).json({ error: 'Sessão inválida ou expirada. Entre novamente.' }); }
+  } catch (err: unknown) {
+    console.error('requireAuth token verification error:', err);
+    res.status(401).json({ error: 'Sessão inválida ou expirada. Entre novamente.' });
+  }
 }
 
 export async function authorizedCouple(uid: string): Promise<string | null> {

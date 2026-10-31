@@ -22,13 +22,29 @@ export async function authenticatedApi<T>(
 ): Promise<T> {
   const user = auth.currentUser;
   if (!user) throw new Error('Faça login para continuar.');
-  const token = await user.getIdToken();
-  const response = await fetch(path, {
+  let token = await user.getIdToken();
+  let response = await fetch(path, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
     body: JSON.stringify(body),
     signal,
   });
+
+  // If 401 Unauthorized, attempt token refresh once and retry
+  if (response.status === 401 && !signal?.aborted && auth.currentUser?.uid === user.uid) {
+    try {
+      token = await user.getIdToken(true);
+      response = await fetch(path, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+        body: JSON.stringify(body),
+        signal,
+      });
+    } catch {
+      // Continue to error handling below
+    }
+  }
+
   const result = await response.json().catch(() => ({}));
   if (auth.currentUser?.uid !== user.uid) throw new Error('A sessão mudou. Repita a operação.');
   if (!response.ok) throw new ApiError(response.status, result);

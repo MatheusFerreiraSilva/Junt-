@@ -56,7 +56,7 @@ export function registerAvatars(app: Express) {
   app.post(['/api/avatars/save', '/api/couples/avatar'], userQuota(30, 60_000, 500, avatarDb), async (req, res) => {
     try {
       const uid = authenticatedPerson(res);
-      const { config, expectedRevision, coupleId } = req.body || {};
+      const { config, expectedRevision, coupleId, targetUid } = req.body || {};
       const legacyAdapter = req.path === '/api/couples/avatar';
       if (!isAvatarConfig(config) || !Number.isSafeInteger(expectedRevision) || expectedRevision < 0
         || expectedRevision >= Number.MAX_SAFE_INTEGER
@@ -64,16 +64,35 @@ export function registerAvatars(app: Express) {
         throw new AvatarFailure(400, 'Escolha opções válidas para o avatar e tente novamente.');
       }
       const db = avatarDb();
+      let targetOwnerUid = uid;
+      if (typeof targetUid === 'string' && targetUid && targetUid !== uid) {
+        const userProfile = (await db.doc(`users/${uid}`).get()).data();
+        const cid = userProfile?.coupleId;
+        if (!cid || typeof cid !== 'string') {
+          throw new AvatarFailure(403, 'Você só pode personalizar o avatar de quem está no seu casal.');
+        }
+        const coupleSnap = await db.doc(`couples/${cid}`).get();
+        const coupleData = coupleSnap.data();
+        const isPartner = coupleData && !coupleData.departedMembers?.[uid] && !coupleData.departedMembers?.[targetUid] && (
+          (coupleData.partner1Uid === uid && coupleData.partner2Uid === targetUid) ||
+          (coupleData.partner2Uid === uid && coupleData.partner1Uid === targetUid)
+        );
+        if (!isPartner) {
+          throw new AvatarFailure(403, 'Acesso não autorizado para o avatar deste usuário.');
+        }
+        targetOwnerUid = targetUid;
+      }
+
       const result = await db.runTransaction(async tx => {
-        const ref = db.doc(`avatars/${uid}`);
+        const ref = db.doc(`avatars/${targetOwnerUid}`);
         const snapshot = await tx.get(ref);
         const raw = snapshot.data();
-        const current = personalRecord(raw, uid);
+        const current = personalRecord(raw, targetOwnerUid);
         if (raw !== undefined && !current) {
           throw new AvatarFailure(409, 'Não foi possível confirmar o avatar desta conta. Atualize seu perfil antes de salvar.');
         }
         // Keep the old endpoint usable, but never write avatar data into financial documents.
-        const legacy = legacyAdapter ? await legacyMembership(tx, db, uid, coupleId) : null;
+        const legacy = legacyAdapter ? await legacyMembership(tx, db, targetOwnerUid, coupleId) : null;
         if (legacyAdapter && !legacy) throw new AvatarFailure(403, 'Seu vínculo mudou. Abra o perfil da sua conta para salvar.');
         const previous = current || legacy?.avatar || null;
         const revision = previous?.revision ?? 0;
@@ -84,7 +103,7 @@ export function registerAvatars(app: Express) {
           }
           throw new AvatarFailure(409, 'O avatar foi atualizado em outro dispositivo. Revise a versão atual antes de salvar.', previous);
         }
-        const avatar: SavedAvatar = { ownerUid: uid, revision: revision + 1, config };
+        const avatar: SavedAvatar = { ownerUid: targetOwnerUid, revision: revision + 1, config };
         tx.set(ref, avatar);
         return { avatar, ...(legacy ? { role: legacy.role } : {}) };
       });

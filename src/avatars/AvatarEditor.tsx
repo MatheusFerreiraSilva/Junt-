@@ -26,23 +26,24 @@ type Group = 'appearance' | 'hair' | 'face' | 'outfit' | 'details';
 type History = { past: AvatarConfig[]; present: AvatarConfig; future: AvatarConfig[] };
 
 const GROUPS: { id: Group; label: string; fields: Field[] }[] = [
-  { id: 'appearance', label: 'Aparência', fields: ['skin'] },
+  { id: 'appearance', label: 'Silhueta & Pele', fields: ['gender', 'skin'] },
   { id: 'hair', label: 'Cabelo', fields: ['hair', 'hairColor'] },
   { id: 'face', label: 'Rosto', fields: ['eyes', 'eyeColor', 'mouth'] },
-  { id: 'outfit', label: 'Roupa', fields: ['outfit', 'outfitColor'] },
-  { id: 'details', label: 'Detalhes', fields: ['accessory'] },
+  { id: 'outfit', label: 'Trajes & Médicos', fields: ['outfit', 'outfitColor'] },
+  { id: 'details', label: 'Acessórios', fields: ['accessory'] },
 ];
 
 const LABELS: Record<Field, string> = {
+  gender: 'Silhueta & Gênero',
   skin: 'Tom de pele',
   hair: 'Estilo de cabelo',
   hairColor: 'Cor do cabelo',
   eyes: 'Formato dos olhos',
   eyeColor: 'Cor dos olhos',
   mouth: 'Expressão',
-  outfit: 'Estilo de roupa',
-  outfitColor: 'Cor da roupa',
-  accessory: 'Acessórios',
+  outfit: 'Traje (Scrub médico, Jaleco, etc.)',
+  outfitColor: 'Cor do traje',
+  accessory: 'Acessório (Estetoscópio, Fone, Mochila, etc.)',
 };
 
 const equal = (a: AvatarConfig, b: AvatarConfig) => JSON.stringify(a) === JSON.stringify(b);
@@ -147,18 +148,18 @@ export function AvatarEditor({
     <section
       aria-label={`Personalizar avatar de ${name}`}
       aria-busy={saving}
-      className="overflow-hidden rounded-3xl border border-stone-200 bg-white dark:border-slate-700 dark:bg-slate-900"
+      className="overflow-hidden rounded-3xl border border-stone-200 bg-white dark:border-slate-700 dark:bg-slate-900 shadow-xl"
     >
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-stone-200 px-4 py-4 sm:px-6 dark:border-slate-700">
         <div>
-          <p className="mb-1 text-[11px] font-bold uppercase tracking-[0.18em] text-emerald-800 dark:text-emerald-300">
-            Do seu jeito
+          <p className="mb-1 text-[11px] font-bold uppercase tracking-[0.18em] text-emerald-800 dark:text-emerald-400">
+            Ateliê do Juntô
           </p>
           <h3 className="font-display text-xl font-bold text-slate-900 dark:text-white">
-            Um pouco de {name}
+            Personalizar {name}
           </h3>
           <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">
-            Misture as opções. Todas estão disponíveis para você.
+            Combine silhuetas, trajes médicos e acessórios para expressar sua presença.
           </p>
         </div>
         <button
@@ -171,46 +172,48 @@ export function AvatarEditor({
         </button>
       </div>
 
-      <div className="grid min-w-0 lg:grid-cols-[280px_minmax(0,1fr)]">
-        <div className="flex items-center justify-center gap-3 border-b border-stone-200 bg-stone-50 px-4 py-3 lg:flex-col lg:gap-4 lg:border-b-0 lg:border-r lg:px-5 lg:py-6 dark:border-slate-700 dark:bg-slate-950/40">
-          <div className="relative flex w-28 shrink-0 items-center justify-center rounded-2xl bg-[#eee6da] px-1 lg:w-full lg:max-w-60 lg:rounded-[2rem] lg:px-5 lg:pt-4 dark:bg-[#26342f]">
+      <div className="grid min-w-0 lg:grid-cols-[290px_minmax(0,1fr)]">
+        {/* Studio Stage Showcase */}
+        <div className="flex items-center justify-center gap-3 border-b border-stone-200 bg-gradient-to-b from-stone-50 via-stone-100/70 to-stone-200/50 px-4 py-4 lg:flex-col lg:gap-4 lg:border-b-0 lg:border-r lg:px-6 lg:py-6 dark:border-slate-700 dark:from-slate-950 dark:via-slate-900 dark:to-slate-950">
+          <div className="relative flex w-32 shrink-0 items-center justify-center rounded-3xl bg-gradient-to-b from-[#f5eee3] to-[#e4dacb] p-3 shadow-md lg:w-full lg:max-w-64 lg:rounded-[2.2rem] lg:px-5 lg:pb-3 lg:pt-5 dark:from-[#1b2622] dark:to-[#121a17]">
             <span
               aria-hidden="true"
-              className="absolute right-2 top-2 hidden text-emerald-800 lg:right-5 lg:top-5 lg:block dark:text-emerald-300"
+              className="absolute right-3 top-3 hidden text-emerald-700 lg:block dark:text-emerald-300"
             >
-              <Sparkles size={19} />
+              <Sparkles size={18} />
             </span>
             <Avatar
               config={draft}
               variant="body"
-              size={216}
-              className="w-28 lg:w-[216px]"
+              size={220}
+              className="w-32 lg:w-[220px]"
               label={`Prévia do avatar de ${name}`}
             />
           </div>
-          <div className="min-w-0 space-y-3">
-            <div className="flex flex-col items-start gap-2 rounded-2xl border border-stone-200 bg-white px-3 py-3 sm:flex-row sm:items-center lg:gap-3 lg:px-4 dark:border-slate-700 dark:bg-slate-900">
-              <Avatar config={draft} variant="face" size={44} />
-              <div>
-                <p className="text-sm font-semibold text-slate-900 dark:text-white">
-                  Seu rostinho no app
+
+          <div className="min-w-0 space-y-3 w-full max-w-64">
+            <div className="flex flex-col items-start gap-2 rounded-2xl border border-stone-200/80 bg-white/90 px-3 py-2.5 sm:flex-row sm:items-center lg:gap-3 lg:px-4 dark:border-slate-700 dark:bg-slate-900/90 shadow-sm">
+              <Avatar config={draft} variant="face" size={42} />
+              <div className="min-w-0">
+                <p className="text-xs font-bold text-slate-900 dark:text-white truncate">
+                  Visual em miniatura
                 </p>
-                <p className="text-xs text-slate-600 dark:text-slate-400">
-                  A mesma pessoa, em cada cantinho.
+                <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
+                  Usado nas notificações e listas
                 </p>
               </div>
             </div>
             <p className="hidden max-w-60 text-center text-xs leading-relaxed text-slate-600 lg:block dark:text-slate-400">
               {localOnly
-                ? 'Modo de demonstração: suas escolhas ficam neste aparelho.'
-                : 'Seu avatar acompanha sua conta, com ou sem um casal vinculado.'}
+                ? 'Modo de demonstração: seu rascunho fica preservado neste aparelho.'
+                : 'Seu avatar acompanha sua conta e brilha no dashboard do casal.'}
             </p>
           </div>
         </div>
 
         <div className="min-w-0 p-4 sm:p-6">
           <div
-            className="mb-5 grid grid-cols-3 gap-1.5 sm:grid-cols-5"
+            className="mb-5 grid grid-cols-2 gap-1.5 sm:grid-cols-5"
             role="group"
             aria-label="Grupos de personalização"
           >
@@ -221,7 +224,7 @@ export function AvatarEditor({
                 aria-pressed={group === item.id}
                 disabled={saving}
                 onClick={() => setGroup(item.id)}
-                className={`${control} px-2 text-xs ${group === item.id ? 'bg-slate-900 text-white dark:bg-stone-100 dark:text-slate-900' : 'bg-stone-100 text-slate-700 hover:bg-stone-200 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700'}`}
+                className={`${control} px-2 text-xs truncate ${group === item.id ? 'bg-slate-900 text-white shadow-sm dark:bg-stone-100 dark:text-slate-900' : 'bg-stone-100 text-slate-700 hover:bg-stone-200 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700'}`}
               >
                 {item.label}
               </button>
