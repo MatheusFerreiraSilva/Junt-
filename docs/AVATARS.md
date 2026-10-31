@@ -1,28 +1,33 @@
-# Avatares pessoais e compartilhamento
+# Avatares e aparência por conta
 
-O avatar pertence à conta autenticada (UID). O casal apenas determina quem pode visualizar o outro perfil. Editor, arte, animações, temas e cálculos financeiros foram preservados.
+A identidade é o UID autenticado do Firebase, correspondente à conta usada no login por e-mail/Google. Não usar o endereço de e-mail como chave: o usuário pode alterá-lo sem perder o avatar. Não unificar UIDs diferentes automaticamente.
 
-## Armazenamento e API
+## Contratos
 
-Documento avatars/{uid}: ownerUid, revision, config (com versão própria). POST /api/avatars/save recebe config e expectedRevision sem depender de coupleId. Autorização vem da sessão verificada, nunca do payload. Revisão otimista e repetição idempotente evitam duplicidade. Conflito409 fornece currentAvatar para resolver explicitamente sem perder o rascunho. A rota antiga valida seu contexto e adapta a gravação para o documento pessoal.
+- avatars/{uid}: ownerUid, revision, config. A receita compacta usa o catálogo local; não aceita HTML, SVG externo ou campos extras. O UID de destino é o proprietário, mesmo quando seu parceiro edita.
+- Ambos os integrantes ativos podem editar ambos os avatares, conforme confirmação do usuário. A autorização exige perfis apontando ao mesmo casal, UIDs reais no documento do casal e ausência de desligamento. Ter apenas um coupleId no cliente não concede acesso.
+- accountPreferences/{uid}: ownerUid, version:1, revision, preferences com themeMode, accentTheme, coupleTheme, partner1Theme e partner2Theme. Somente a própria conta acessa essas preferências. Valores financeiros e vínculos não fazem parte desse documento.
 
-POST /api/avatars/migrate copia legado próprio de avatarProfiles do casal somente se não existe perfil pessoal e o vínculo/proprietário são válidos. Dados pessoais existentes vencem; legado não é apagado. Demonstração fica local e importação exige escolha/prévia/confirmar como avatar próprio.
+## Gravação e confirmação
 
-## Leitura e sessão
+POST /api/avatars/save mantém a API existente com autenticação e transação, validando o vínculo compartilhado dentro da mesma transação da gravação. O cliente exige uma resposta com proprietário, revisão e receita correspondentes ao pedido. Resposta vazia, HTML da prévia ou receita incompatível não contam como salvamento.
 
-Firestore permite get próprio a contas não anônimas e get do parceiro apenas quando ambos os perfis apontam ao mesmo casal e os UIDs do casal estão ativos. Não permite listar coleção ou gravar diretamente. Não compartilha documentos users nem dados financeiros. Listeners separados acompanham o próprio avatar e o parceiro autorizado; saída do casal encerra acesso ao parceiro e mantém o próprio. Sessão/vínculo mudado limpa assinaturas antigas.
+Se a API estiver indisponível/incompatível, o SDK Firebase existente pode salvar em transação sujeita às mesmas regras. Não há setDoc incondicional para contornar conflito. Revisões antigas preservam o rascunho e oferecem revisão explícita; repetir a última gravação idêntica é seguro. Não usar a recuperação para contornar403,400,409ou429. Sem conexão, uma transação não confirma sucesso nem fecha o editor.
 
-## Publicação coordenada
+O destino do parceiro vem do vínculo verificado e existe independentemente de ele já ter um boneco. Um integrante ainda não vinculado nunca é convertido no próprio usuário durante o salvamento. Respostas atrasadas não substituem revisões mais novas, inclusive do parceiro. Trocar conta/casal encerra assinaturas antigas.
 
-1. Aprovar testes unitários, tipos, lint, builds, smoke e regras em emulador/CI.
-2. Publicar firestore.rules no banco nomeado indicado por firestoreDatabaseId em firebase-applet-config.json, no projectId desse arquivo. Não aplicar por engano só ao banco(default). Comparar primeiro as regras publicadas com este arquivo: a publicação também pode ativar restrições de vínculo que já existiam no repositório. Confirmar compatibilidade das gravações atuais, inclusive divisões personalizadas. Fazer backup do ruleset anterior.
-3. Integrar/públicar servidor e frontend juntos somente após regras confirmadas. Nenhuma migração destrutiva ou nova dependência é necessária.
-4. Em contas reais autorizadas, testar dois dispositivos, convite, alterações recíprocas e saída. Registrar evidência separadamente dos testes simulados.
+## Compatibilidade
 
-Sem rede, o rascunho é mantido e a falha de confirmação aparece; não há fila automática nem promessa de salvamento offline. Não remova regras durante rollback de frontend sem considerar clientes já atualizados.
+Receitas exatas da versão1 anterior ao campo gender continuam legíveis, preservando as outras escolhas; somente esse campo recebe o padrão. Novas gravações exigem a receita completa atual. Dados inválidos não viram receitas válidas por normalização genérica.
 
-## Compatibilidade verificada antes da publicação
+A migração do legado avatarProfiles lê novamente o proprietário e o vínculo, copia apenas o próprio avatar e não sobrescreve o documento pessoal existente. O caminho SDK inicia o documento pessoal na revisão1; a API mantém a revisão legada. A revisão é controle do documento de destino, não identidade. O legado não é apagado. Demonstração permanece local e a importação exige prévia/confirmação.
 
-O banco nomeado é compartilhado por frontend, avatares e agora também pelas rotas de criação/convite/entrada/saída do casal e pelas quotas do servidor. A auditoria em 30/10/2026 consultou apenas metadados de vínculo: um usuário vinculado, um casal e nenhuma inconsistência detectada. O banco(default) retornou inexistente. Nenhum documento foi copiado, alterado ou removido nessa auditoria.
+## Aparência
 
-As regras publicadas anteriormente eram mais permissivas que as do repositório. É necessário proteger a autoria dos vínculos para impedir que terceiros se declarem parceiros e leiam avatares. A lista de pagadores/destinatários mantém o valor custom já previsto pelo tipo PaidBy do aplicativo.
+Somente ações explícitas nas cores/tema provocam gravações. O cache financeiro não é enviado como preferências. Após hidratar o cache próprio do UID, a aparência atual permanece visível enquanto a nuvem carrega. Documento remoto existente tem prioridade; documento ausente oferece Salvar aparência atual nesta conta, sem copiar automaticamente preferências da demonstração ou de outra conta. O primeiro ajuste explícito preserva as outras cores visíveis. Transações mesclam campos na última revisão para preservar alterações em outros dispositivos. Falhas mantêm as escolhas e oferecem nova tentativa.
+
+## Publicação e validação
+
+Publicar as regras no projectId e no firestoreDatabaseId de firebase-applet-config.json antes de disponibilizar o frontend. Preservar backup das regras anteriores e confirmar que a release ativa corresponde ao arquivo aprovado. Atualizar frontend e servidor juntos no AI Studio.
+
+Testes unitários, regras no emulador e transações reais do SDK no emulador cobrem as correções. Isso não substitui o teste final com duas contas reais no ambiente publicado. Arte, editor, animações, fontes, temas disponíveis, configuração Firebase/Gemini e cálculos financeiros foram preservados.

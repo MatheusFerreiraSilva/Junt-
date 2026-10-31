@@ -7,6 +7,10 @@ const fake = vi.hoisted(() => ({
     coupleAccount: null as null | { id: string },
     userProfile: null as null | { partnerRole: string },
   },
+  auth: { currentUser: null as null | { uid: string; isAnonymous: boolean } },
+  cloud: undefined as unknown,
+  pending: undefined as unknown,
+  failCloud: false,
   listeners: [] as {
     path: string;
     next: (snap: { data: () => unknown }) => void;
@@ -18,13 +22,19 @@ const fake = vi.hoisted(() => ({
   migrate: vi.fn(),
 }));
 vi.mock('../context/FinanceContext', () => ({ useFinance: () => fake.finance }));
-vi.mock('../lib/firebase', () => ({ db: {}, auth: { currentUser: null } }));
+vi.mock('../lib/firebase', () => ({ db: {}, auth: fake.auth }));
 vi.mock('../lib/authenticatedApi', async (original) => ({
   ...(await original<typeof import('../lib/authenticatedApi')>()),
   authenticatedApi: fake.api,
 }));
 vi.mock('firebase/firestore', () => ({
   doc: (_db: unknown, ...parts: string[]) => parts.join('/'),
+  runTransaction: async (_db: unknown, operation: (tx: unknown) => Promise<unknown>) => {
+    if (fake.failCloud) throw new Error('offline');
+    const result = await operation({ get: async () => ({ data: () => fake.cloud }), set: (_ref: unknown, value: unknown) => { fake.pending = value; } });
+    if (fake.pending) fake.cloud = fake.pending;
+    return result;
+  },
   onSnapshot: (path: string, next: (snap: { data: () => unknown }) => void, error: () => void) => {
     const unsubscribe = vi.fn();
     fake.listeners.push({ path, next, error, unsubscribe });
@@ -100,7 +110,7 @@ beforeEach(() => {
     path.endsWith('/migrate') ? fake.migrate() : fake.save(path, body)
   );
   localStorage.clear();
-  failure = undefined;
+  failure = undefined; fake.auth.currentUser = null; fake.cloud = undefined; fake.pending = undefined; fake.failCloud = false;
 });
 describe('account avatar ownership, sessions and persistence', () => {
   it('keeps demo avatars separate and restores valid local recipes only', () => {
@@ -272,4 +282,66 @@ it('does not migrate a legacy recipe over an existing personal avatar', () => {
   });
   expect(screen.getByTestId('one')).toHaveTextContent('bald');
   expect(fake.migrate).not.toHaveBeenCalled();
+});
+
+it('does not report success when the API returns no confirmed avatar', async () => {
+  login(); render(app()); emit('avatars/a', avatar('a'));
+  fake.save.mockResolvedValueOnce({});
+  fireEvent.click(screen.getByText('Save partner1'));
+  await waitFor(() => expect(failure).toBeInstanceOf(Error));
+  expect(screen.getByTestId('one')).toHaveTextContent(DEFAULT_AVATAR.hair);
+});
+it('never saves an unlinked role into the signed-in owner account', async () => {
+  login('a', 'pair'); render(app()); emit('avatars/a', avatar('a'));
+  emit('couples/pair', { partner1Uid: 'a', partner2Uid: '' });
+  fake.save.mockResolvedValueOnce({ avatar: avatar('a', 'long', 2) });
+  fireEvent.click(screen.getByText('Save partner2'));
+  await waitFor(() => expect(failure).toBeInstanceOf(Error));
+  expect(fake.save).not.toHaveBeenCalled();
+  expect(screen.getByTestId('one')).toHaveTextContent(DEFAULT_AVATAR.hair);
+});
+
+it('creates the linked partner first avatar without assigning it to the caller', async () => {
+  login('a', 'pair'); render(app()); emit('avatars/a', avatar('a'));
+  emit('couples/pair', { partner1Uid: 'a', partner2Uid: 'b' }); emit('avatars/b', undefined);
+  fake.save.mockResolvedValueOnce({ avatar: avatar('b', 'long', 1) });
+  fireEvent.click(screen.getByText('Save partner2'));
+  await waitFor(() => expect(screen.getByTestId('two')).toHaveTextContent('long'));
+  expect(screen.getByTestId('one')).toHaveTextContent(DEFAULT_AVATAR.hair);
+  expect(fake.save).toHaveBeenCalledWith('/api/avatars/save', expect.objectContaining({ targetUid: 'b', expectedRevision: 0 }));
+});
+it('loads old personal and partner recipes without losing their choices', () => {
+  login('a', 'pair'); render(app());
+  const { gender: _gender, ...old } = { ...DEFAULT_AVATAR, hair: 'bald' };
+  emit('avatars/a', { ownerUid: 'a', revision: 4, config: old });
+  emit('couples/pair', { partner1Uid: 'a', partner2Uid: 'b' });
+  emit('avatars/b', { ownerUid: 'b', revision: 2, config: { ...old, hair: 'long' } });
+  expect(screen.getByTestId('one')).toHaveTextContent('bald');
+  expect(screen.getByTestId('two')).toHaveTextContent('long');
+});
+it('does not replace a newer partner snapshot with a delayed save response', async () => {
+  login('a', 'pair'); render(app()); emit('avatars/a', avatar('a'));
+  emit('couples/pair', { partner1Uid: 'a', partner2Uid: 'b' }); emit('avatars/b', avatar('b'));
+  let finish: (value: unknown) => void = () => {};
+  fake.save.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  fireEvent.click(screen.getByText('Save partner2'));
+  emit('avatars/b', avatar('b', 'bald', 4));
+  await act(async () => finish({ avatar: avatar('b', 'long', 2) }));
+  expect(screen.getByTestId('two')).toHaveTextContent('bald');
+});
+
+it('recovers an incompatible API response through a confirmed cloud transaction', async () => {
+  login(); fake.auth.currentUser = { uid: 'a', isAnonymous: false }; render(app()); emit('avatars/a', undefined);
+  fake.save.mockResolvedValueOnce({});
+  fireEvent.click(screen.getByText('Save partner1'));
+  await waitFor(() => expect(screen.getByTestId('one')).toHaveTextContent('bald'));
+  expect(fake.cloud).toEqual(avatar('a', 'bald', 1));
+  expect(failure).toBeUndefined();
+});
+it('keeps failure visible when neither the API nor cloud confirms the avatar', async () => {
+  login(); fake.auth.currentUser = { uid: 'a', isAnonymous: false }; fake.failCloud = true;
+  render(app()); emit('avatars/a', undefined); fake.save.mockResolvedValueOnce({});
+  fireEvent.click(screen.getByText('Save partner1'));
+  await waitFor(() => expect(failure).toHaveProperty('message', expect.stringContaining('rascunho continua aberto')));
+  expect(screen.getByTestId('one')).toHaveTextContent('empty'); expect(fake.cloud).toBeUndefined();
 });

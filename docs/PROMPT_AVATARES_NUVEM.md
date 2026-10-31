@@ -1,8 +1,8 @@
 # Upgrade: avatares da conta compartilhados com o casal
 
-Cada avatar pertence ao UID autenticado, não ao casal. Salvar e recuperar antes do convite e após saída do casal; ao vincular, cada integrante vê atualizações em tempo real do outro. Preserve editor, arte, fontes, temas, Firebase/Gemini e finanças.
+Cada avatar pertence ao UID da respectiva conta, não ao casal. Conforme a decisão atual do usuário, ambos os integrantes ativos podem editar os dois avatares, mantendo o proprietário de cada conta. Salvar e recuperar antes do convite e após saída do casal; ao vincular, cada integrante vê atualizações em tempo real do outro. Preserve editor, arte, fontes, temas, Firebase/Gemini e finanças.
 
-Use avatars/{uid} com configuração validada, proprietário e revisão; leitura própria e do parceiro ativo, sem listagem ou escrita direta pelo cliente. API autenticada deriva UID e rejeita demonstração anônima. Gravações com revisão antiga exigem resolução explícita; repetição idêntica é idempotente.
+Use avatars/{uid} com configuração validada, proprietário e revisão; leitura própria e do parceiro ativo, sem listagem. A API autenticada valida o destino e o vínculo em transação; o SDK existente pode gravar em transação com regras equivalentes, receitas completas e revisão monotônica. Rejeite demonstração anônima e respostas sem confirmação válida. Gravações com revisão antiga exigem resolução explícita; repetição idêntica é idempotente.
 
 Migre configuração legada apenas do próprio UID, somente se ainda não existir avatar pessoal; nunca sobrescreva perfil pessoal existente. Conserve registros antigos. Ofereça prévia e confirmação para importar uma escolha local de demonstração como avatar próprio, sem atribuir o outro à conta do parceiro.
 
@@ -13,3 +13,5 @@ Validar: contas independentes, vínculo/convite, atualização recíproca sem re
 ## Ordem de aplicação
 
 Este upgrade sucede o editor23 já concluído e precede qualquer função que dependa de perfil compartilhado. É independente da regra60/30/10. Antes do merge, executar CI e publicar regras no banco nomeado. Produção com duas contas só pode ser declarada validada após teste autorizado no ambiente real.
+
+As preferências de aparência ficam separadas em accountPreferences/{uid}, com leitura e escrita exclusivas do próprio usuário. Tema e cores acompanham o login, sem misturar informações financeiras. Preserve as escolhas do cache próprio até consultar a nuvem; ofereça salvar a aparência atual quando ainda não existir documento.

@@ -39,6 +39,9 @@ export const SettingsScreen: React.FC = () => {
     toggleProtectionComplete,
     resetToSampleData,
     toggleThemeMode,
+    appearanceSyncStatus,
+    retryAppearanceSync,
+    saveCurrentAppearance,
     setAccentTheme,
     setModeTheme,
     clearAllData,
@@ -1871,6 +1874,19 @@ export const SettingsScreen: React.FC = () => {
                 Cada um dos 3 modos possui sua cor principal distinta. Ao alternar entre Casal, {partner1Name} ou {partner2Name}, as bordas, botões, números e destaques do app assumem integralmente a cor do perfil ativo.
               </p>
             </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-3 text-xs text-slate-600 dark:text-slate-300" aria-live="polite">
+            <p role={appearanceSyncStatus === 'error' ? 'alert' : 'status'}>
+              {appearanceSyncStatus === 'loading' ? 'Carregando a aparência da sua conta…'
+                : appearanceSyncStatus === 'saving' ? 'Salvando a aparência na sua conta…'
+                : appearanceSyncStatus === 'not-saved' ? 'Sua aparência deste aparelho foi preservada. Salve nesta conta para recuperá-la nos outros dispositivos.'
+                : appearanceSyncStatus === 'saved' ? 'Aparência sincronizada com sua conta. Ela acompanha seu login nos outros aparelhos.'
+                : appearanceSyncStatus === 'error' ? 'Não foi possível confirmar a aparência na nuvem. Suas escolhas continuam neste aparelho; tente novamente.'
+                : 'Modo de demonstração: a aparência fica somente neste aparelho.'}
+            </p>
+            {appearanceSyncStatus === 'not-saved' && <button type="button" onClick={saveCurrentAppearance} className="min-h-11 rounded-xl border border-slate-300 px-3 py-2 font-semibold dark:border-slate-600">Salvar aparência atual nesta conta</button>}
+            {appearanceSyncStatus === 'error' && <button type="button" onClick={retryAppearanceSync} className="min-h-11 rounded-xl border border-slate-300 px-3 py-2 font-semibold dark:border-slate-600">Tentar sincronizar aparência</button>}
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-5">

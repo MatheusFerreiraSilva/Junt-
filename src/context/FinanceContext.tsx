@@ -3,6 +3,8 @@ import React, { createContext, useContext, useState, useEffect, useMemo, useCall
 import confetti from 'canvas-confetti';
 import { applyShiftAllocation, undoShiftAllocations, migrateLegacyShiftAllocations } from '../utils/shiftReconciliation';
 import { authenticatedApi } from '../lib/authenticatedApi';
+import { createPreferenceSync, DEFAULT_PREFERENCES, type AccountPreferences, type PreferencePatch, type AppearanceSyncStatus } from '../lib/accountPreferences';
+import { firebasePreferenceStore } from '../lib/firebasePreferences';
 import { isAvatarOnlySnapshot } from '../lib/coupleSnapshot';
 import { ENTITY_FIELDS, migrateEntities, subscribeEntities, saveEntities, rebaseEntities, conflictAwareBaseline, type EntityState } from '../lib/entitySync';
 import {
@@ -460,6 +462,9 @@ export interface FinanceContextType {
   monthlyBudgetPlans: Record<string, BudgetPlanContract>;
   updateCategoryLocks: (locks: Partial<Record<DestinationKey, boolean>>) => void;
   applyBudgetPlanContract: (plan: BudgetPlanContract) => void;
+  appearanceSyncStatus: AppearanceSyncStatus;
+  retryAppearanceSync: () => void;
+  saveCurrentAppearance: () => void;
   toggleThemeMode: () => void;
   setAccentTheme: (theme: AccentTheme) => void;
   setModeTheme: (mode: 'couple' | 'partner1' | 'partner2', theme: AccentTheme) => void;
@@ -694,6 +699,53 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
   const [viewMode, setViewMode] = useState<'couple' | 'partner1' | 'partner2'>('couple');
 
   const [state, setState] = useState<AppState>(INITIAL_STATE);
+  const [appearanceSyncStatus, setAppearanceSyncStatus] = useState<AppearanceSyncStatus>('local');
+  const appearanceSession = useRef<{ uid: string; sync: ReturnType<typeof createPreferenceSync> } | null>(null);
+  const appearanceUid = currentUser && !currentUser.isAnonymous ? currentUser.uid : null;
+  // Appearance belongs to the authenticated account, independently of couple membership.
+  // Wait for financial cache hydration so it cannot replace the authoritative account preferences.
+  useEffect(() => {
+    const uid = appearanceUid;
+    if (!uid) { setAppearanceSyncStatus('local'); return; }
+    if (isHydratingCloud) { setAppearanceSyncStatus('loading'); return; }
+    const profile = stateRef.current.profile;
+    const scopedAppearance: AccountPreferences = {
+      themeMode: profile.themeMode, accentTheme: profile.accentTheme,
+      coupleTheme: profile.coupleTheme || DEFAULT_PREFERENCES.coupleTheme,
+      partner1Theme: profile.partner1Theme || DEFAULT_PREFERENCES.partner1Theme,
+      partner2Theme: profile.partner2Theme || DEFAULT_PREFERENCES.partner2Theme,
+    };
+    const sync = createPreferenceSync(uid, firebasePreferenceStore, preferences => {
+      if (auth.currentUser?.uid !== uid || auth.currentUser.isAnonymous) return;
+      setState(previous => ({ ...previous, profile: { ...previous.profile, ...preferences } }));
+    }, setAppearanceSyncStatus, scopedAppearance);
+    const session = { uid, sync }; appearanceSession.current = session;
+    return () => {
+      sync.dispose();
+      if (appearanceSession.current === session) appearanceSession.current = null;
+    };
+  }, [appearanceUid, isHydratingCloud]);
+  const changeAppearance = (change: PreferencePatch | ((preferences: AccountPreferences) => PreferencePatch)) => {
+    if (currentUser && !currentUser.isAnonymous) {
+      if (appearanceSession.current?.uid === currentUser.uid && auth.currentUser?.uid === currentUser.uid)
+        appearanceSession.current.sync.change(change);
+      return;
+    }
+    setState(previous => {
+      const preferences: AccountPreferences = {
+        themeMode: previous.profile.themeMode,
+        accentTheme: previous.profile.accentTheme,
+        coupleTheme: previous.profile.coupleTheme || DEFAULT_PREFERENCES.coupleTheme,
+        partner1Theme: previous.profile.partner1Theme || DEFAULT_PREFERENCES.partner1Theme,
+        partner2Theme: previous.profile.partner2Theme || DEFAULT_PREFERENCES.partner2Theme,
+      };
+      const patch = typeof change === 'function' ? change(preferences) : change;
+      return { ...previous, profile: { ...previous.profile, ...patch } };
+    });
+  };
+  const retryAppearanceSync = () => appearanceSession.current?.sync.retry();
+  const saveCurrentAppearance = () => appearanceSession.current?.sync.saveCurrent();
+
   useEffect(() => {
     // Remove exposed credentials while preserving the old financial backup.
     // That unscoped backup is never automatically assigned to a signed-in UID.
@@ -4185,38 +4237,15 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
   };
 
   const toggleThemeMode = () => {
-    setState(prev => ({
-      ...prev,
-      profile: {
-        ...prev.profile,
-        themeMode: prev.profile.themeMode === 'light' ? 'dark' : 'light',
-      },
-    }));
+    changeAppearance(preferences => ({ themeMode: preferences.themeMode === 'light' ? 'dark' : 'light' }));
   };
 
   const setAccentTheme = (theme: AccentTheme) => {
-    setState(prev => ({
-      ...prev,
-      profile: {
-        ...prev.profile,
-        accentTheme: theme,
-        coupleTheme: viewMode === 'couple' ? theme : prev.profile.coupleTheme,
-        partner1Theme: viewMode === 'partner1' ? theme : prev.profile.partner1Theme,
-        partner2Theme: viewMode === 'partner2' ? theme : prev.profile.partner2Theme,
-      },
-    }));
+    changeAppearance({ accentTheme: theme, [viewMode === 'couple' ? 'coupleTheme' : viewMode === 'partner1' ? 'partner1Theme' : 'partner2Theme']: theme });
   };
 
   const setModeTheme = (mode: 'couple' | 'partner1' | 'partner2', theme: AccentTheme) => {
-    setState(prev => ({
-      ...prev,
-      profile: {
-        ...prev.profile,
-        coupleTheme: mode === 'couple' ? theme : (prev.profile.coupleTheme || 'emerald'),
-        partner1Theme: mode === 'partner1' ? theme : (prev.profile.partner1Theme || 'sapphire'),
-        partner2Theme: mode === 'partner2' ? theme : (prev.profile.partner2Theme || 'rose'),
-      },
-    }));
+    changeAppearance({ [mode === 'couple' ? 'coupleTheme' : mode === 'partner1' ? 'partner1Theme' : 'partner2Theme']: theme });
   };
 
   const resetToSampleData = () => {
@@ -4746,6 +4775,9 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
         monthlyBudgetPlans: state.monthlyBudgetPlans || {},
         updateCategoryLocks,
         applyBudgetPlanContract,
+        appearanceSyncStatus,
+        retryAppearanceSync,
+        saveCurrentAppearance,
         toggleThemeMode,
         setAccentTheme,
         setModeTheme,

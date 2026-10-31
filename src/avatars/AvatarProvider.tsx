@@ -7,11 +7,13 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import { doc, getDoc, onSnapshot, setDoc } from 'firebase/firestore';
+import { doc, onSnapshot } from 'firebase/firestore';
 import { useFinance } from '../context/FinanceContext';
 import { auth, db } from '../lib/firebase';
 import { ApiError, authenticatedApi } from '../lib/authenticatedApi';
-import { isAvatarConfig, normalizeAvatar, type AvatarConfig } from './avatarConfig';
+import { isAvatarConfig, normalizeAvatar, parseStoredAvatarConfig, type AvatarConfig } from './avatarConfig';
+
+import { readCloudAvatar, saveAvatarToCloud, migrateAvatarToCloud, CloudAvatarConflictError } from './avatarStore';
 
 export type AvatarRole = 'partner1' | 'partner2';
 export interface AvatarRecord {
@@ -48,23 +50,14 @@ export class AvatarConflictError extends Error {
     this.name = 'AvatarConflictError';
   }
 }
-function avatarRecord(input: unknown, uid: string): AvatarRecord | null {
-  if (!input || typeof input !== 'object') return null;
-  const value = input as AvatarRecord;
-  return value.ownerUid === uid &&
-    Number.isSafeInteger(value.revision) &&
-    value.revision > 0 &&
-    isAvatarConfig(value.config)
-    ? { ownerUid: uid, revision: value.revision, config: normalizeAvatar(value.config) }
-    : null;
-}
+const avatarRecord = readCloudAvatar;
 export function readDemoAvatars(value: string | null): Records {
   try {
     const data = JSON.parse(value || '{}');
     if (data.version !== 1) return {};
     return Object.fromEntries(
       (['partner1', 'partner2'] as const).flatMap((role) =>
-        isAvatarConfig(data[role])
+        parseStoredAvatarConfig(data[role])
           ? [[role, { ownerUid: role, revision: 0, config: normalizeAvatar(data[role]) }]]
           : []
       )
@@ -102,6 +95,9 @@ function AvatarSession({
   const retryMigrationRef = useRef<(() => void) | undefined>(undefined);
   const [migrationPending, setMigrationPending] = useState(false);
   const [migrationError, setMigrationError] = useState('');
+  const [partnerIdentity, setPartnerIdentity] = useState<{ role: AvatarRole; uid: string } | null>(null);
+  const identityRef = useRef(partnerIdentity);
+  identityRef.current = partnerIdentity;
   const [partner, setPartner] = useState<{ role: AvatarRole; uid: string; record: AvatarRecord } | null>(null);
   const partnerRef = useRef(partner);
   partnerRef.current = partner;
@@ -123,6 +119,10 @@ function AvatarSession({
       return next;
     });
   }, []);
+  const acceptPartner = useCallback((role: AvatarRole, partnerUid: string, record: AvatarRecord) => {
+    setPartner(previous => previous?.uid === partnerUid && previous.record.revision > record.revision
+      ? previous : { role, uid: partnerUid, record });
+  }, []);
   useEffect(() => {
     alive.current = true;
     if (localOnly) {
@@ -142,9 +142,11 @@ function AvatarSession({
       migrationBusy = true;
       setMigrationPending(true);
       setMigrationError('');
+      const controller = new AbortController();
+      const timer = window.setTimeout(() => controller.abort(), 10000);
       try {
         const result = await authenticatedApi<{ avatar: AvatarRecord | null }>(
-          '/api/avatars/migrate'
+          '/api/avatars/migrate', {}, controller.signal
         );
         if (!alive.current) return;
         const migratedRecord = avatarRecord(result.avatar, uid);
@@ -152,11 +154,19 @@ function AvatarSession({
         else if (!ownRef.current) throw new Error('Legacy avatar not confirmed');
         setMigrationError('');
       } catch {
-        if (alive.current && !ownRef.current)
-          setMigrationError(
+        try {
+          const stillCurrent = () => alive.current && auth.currentUser?.uid === uid && !auth.currentUser.isAnonymous;
+          if (!stillCurrent()) throw new Error('Session changed');
+          const recovered = await migrateAvatarToCloud(uid, coupleId, stillCurrent);
+          if (!recovered) throw new Error('Legacy avatar not confirmed');
+          if (alive.current) { acceptOwn(recovered); setMigrationError(''); }
+        } catch {
+          if (alive.current && !ownRef.current) setMigrationError(
             'Não foi possível recuperar seu avatar anterior. Ele não foi apagado. Tente recuperar novamente antes de editar.'
           );
+        }
       } finally {
+        window.clearTimeout(timer);
         migrationBusy = false;
         if (alive.current) setMigrationPending(false);
       }
@@ -167,6 +177,8 @@ function AvatarSession({
       partnerGeneration++;
       stopPartner?.();
       stopPartner = undefined;
+      identityRef.current = null;
+      setPartnerIdentity(null);
       setPartner(null);
     };
     const stopOwn = onSnapshot(
@@ -235,6 +247,8 @@ function AvatarSession({
             if (nextUid === partnerUid) return;
             clearPartner();
             partnerUid = nextUid;
+            identityRef.current = { role: otherRole, uid: nextUid };
+            setPartnerIdentity(identityRef.current);
             const generation = partnerGeneration;
             stopPartner = onSnapshot(
               doc(db, 'avatars', nextUid),
@@ -242,7 +256,8 @@ function AvatarSession({
                 if (!alive.current || generation !== partnerGeneration || partnerUid !== nextUid)
                   return;
                 const record = avatarRecord(otherSnap.data(), nextUid);
-                setPartner(record ? { role: otherRole, uid: nextUid, record } : null);
+                if (record) acceptPartner(otherRole, nextUid, record);
+                else setPartner(null);
               },
               () => {
                 if (!alive.current || generation !== partnerGeneration) return;
@@ -272,7 +287,7 @@ function AvatarSession({
       partnerGeneration++;
       stopPartner?.();
     };
-  }, [coupleId, uid, localOnly, acceptOwn]);
+  }, [coupleId, uid, localOnly, acceptOwn, acceptPartner]);
 
   const records: Records = localOnly
     ? demoRecords
@@ -287,10 +302,9 @@ function AvatarSession({
     (role: AvatarRole) => {
       if (localOnly) return true;
       if (!ready) return false;
-      if (coupleId) return true; // In couple mode, either partner can personalize either avatar
-      return role === ownRole;
+      return role === ownRole || partnerIdentity?.role === role;
     },
-    [localOnly, ready, coupleId, ownRole]
+    [localOnly, ready, ownRole, partnerIdentity]
   );
 
   const value: AvatarContextValue = {
@@ -347,8 +361,8 @@ function AvatarSession({
       if (!ready || !canEditRole(role)) {
         throw new Error('Entre na própria conta para salvar seu avatar.');
       }
-      const isEditingPartner = Boolean(coupleId) && role !== roleRef.current && partnerRef.current?.role === role;
-      const targetUid = isEditingPartner ? partnerRef.current?.uid : uid;
+      const isEditingPartner = role !== roleRef.current;
+      const targetUid = isEditingPartner && identityRef.current?.role === role ? identityRef.current.uid : isEditingPartner ? null : uid;
       if (!targetUid) throw new Error('Identificação da conta não encontrada.');
 
       const controller = new AbortController();
@@ -364,7 +378,9 @@ function AvatarSession({
           controller.signal
         );
         if (!alive.current) throw new Error('A sessão mudou. Abra seu perfil novamente.');
-        savedRecord = avatarRecord(result.avatar, targetUid);
+        savedRecord = avatarRecord(result?.avatar, targetUid);
+        if (!savedRecord || savedRecord.revision <= expectedRevision || Object.keys(config).some(key => savedRecord!.config[key as keyof AvatarConfig] !== config[key as keyof AvatarConfig]))
+          throw new Error('A resposta não confirmou o avatar salvo na conta. Seu rascunho foi preservado.');
       } catch (cause) {
         if (!alive.current) throw new Error('A sessão mudou. Abra seu perfil novamente.');
         if (
@@ -377,50 +393,34 @@ function AvatarSession({
           const current = avatarRecord(cause.details.currentAvatar, targetUid);
           if (current) {
             if (targetUid === uid) acceptOwn(current);
-            else if (isEditingPartner && partnerRef.current) setPartner({ role, uid: targetUid, record: current });
+            else if (isEditingPartner && partnerRef.current) acceptPartner(role, targetUid, current);
           }
           throw new AvatarConflictError(current);
         }
 
-        // Direct Firestore fallback when the client has a signed-in user session
-        const currentUser = auth.currentUser;
-        if (currentUser && !currentUser.isAnonymous) {
-          try {
-            const nextRev = (targetUid === uid ? ownRef.current?.revision : partnerRef.current?.record.revision) || expectedRevision;
-            const directRecord: AvatarRecord = {
-              ownerUid: targetUid,
-              revision: nextRev + 1,
-              config,
-            };
-            await setDoc(doc(db, 'avatars', targetUid), directRecord);
-            savedRecord = directRecord;
-          } catch (directErr) {
-            console.error('Direct Firestore avatar save error:', directErr);
-            if (controller.signal.aborted) {
-              throw new Error(
-                'A confirmação demorou. Confira seu avatar e tente novamente; seu rascunho foi preservado.'
-              );
-            }
-            throw cause;
-          }
-        } else {
-          if (controller.signal.aborted) {
-            throw new Error(
-              'A confirmação demorou. Confira seu avatar e tente novamente; seu rascunho foi preservado.'
-            );
-          }
-          throw cause;
+        // The preview can serve HTML for API routes. Only a confirmed Firestore
+        // transaction may recover an unavailable/incompatible server response.
+        if (cause instanceof ApiError && ![401, 404, 405, 500, 502, 503, 504].includes(cause.status)) throw cause;
+        const stillCurrent = () => alive.current && auth.currentUser?.uid === uid &&
+          (!isEditingPartner || identityRef.current?.uid === targetUid);
+        if (!stillCurrent() || auth.currentUser?.isAnonymous) throw cause;
+        try {
+          savedRecord = await saveAvatarToCloud(targetUid, config, expectedRevision, stillCurrent);
+        } catch (directError) {
+          if (directError instanceof CloudAvatarConflictError) throw new AvatarConflictError(directError.currentAvatar);
+          throw new Error('Não foi possível confirmar o salvamento na nuvem. Seu rascunho continua aberto; verifique sua conexão e tente novamente.');
         }
       } finally {
         window.clearTimeout(timer);
       }
 
+      if (!alive.current || (isEditingPartner && identityRef.current?.uid !== targetUid)) throw new Error('A sessão mudou. Abra seu perfil novamente.');
       if (savedRecord) {
         if (targetUid === uid) {
           acceptOwn(savedRecord);
           setOwnError('');
-        } else if (isEditingPartner && partnerRef.current) {
-          setPartner({ role, uid: targetUid, record: savedRecord });
+        } else if (isEditingPartner && identityRef.current?.uid === targetUid) {
+          acceptPartner(role, targetUid, savedRecord);
           setCoupleError('');
         }
       }
