@@ -141,6 +141,19 @@ export function isAvatarConfig(input: unknown): input is AvatarConfig {
     )
   );
 }
+
+/** Read stored version-one recipes from before gender was added, without weakening write validation. */
+export function parseStoredAvatarConfig(input: unknown): AvatarConfig | null {
+  if (isAvatarConfig(input)) return normalizeAvatar(input);
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return null;
+  const data = input as Record<string, unknown>;
+  // Only this known historical omission is compatible. Invalid current fields,
+  // unknown keys/options and other missing fields must not become defaults.
+  if (data.version !== 1 || 'gender' in data) return null;
+  const current = { ...data, gender: DEFAULT_AVATAR.gender };
+  return isAvatarConfig(current) ? normalizeAvatar(current) : null;
+}
+
 export function randomAvatar(): AvatarConfig {
   const recipe = { ...DEFAULT_AVATAR };
   if (!globalThis.crypto?.getRandomValues) return recipe;

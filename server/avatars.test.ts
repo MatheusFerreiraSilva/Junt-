@@ -11,11 +11,12 @@ const fake = vi.hoisted(() => {
   const rows = new Map<string, Row>();
   let serial = Promise.resolve<unknown>(undefined);
   return {
-    rows, fail: false,
+    rows, fail: false, beforeTransaction: undefined as (() => void) | undefined,
     db: {
       doc: (path: string): Ref => ({ path }),
       runTransaction: (callback: (tx: object) => Promise<unknown>) => {
         const task = serial.then(async () => {
+          fake.beforeTransaction?.();
           const changes: (() => void)[] = [];
           const tx = {
             get: async (ref: Ref) => ({ exists: rows.has(ref.path), data: () => structuredClone(rows.get(ref.path)) }),
@@ -53,7 +54,7 @@ const different = () => ({ ...DEFAULT_AVATAR, mouth: AVATAR_OPTIONS.mouth.find(o
 const record = (uid: string, revision = 1, config = DEFAULT_AVATAR) => ({ ownerUid: uid, revision, config });
 
 beforeEach(async () => {
-  fake.rows.clear(); fake.fail = false;
+  fake.rows.clear(); fake.fail = false; fake.beforeTransaction = undefined;
   fake.rows.set(couplePath, {
     id: 'couple-1', partner1Uid: 'alice', partner2Uid: 'bob', partner1Income: 1000,
     categoryPercentages: { moradia: 30 }, avatarProfiles: {},
@@ -82,6 +83,56 @@ const save = (uid: string, overrides: Record<string, unknown> = {}) => post('/ap
 const migrate = (uid: string) => post('/api/avatars/migrate', uid, {});
 
 describe('account-owned avatars', () => {
+  it('lets an active partner create the other account avatar without changing ownership or finances', async () => {
+    const before = structuredClone(fake.rows.get(couplePath));
+    const response = await save('alice', { targetUid: 'bob', ownerUid: 'alice' });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ avatar: record('bob') });
+    expect(stored('bob')).toEqual(record('bob'));
+    expect(stored('alice')).toBeUndefined();
+    expect(fake.rows.get(couplePath)).toEqual(before);
+  });
+  it('lets either active partner update an avatar while detecting conflicts on its owner revision', async () => {
+    fake.rows.set('avatars/alice', record('alice', 2));
+    expect((await save('bob', { targetUid: 'alice', expectedRevision: 2, config: different() })).status).toBe(200);
+    expect(stored('alice')).toEqual(record('alice', 3, different()));
+    const stale = await save('alice', { expectedRevision: 2 });
+    expect(stale.status).toBe(409);
+    expect(await stale.json()).toMatchObject({ currentAvatar: record('alice', 3, different()) });
+    expect((await save('bob', { targetUid: 'alice', expectedRevision: 2, config: different() })).status).toBe(200);
+    expect(stored('alice')?.revision).toBe(3);
+    expect(stored('bob')).toBeUndefined();
+  });
+  it('requires both profiles and active exact couple identities before editing another account', async () => {
+    expect((await save('outsider', { targetUid: 'bob' })).status).toBe(403);
+    fake.rows.set('users/outsider', { coupleId: 'couple-1' });
+    expect((await save('outsider', { targetUid: 'bob' })).status).toBe(403);
+    fake.rows.set('users/bob', { coupleId: 'other' });
+    expect((await save('alice', { targetUid: 'bob' })).status).toBe(403);
+    fake.rows.set('users/bob', { coupleId: 'couple-1' });
+    fake.rows.set(couplePath, { ...fake.rows.get(couplePath), departedMembers: { bob: true } });
+    expect((await save('alice', { targetUid: 'bob' })).status).toBe(403);
+    expect(stored('bob')).toBeUndefined();
+  });
+  it('rechecks departure and profile changes inside the avatar transaction', async () => {
+    fake.beforeTransaction = () => {
+      fake.rows.set('users/bob', { coupleId: '' });
+    };
+    expect((await save('alice', { targetUid: 'bob' })).status).toBe(403);
+    expect(stored('bob')).toBeUndefined();
+    fake.rows.set('users/bob', { coupleId: 'couple-1' });
+    fake.beforeTransaction = () => {
+      fake.rows.set(couplePath, { ...fake.rows.get(couplePath), departedMembers: { alice: true } });
+    };
+    expect((await save('alice', { targetUid: 'bob' })).status).toBe(403);
+    expect(stored('bob')).toBeUndefined();
+  });
+  it('rejects malformed target identities before looking up a document', async () => {
+    for (const targetUid of ['', '../bob', 'couple/bob', 'a'.repeat(129), 42, null]) {
+      expect((await save('alice', { targetUid })).status).toBe(400);
+    }
+    expect(stored('bob')).toBeUndefined();
+  });
   it('saves for an authenticated account without a couple in the configured database', async () => {
     fake.rows.delete('users/alice');
     const response = await save('alice');
@@ -105,6 +156,19 @@ describe('account-owned avatars', () => {
       expect((await post(path, '', body)).status).toBe(403);
     }
     expect(stored('anonymous-user')).toBeUndefined();
+    expect((await post('/api/avatars/save', 'alice', { targetUid: 'bob', config: DEFAULT_AVATAR, expectedRevision: 0 }, 'anonymous')).status).toBe(403);
+    expect(stored('bob')).toBeUndefined();
+  });
+  it('recognizes a pre-gender personal recipe without resetting any saved choice', async () => {
+    const { gender: _gender, ...legacyConfig } = { ...DEFAULT_AVATAR, hair: 'long' as const, outfit: 'tee' as const };
+    fake.rows.set('avatars/alice', { ownerUid: 'alice', revision: 4, config: legacyConfig });
+    const migration = await migrate('alice');
+    expect(migration.status).toBe(200);
+    expect(await migration.json()).toEqual({ avatar: record('alice', 4, { ...legacyConfig, gender: DEFAULT_AVATAR.gender }) });
+    expect(stored('alice')?.config).toEqual(legacyConfig);
+    const response = await save('bob', { targetUid: 'alice', config: different(), expectedRevision: 4 });
+    expect(response.status).toBe(200);
+    expect(stored('alice')).toEqual(record('alice', 5, different()));
   });
   it('rejects unsupported pieces, markup, incomplete configs and unsafe revisions', async () => {
     for (const overrides of [

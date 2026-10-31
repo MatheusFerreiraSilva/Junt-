@@ -73,8 +73,8 @@ service cloud.firestore {
       }
     }
 
-    // Account avatars are read-only from the browser. The authenticated API
-    // validates and writes the owner's compact recipe through Firebase Admin.
+    // Compact owner-bound recipes; active partners may edit each other.
+    // Client transactions and the API enforce the same revision contract.
     function avatarAccountSignedIn() {
       return signedIn() && request.auth.token.firebase.sign_in_provider != 'anonymous';
     }
@@ -93,15 +93,59 @@ service cloud.firestore {
         && get(targetPath).data.coupleId == get(readerPath).data.coupleId
         && avatarPairInCouple(get(readerPath).data.coupleId, targetUid);
     }
+    function validAvatar(data, uid) {
+      return data.keys().hasAll(['ownerUid', 'revision', 'config'])
+        && data.keys().hasOnly(['ownerUid', 'revision', 'config'])
+        && data.ownerUid == uid && data.revision is int && data.revision > 0 && data.revision <= 9007199254740991
+        && data.config is map
+        && data.config.keys().hasAll(["version","gender","skin","hairColor","hair","eyeColor","eyes","mouth","outfit","outfitColor","accessory"])
+        && data.config.keys().hasOnly(["version","gender","skin","hairColor","hair","eyeColor","eyes","mouth","outfit","outfitColor","accessory"])
+        && data.config.version == 1
+        && data.config.gender in ["feminine","masculine"]
+        && data.config.skin in ["porcelain","peach","honey","caramel","cocoa","umber","espresso"]
+        && data.config.hairColor in ["ink","brown","chestnut","copper","gold","silver","rose","violet"]
+        && data.config.hair in ["crop","fade","quiff","sweep","waves","curls","coils","bob","long","ponytail","bun","braids","bald"]
+        && data.config.eyeColor in ["brown","dark","hazel","green","blue"]
+        && data.config.eyes in ["soft","almond","bright","happy"]
+        && data.config.mouth in ["smile","grin","calm","joy"]
+        && data.config.outfit in ["scrub","labcoat","tee","shirt","hoodie","cardigan","jacket"]
+        && data.config.outfitColor in ["surgicalGreen","navy","burgundy","white","teal","sage","blue","lilac","rose","clay","ochre","charcoal","cream"]
+        && data.config.accessory in ["none","stethoscope","headphones","backpack","bag","soccer","round","square","sunglasses","earrings","freckles","beard"];
+    }
+    function avatarAccess(uid) {
+      return avatarAccountSignedIn() && (request.auth.uid == uid || avatarSharedWith(uid));
+    }
     match /avatars/{uid} {
-      allow get: if avatarAccountSignedIn()
-        && (request.auth.uid == uid || avatarSharedWith(uid));
-      allow create, update: if avatarAccountSignedIn()
-        && (request.auth.uid == uid || avatarSharedWith(uid))
-        && request.resource.data.ownerUid == uid
-        && request.resource.data.revision is int
-        && request.resource.data.config is map;
-      allow delete: if false;
+      allow get: if avatarAccess(uid);
+      allow create: if avatarAccess(uid) && validAvatar(request.resource.data, uid) && request.resource.data.revision == 1;
+      allow update: if avatarAccess(uid) && validAvatar(request.resource.data, uid)
+        && resource.data.ownerUid == uid && resource.data.revision is int
+        && request.resource.data.revision == resource.data.revision + 1;
+      allow list, delete: if false;
+    }
+    function validPreferenceColors(p) {
+      return p is map && p.keys().hasAll(['themeMode', 'accentTheme', 'coupleTheme', 'partner1Theme', 'partner2Theme'])
+        && p.keys().hasOnly(['themeMode', 'accentTheme', 'coupleTheme', 'partner1Theme', 'partner2Theme'])
+        && p.themeMode in ['light', 'dark']
+        && p.accentTheme in ['emerald', 'sapphire', 'violet', 'rose', 'amber', 'slate']
+        && p.coupleTheme in ['emerald', 'sapphire', 'violet', 'rose', 'amber', 'slate']
+        && p.partner1Theme in ['emerald', 'sapphire', 'violet', 'rose', 'amber', 'slate']
+        && p.partner2Theme in ['emerald', 'sapphire', 'violet', 'rose', 'amber', 'slate'];
+    }
+    function validPreferences(data, uid) {
+      return data.keys().hasAll(['ownerUid', 'version', 'revision', 'preferences'])
+        && data.keys().hasOnly(['ownerUid', 'version', 'revision', 'preferences'])
+        && data.ownerUid == uid && data.version == 1 && data.revision is int && data.revision > 0 && data.revision < 9007199254740991
+        && validPreferenceColors(data.preferences);
+    }
+    match /accountPreferences/{uid} {
+      allow get: if avatarAccountSignedIn() && request.auth.uid == uid;
+      allow create: if avatarAccountSignedIn() && request.auth.uid == uid
+        && validPreferences(request.resource.data, uid) && request.resource.data.revision == 1;
+      allow update: if avatarAccountSignedIn() && request.auth.uid == uid
+        && validPreferences(request.resource.data, uid) && resource.data.ownerUid == uid
+        && request.resource.data.revision == resource.data.revision + 1;
+      allow list, delete: if false;
     }
 
     // Invite hashes, provider tokens, item ownership and rate-limit records are server-only.

@@ -1,8 +1,14 @@
+import { vi } from 'vitest';
+vi.mock('../src/lib/firebase', () => ({ db: null }));
+import { saveAvatarToCloud, migrateAvatarToCloud } from '../src/avatars/avatarStore';
+import { DEFAULT_AVATAR } from '../src/avatars/avatarConfig';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { readFile } from 'node:fs/promises';
 import { initializeTestEnvironment, assertFails, assertSucceeds, type RulesTestEnvironment } from '@firebase/rules-unit-testing';
-import { doc, getDoc, getDocs, collection, setDoc, updateDoc, deleteDoc } from 'firebase/firestore';
+import { type Firestore, doc, getDoc, getDocs, collection, setDoc, updateDoc, deleteDoc } from 'firebase/firestore';
 
+// The emulator exposes compat clients; the modular SDK unwraps these instances.
+const sdk = (client: unknown) => client as Firestore;
 const enabled = Boolean(process.env.FIRESTORE_EMULATOR_HOST);
 describe.skipIf(!enabled)('Firestore couple isolation (emulator only)', () => {
   let env: RulesTestEnvironment;
@@ -107,12 +113,12 @@ describe.skipIf(!enabled)('Firestore couple isolation (emulator only)', () => {
           setDoc(doc(db, 'avatars/avatar-alice'), {
             ownerUid: 'avatar-alice',
             revision: 1,
-            config: { version: 1, skin: 'honey' },
+            config: DEFAULT_AVATAR,
           }),
           setDoc(doc(db, 'avatars/avatar-bob'), {
             ownerUid: 'avatar-bob',
             revision: 1,
-            config: { version: 1, skin: 'cocoa' },
+            config: { ...DEFAULT_AVATAR, skin: 'cocoa' },
           }),
         ]);
       });
@@ -152,7 +158,7 @@ describe.skipIf(!enabled)('Firestore couple isolation (emulator only)', () => {
       await assertFails(getDoc(doc(anonymous, 'avatars/avatar-alice')));
     });
 
-    it('denies avatar listing and every direct client mutation including own writes', async () => {
+    it('denies listing, invalid mutations, deletion and forged ownership', async () => {
       const db = env.authenticatedContext('avatar-alice').firestore();
       await assertFails(getDocs(collection(db, 'avatars')));
       await assertFails(
@@ -167,6 +173,56 @@ describe.skipIf(!enabled)('Firestore couple isolation (emulator only)', () => {
       await assertFails(setDoc(doc(db, 'avatars/new-avatar'), { ownerUid: 'avatar-alice' }));
     });
 
+    it('allows owner and active partner updates with strict recipes and advancing revisions', async () => {
+      const alice = env.authenticatedContext('avatar-alice').firestore();
+      const bob = env.authenticatedContext('avatar-bob').firestore();
+      await assertSucceeds(setDoc(doc(alice, 'avatars/avatar-alice'), { ownerUid: 'avatar-alice', revision: 2, config: DEFAULT_AVATAR }));
+      await assertSucceeds(setDoc(doc(bob, 'avatars/avatar-alice'), { ownerUid: 'avatar-alice', revision: 3, config: { ...DEFAULT_AVATAR, hair: 'fade' } }));
+      await assertFails(setDoc(doc(alice, 'avatars/avatar-alice'), { ownerUid: 'avatar-alice', revision: 3, config: DEFAULT_AVATAR }));
+      await assertFails(setDoc(doc(alice, 'avatars/avatar-alice'), { ownerUid: 'avatar-alice', revision: 8, config: DEFAULT_AVATAR }));
+      await assertFails(setDoc(doc(alice, 'avatars/avatar-alice'), { ownerUid: 'avatar-bob', revision: 4, config: DEFAULT_AVATAR }));
+      await assertFails(setDoc(doc(alice, 'avatars/avatar-alice'), { ownerUid: 'avatar-alice', revision: 4, config: { ...DEFAULT_AVATAR, hair: '<svg>' } }));
+      await assertFails(setDoc(doc(alice, 'avatars/avatar-alice'), { ownerUid: 'avatar-alice', revision: 4, config: DEFAULT_AVATAR, accessToken: 'forbidden' }));
+    });
+    it('confirms transactional save, another device read, partner edit and safe lost-response retry', async () => {
+      const desktop = env.authenticatedContext('avatar-alice', { device: 'desktop' }).firestore();
+      const mobile = env.authenticatedContext('avatar-alice', { device: 'mobile' }).firestore();
+      const partnerDevice = env.authenticatedContext('avatar-bob', { device: 'partner' }).firestore();
+      const customized = { ...DEFAULT_AVATAR, hair: 'fade' as const, outfit: 'labcoat' as const };
+      expect((await saveAvatarToCloud('avatar-alice', customized, 1, () => true, sdk(desktop))).revision).toBe(2);
+      expect((await getDoc(doc(mobile, 'avatars/avatar-alice'))).data()?.config).toEqual(customized);
+      expect((await saveAvatarToCloud('avatar-alice', customized, 1, () => true, sdk(desktop))).revision).toBe(2);
+      const partnerEdit = { ...customized, hair: 'bald' as const };
+      expect((await saveAvatarToCloud('avatar-alice', partnerEdit, 2, () => true, sdk(partnerDevice))).ownerUid).toBe('avatar-alice');
+      expect((await getDoc(doc(mobile, 'avatars/avatar-alice'))).data()?.config).toEqual(partnerEdit);
+      await expect(saveAvatarToCloud('avatar-alice', DEFAULT_AVATAR, 1, () => true, sdk(desktop))).rejects.toThrow('mudou');
+      expect((await getDoc(doc(desktop, 'avatars/avatar-alice'))).data()?.revision).toBe(3);
+    });
+    it('recovers the exact own legacy choices through the SDK without overwriting an existing personal avatar', async () => {
+      const { gender: _gender, ...oldRecipe } = { ...DEFAULT_AVATAR, hair: 'long' as const };
+      await env.withSecurityRulesDisabled(async context => {
+        const db = context.firestore();
+        await deleteDoc(doc(db, 'avatars/avatar-alice'));
+        await updateDoc(doc(db, 'couples/avatar-couple'), { avatarProfiles: { partner1: { ownerUid: 'avatar-alice', revision: 5, config: oldRecipe } } });
+      });
+      const client = env.authenticatedContext('avatar-alice').firestore();
+      const migrated = await migrateAvatarToCloud('avatar-alice', 'avatar-couple', () => true, sdk(client));
+      expect(migrated?.config.hair).toBe('long'); expect(migrated?.revision).toBe(1);
+      await saveAvatarToCloud('avatar-alice', DEFAULT_AVATAR, 1, () => true, sdk(client));
+      expect((await migrateAvatarToCloud('avatar-alice', 'avatar-couple', () => true, sdk(client)))?.config).toEqual(DEFAULT_AVATAR);
+      expect((await getDoc(doc(client, 'couples/avatar-couple'))).data()?.avatarProfiles.partner1.revision).toBe(5);
+    });
+    it('allows first partner save into the partner account before any avatar exists', async () => {
+      await env.withSecurityRulesDisabled(async context => { await deleteDoc(doc(context.firestore(), 'avatars/avatar-bob')); });
+      const db = env.authenticatedContext('avatar-alice').firestore();
+      await assertSucceeds(setDoc(doc(db, 'avatars/avatar-bob'), { ownerUid: 'avatar-bob', revision: 1, config: DEFAULT_AVATAR }));
+    });
+    it('revokes partner writes after departure while preserving personal ownership', async () => {
+      await env.withSecurityRulesDisabled(async context => { await updateDoc(doc(context.firestore(), 'couples/avatar-couple'), { 'departedMembers.avatar-bob': true }); });
+      const db = env.authenticatedContext('avatar-alice').firestore();
+      await assertFails(setDoc(doc(db, 'avatars/avatar-bob'), { ownerUid: 'avatar-bob', revision: 2, config: DEFAULT_AVATAR }));
+      await assertSucceeds(setDoc(doc(db, 'avatars/avatar-alice'), { ownerUid: 'avatar-alice', revision: 2, config: DEFAULT_AVATAR }));
+    });
     it('does not trust a forged users profile when the couple does not contain the reader', async () => {
       await env.withSecurityRulesDisabled(async (context) => {
         await updateDoc(doc(context.firestore(), 'users/avatar-mallory'), {
@@ -212,6 +268,31 @@ describe.skipIf(!enabled)('Firestore couple isolation (emulator only)', () => {
       await assertFails(
         getDoc(doc(env.authenticatedContext('avatar-bob').firestore(), 'avatars/avatar-alice'))
       );
+    });
+  });
+  describe('private appearance preferences', () => {
+    const record = { ownerUid: 'preferences-alice', version: 1, revision: 1, preferences: { themeMode: 'dark', accentTheme: 'emerald', coupleTheme: 'emerald', partner1Theme: 'sapphire', partner2Theme: 'rose' } };
+    beforeEach(async () => { await env.withSecurityRulesDisabled(async context => { await deleteDoc(doc(context.firestore(), 'accountPreferences/preferences-alice')); }); });
+    it('allows only the account owner to save and read preferences with monotonic revisions', async () => {
+      const owner = env.authenticatedContext('preferences-alice').firestore();
+      const ref = doc(owner, 'accountPreferences/preferences-alice');
+      await assertSucceeds(setDoc(ref, record));
+      await assertSucceeds(getDoc(ref));
+      await assertSucceeds(setDoc(ref, { ...record, revision: 2 }));
+      await assertFails(setDoc(ref, { ...record, revision: 1 }));
+      await assertFails(getDoc(doc(env.authenticatedContext('other').firestore(), 'accountPreferences/preferences-alice')));
+      await assertFails(getDocs(collection(owner, 'accountPreferences')));
+      await assertFails(deleteDoc(ref));
+    });
+    it('rejects foreign owners, unrecognized values and financial or identity fields', async () => {
+      const ref = doc(env.authenticatedContext('preferences-alice').firestore(), 'accountPreferences/preferences-alice');
+      await assertFails(setDoc(ref, { ...record, ownerUid: 'other' }));
+      await assertFails(setDoc(ref, { ...record, preferences: { ...record.preferences, accentTheme: 'injected' } }));
+      await assertFails(setDoc(ref, { ...record, coupleId: 'forged' }));
+      await assertFails(setDoc(ref, { ...record, preferences: { ...record.preferences, partner1Income: 1000 } }));
+      await assertFails(setDoc(ref, { ...record, revision: 4 }));
+      await assertFails(setDoc(doc(env.unauthenticatedContext().firestore(), 'accountPreferences/preferences-alice'), record));
+      await assertFails(setDoc(doc(env.authenticatedContext('preferences-alice', { firebase: { sign_in_provider: 'anonymous' } }).firestore(), 'accountPreferences/preferences-alice'), record));
     });
   });
 });

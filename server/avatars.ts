@@ -3,7 +3,7 @@ import { adminDb, userQuota } from './security';
 import { getApp } from 'firebase-admin/app';
 import { getFirestore, type Firestore, type Transaction } from 'firebase-admin/firestore';
 import firebaseConfig from '../firebase-applet-config.json';
-import { isAvatarConfig, type AvatarConfig } from '../src/avatars/avatarConfig';
+import { isAvatarConfig, parseStoredAvatarConfig, type AvatarConfig } from '../src/avatars/avatarConfig';
 
 export interface SavedAvatar {
   ownerUid: string;
@@ -19,8 +19,9 @@ function sameConfig(a: AvatarConfig, b: AvatarConfig) {
 function personalRecord(value: unknown, uid: string): SavedAvatar | null {
   if (!value || typeof value !== 'object') return null;
   const data = value as Partial<SavedAvatar>;
-  return data.ownerUid === uid && Number.isSafeInteger(data.revision) && data.revision! > 0 && isAvatarConfig(data.config)
-    ? { ownerUid: uid, revision: data.revision!, config: data.config } : null;
+  const config = parseStoredAvatarConfig(data.config);
+  return data.ownerUid === uid && Number.isSafeInteger(data.revision) && data.revision! > 0 && config
+    ? { ownerUid: uid, revision: data.revision!, config } : null;
 }
 // Reuse credentials, but match the same named database as the existing frontend.
 function avatarDb() {
@@ -44,6 +45,23 @@ async function legacyMembership(tx: Transaction, db: Firestore, uid: string, exp
   const role = couple.partner1Uid === uid ? 'partner1' : couple.partner2Uid === uid ? 'partner2' : null;
   return role ? { role, avatar: personalRecord(couple.avatarProfiles?.[role], uid) } : null;
 }
+async function authorizeSharedOwner(tx: Transaction, db: Firestore, uid: string, targetUid: string) {
+  if (uid === targetUid) return;
+  const [reader, target] = await Promise.all([
+    tx.get(db.doc(`users/${uid}`)), tx.get(db.doc(`users/${targetUid}`)),
+  ]);
+  const coupleId: unknown = reader.data()?.coupleId;
+  if (typeof coupleId !== 'string' || !/^[\w-]{1,128}$/.test(coupleId)
+    || target.data()?.coupleId !== coupleId) {
+    throw new AvatarFailure(403, 'Você só pode personalizar o avatar de quem está no seu casal ativo.');
+  }
+  const couple = (await tx.get(db.doc(`couples/${coupleId}`))).data();
+  if (!couple || couple.departedMembers?.[uid] || couple.departedMembers?.[targetUid]
+    || !((couple.partner1Uid === uid && couple.partner2Uid === targetUid)
+      || (couple.partner2Uid === uid && couple.partner1Uid === targetUid))) {
+    throw new AvatarFailure(403, 'Seu vínculo mudou. Confirme o casal antes de personalizar este avatar.');
+  }
+}
 function failure(res: Response, error: unknown) {
   const known = error instanceof AvatarFailure;
   res.status(known ? error.status : 503).json({
@@ -60,30 +78,17 @@ export function registerAvatars(app: Express) {
       const legacyAdapter = req.path === '/api/couples/avatar';
       if (!isAvatarConfig(config) || !Number.isSafeInteger(expectedRevision) || expectedRevision < 0
         || expectedRevision >= Number.MAX_SAFE_INTEGER
+        || (targetUid !== undefined && (typeof targetUid !== 'string' || !/^[\w-]{1,128}$/.test(targetUid)))
         || (legacyAdapter && (typeof coupleId !== 'string' || !/^[\w-]{1,128}$/.test(coupleId)))) {
         throw new AvatarFailure(400, 'Escolha opções válidas para o avatar e tente novamente.');
       }
       const db = avatarDb();
-      let targetOwnerUid = uid;
-      if (typeof targetUid === 'string' && targetUid && targetUid !== uid) {
-        const userProfile = (await db.doc(`users/${uid}`).get()).data();
-        const cid = userProfile?.coupleId;
-        if (!cid || typeof cid !== 'string') {
-          throw new AvatarFailure(403, 'Você só pode personalizar o avatar de quem está no seu casal.');
-        }
-        const coupleSnap = await db.doc(`couples/${cid}`).get();
-        const coupleData = coupleSnap.data();
-        const isPartner = coupleData && !coupleData.departedMembers?.[uid] && !coupleData.departedMembers?.[targetUid] && (
-          (coupleData.partner1Uid === uid && coupleData.partner2Uid === targetUid) ||
-          (coupleData.partner2Uid === uid && coupleData.partner1Uid === targetUid)
-        );
-        if (!isPartner) {
-          throw new AvatarFailure(403, 'Acesso não autorizado para o avatar deste usuário.');
-        }
-        targetOwnerUid = targetUid;
-      }
+      const targetOwnerUid = targetUid === undefined ? uid : targetUid as string;
 
       const result = await db.runTransaction(async tx => {
+        // Membership and the avatar revision share one transaction, so leaving or
+        // changing couples invalidates a pending partner edit before it commits.
+        await authorizeSharedOwner(tx, db, uid, targetOwnerUid);
         const ref = db.doc(`avatars/${targetOwnerUid}`);
         const snapshot = await tx.get(ref);
         const raw = snapshot.data();
