@@ -15,15 +15,15 @@ service cloud.firestore {
     function validRecord(field, record) {
       return record is map && record.id is string && record.id.size() > 0 && record.id.size() <= 1024
         && !record.keys().hasAny(['pluggyCredentials', 'clientSecret', 'apiKey', 'accessToken'])
-        && (!(field in ['expenses', 'incomes', 'bankImportedTransactions']) ||
-          (record.amount is number && record.amount >= 0 && record.amount <= 90071992547409))
+        && (!(field in ['expenses', 'incomes', 'bankImportedTransactions', 'financialOperations']) ||
+          (!('amount' in record) || (record.amount is number && record.amount >= 0 && record.amount <= 90071992547409)))
         && (!('paidBy' in record) || record.paidBy in ['partner1', 'partner2', 'both', 'custom'])
         && (!('recipient' in record) || record.recipient in ['partner1', 'partner2', 'both', 'custom']);
     }
     function validEntity(data) {
       return data.keys().hasOnly(['field', 'record', 'deleted', 'schemaVersion'])
         && data.keys().hasAll(['field', 'record', 'deleted', 'schemaVersion'])
-        && data.field in ['expenses', 'incomes', 'installments', 'piggyBanks', 'strategicIntents', 'medicalShifts', 'shiftIncomeAllocations', 'bankImportedTransactions', 'medicalShiftPresets', 'hospitalMappingRules', 'incomeSourceRules', 'pendingConfirmations', 'linkedAccounts', 'detectedSubscriptions', 'keywordRules', 'coupleGoals', 'coupleWishlist', 'coupleFixedBills', 'dreamSimulations', 'pluggyAccounts']
+        && data.field in ['expenses', 'incomes', 'installments', 'piggyBanks', 'strategicIntents', 'medicalShifts', 'shiftIncomeAllocations', 'bankImportedTransactions', 'medicalShiftPresets', 'hospitalMappingRules', 'incomeSourceRules', 'pendingConfirmations', 'linkedAccounts', 'detectedSubscriptions', 'keywordRules', 'coupleGoals', 'coupleWishlist', 'coupleFixedBills', 'dreamSimulations', 'pluggyAccounts', 'monthlyBudgetPlans', 'financialOperations']
         && data.schemaVersion == 1 && data.deleted is bool
         && ((data.deleted && data.record == null) || (!data.deleted && validRecord(data.field, data.record)));
     }
@@ -33,11 +33,20 @@ service cloud.firestore {
     function validMetadata(data) {
       return safeAmount(data, 'partner1Income') && safeAmount(data, 'partner2Income')
         && safeAmount(data, 'protectionCurrentAmount') && safeAmount(data, 'protectionTotalInvested')
-        && safeAmount(data, 'freedomTotalInvested')
+        && safeAmount(data, 'protectionYieldAccumulated') && safeAmount(data, 'freedomTotalInvested')
+        && safeAmount(data, 'freedomYieldAccumulated')
         && (!('investmentsPercentage' in data) || (data.investmentsPercentage is number && data.investmentsPercentage >= 0 && data.investmentsPercentage <= 100))
+        && (!('emergencyReserveMonthsTarget' in data) || (data.emergencyReserveMonthsTarget is number && data.emergencyReserveMonthsTarget >= 1 && data.emergencyReserveMonthsTarget <= 120))
+        && (!('expectedYieldAnnual' in data) || (data.expectedYieldAnnual is number && data.expectedYieldAnnual >= 0 && data.expectedYieldAnnual <= 100))
+        && (!('streakMonths' in data) || (data.streakMonths is number && data.streakMonths >= 0))
+        && (!('isInitialHomePhase' in data) || data.isInitialHomePhase is bool)
         && (!('partner1Name' in data) || (data.partner1Name is string && data.partner1Name.size() <= 80))
         && (!('partner2Name' in data) || (data.partner2Name is string && data.partner2Name.size() <= 80))
-        && (!('isProtectionComplete' in data) || data.isProtectionComplete is bool);
+        && (!('partner1Specialty' in data) || (data.partner1Specialty is string && data.partner1Specialty.size() <= 80))
+        && (!('partner2Specialty' in data) || (data.partner2Specialty is string && data.partner2Specialty.size() <= 80))
+        && (!('city' in data) || (data.city is string && data.city.size() <= 80))
+        && (!('isProtectionComplete' in data) || data.isProtectionComplete is bool)
+        && (!('categoryLocks' in data) || data.categoryLocks is map);
     }
     match /users/{uid} {
       allow get: if signedIn() && request.auth.uid == uid;
@@ -54,11 +63,12 @@ service cloud.firestore {
       allow get: if member(resource.data);
       allow update: if member(resource.data) && validMetadata(request.resource.data)
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-          'categoryPercentages', 'categoryFloors', 'partner1Career', 'partner2Career',
-          'partner1Income', 'partner2Income', 'partner1Name', 'partner2Name', 'investmentsPercentage',
-          'protectionCurrentAmount', 'protectionTotalInvested', 'isProtectionComplete',
-          'freedomTotalInvested', 'monthlyDepositGuides', 'completedMonthDeposits',
-          'surplusTransfers', 'dismissedSurplusMonths', 'updatedAt', 'lastUpdatedBy'
+          'categoryPercentages', 'categoryFloors', 'categoryLocks', 'partner1Career', 'partner2Career',
+          'partner1Income', 'partner2Income', 'partner1Name', 'partner2Name', 'partner1Specialty', 'partner2Specialty',
+          'city', 'emergencyReserveMonthsTarget', 'expectedYieldAnnual', 'streakMonths', 'isInitialHomePhase',
+          'investmentsPercentage', 'protectionCurrentAmount', 'protectionTotalInvested', 'protectionYieldAccumulated',
+          'isProtectionComplete', 'freedomTotalInvested', 'freedomYieldAccumulated', 'monthlyDepositGuides',
+          'completedMonthDeposits', 'surplusTransfers', 'dismissedSurplusMonths', 'updatedAt', 'lastUpdatedBy'
         ])
         && !request.resource.data.keys().hasAny(['pluggyCredentials']);
       // Creation, membership changes and deletion are server-only operations.

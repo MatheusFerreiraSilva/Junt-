@@ -12,8 +12,12 @@ import {
   selectAnnualYield,
   selectFreedomMetrics,
   selectFIREMetrics,
+  selectEligibleNetIncome,
+  allocateIncomeByPolicy,
+  upgradeBudgetPlanContract,
+  createStandardBudgetPlanContract,
 } from '../domainSelectors';
-import { AppState } from '../../types/finance';
+import { AppState, BudgetPlanContract } from '../../types/finance';
 
 const createSampleState = (): AppState => ({
   profile: {
@@ -253,5 +257,90 @@ describe('domainSelectors', () => {
     expect(fire.fireTargetNetWorth).toBe(600000);
     expect(fire.fireEligibleCapital).toBe(10000);
     expect(fire.estimatedYearsToFIRE).toBe(Infinity);
+  });
+
+  describe('Stage 25A: Contract, Policy & Base Income Selectors', () => {
+    it('selectEligibleNetIncome excludes internal transfers, loans, principal redemptions, refunds and unconfirmed shift forecasts', () => {
+      const state = createSampleState();
+      state.incomes = [
+        { id: 'i1', description: 'Salário Líquido', amount: 5000, date: '2026-10-01', recipient: 'partner1', type: 'salario', classification: 'pf_net' },
+        { id: 'i2', description: 'Transferência entre parceiros', amount: 1000, date: '2026-10-02', recipient: 'partner2', type: 'outro', status: 'internal_transfer', classification: 'internal_transfer' },
+        { id: 'i3', description: 'Empréstimo bancário', amount: 2000, date: '2026-10-03', recipient: 'partner1', type: 'outro', classification: 'loan' },
+        { id: 'i4', description: 'Resgate Cofrinho', amount: 1500, date: '2026-10-04', recipient: 'partner2', type: 'outro', classification: 'principal_redemption' },
+        { id: 'i5', description: 'Reembolso Amil', amount: 300, date: '2026-10-05', recipient: 'partner1', type: 'restituicao', classification: 'refund' },
+        { id: 'i6', description: 'Previsão Plantão Não-Confirmado', amount: 1200, date: '2026-10-06', recipient: 'partner2', type: 'extra', status: 'pending', classification: 'forecast' },
+        { id: 'i7', description: 'Plantão Conciliado PJ', amount: 2000, date: '2026-10-07', recipient: 'partner2', type: 'extra', classification: 'pj_gross', taxRatePercent: 6, monthlyAccountingCost: 0 },
+      ];
+
+      // Eligible = i1 (5000) + i7 (2000 - 6% tax = 1880) = 6880
+      const eligible = selectEligibleNetIncome(state, 'casal', '2026-10');
+      expect(eligible).toBe(6880);
+    });
+
+    it('allocateIncomeByPolicy calculates exact integer cents under 60/30/10 policy for R$ 6.000', () => {
+      const allocation = allocateIncomeByPolicy(6000);
+      expect(allocation.totalCents).toBe(600000);
+      expect(allocation.macroGroups.fixos.amountR$).toBe(3600); // 60%
+      expect(allocation.macroGroups.variaveis.amountR$).toBe(1800); // 30%
+      expect(allocation.macroGroups.investimentos.amountR$).toBe(600); // 10%
+      expect(allocation.macroGroups.fixos.amountR$ + allocation.macroGroups.variaveis.amountR$ + allocation.macroGroups.investimentos.amountR$).toBe(6000);
+    });
+
+    it('allocateIncomeByPolicy handles zero or negative income without fake goals', () => {
+      const zeroAlloc = allocateIncomeByPolicy(0);
+      expect(zeroAlloc.totalCents).toBe(0);
+      expect(zeroAlloc.macroGroups.fixos.amountR$).toBe(0);
+      expect(zeroAlloc.macroGroups.variaveis.amountR$).toBe(0);
+      expect(zeroAlloc.macroGroups.investimentos.amountR$).toBe(0);
+
+      const negAlloc = allocateIncomeByPolicy(-500);
+      expect(negAlloc.totalCents).toBe(0);
+      expect(negAlloc.macroGroups.fixos.amountR$).toBe(0);
+    });
+
+    it('allocateIncomeByPolicy preserves exact cent sums on odd amounts', () => {
+      const oddAlloc = allocateIncomeByPolicy(100.01); // 10001 cents
+      expect(oddAlloc.totalCents).toBe(10001);
+      const sumR$ = parseFloat((oddAlloc.macroGroups.fixos.amountR$ + oddAlloc.macroGroups.variaveis.amountR$ + oddAlloc.macroGroups.investimentos.amountR$).toFixed(2));
+      expect(sumR$).toBe(100.01);
+    });
+
+    it('upgradeBudgetPlanContract upgrades historical contracts to v2.0 without erasing approvals', () => {
+      const historicalPlan: Partial<BudgetPlanContract> = {
+        competence: '2026-09',
+        plannedNetIncome: 10000,
+        version: '1.0',
+        approvedAt: '2026-09-01T10:00:00Z',
+        approvedBy: 'Matheus & Beatriz',
+        categoryPercentages: {
+          moradia: 35,
+          protecao: 15,
+          comida: 20,
+          lazer: 10,
+          transporte: 5,
+          profissional: 0,
+          investimentos: 15, // Historical 15% investment plan
+        },
+      };
+
+      const upgraded = upgradeBudgetPlanContract(historicalPlan);
+      expect(upgraded.schemaVersion).toBe('2.0');
+      expect(upgraded.approvedAt).toBe('2026-09-01T10:00:00Z');
+      expect(upgraded.approvedBy).toBe('Matheus & Beatriz');
+      expect(upgraded.policyMeta?.policyId).toBe('policy-50-35-15');
+      expect(upgraded.macroGroups?.investimentos.amountR$).toBe(1500); // 15% of 10k
+      expect(upgraded.macroGroups?.fixos.amountR$).toBe(5000); // 35+15 = 50%
+      expect(upgraded.macroGroups?.variaveis.amountR$).toBe(3500); // 20+10+5 = 35%
+    });
+
+    it('createStandardBudgetPlanContract creates approved v2.0 contract', () => {
+      const contract = createStandardBudgetPlanContract('2026-11', 8000, 'Matheus');
+      expect(contract.competence).toBe('2026-11');
+      expect(contract.plannedNetIncome).toBe(8000);
+      expect(contract.schemaVersion).toBe('2.0');
+      expect(contract.macroGroups?.fixos.amountR$).toBe(4800); // 60% of 8k
+      expect(contract.macroGroups?.variaveis.amountR$).toBe(2400); // 30% of 8k
+      expect(contract.macroGroups?.investimentos.amountR$).toBe(800); // 10% of 8k
+    });
   });
 });

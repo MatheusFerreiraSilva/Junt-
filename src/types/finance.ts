@@ -30,6 +30,27 @@ export interface CategoryInfo {
   isLegacy?: boolean;
 }
 
+export type ExpenseNature = 'fixa' | 'variavel' | 'eventual';
+export type ExpensePriority = 'essencial' | 'importante' | 'dispensavel';
+export type PolicyMacroGroup = 'fixos' | 'variaveis' | 'investimentos' | 'pendente';
+export type ClassificationOrigin = 'manual_confirmed' | 'authorized_rule' | 'origin_link' | 'auto_suggestion';
+export type TemporalScope = 'this_occurrence' | 'future_occurrences' | 'selected_history';
+
+export interface TransactionSplit {
+  id: string; // unique split ID
+  amount: number; // in R$
+  amountCents: number; // integer cents (Math.round(amount * 100))
+  category: CategoryKey;
+  subcategory?: string;
+  nature: ExpenseNature;
+  priority: ExpensePriority;
+  policyMacroGroup: PolicyMacroGroup;
+  classificationOrigin: ClassificationOrigin;
+  notes?: string;
+  fundingSource?: FundingSourceType;
+  fundingGoalId?: string;
+}
+
 export interface ExpenseItem {
   foodPillar?: FoodPillarType;
   id: string;
@@ -46,6 +67,18 @@ export interface ExpenseItem {
   installmentIndex?: number;
   installmentTotal?: number;
   notes?: string;
+  // 25B: Classificação separada de natureza, prioridade e grupo da política
+  nature?: ExpenseNature;
+  priority?: ExpensePriority;
+  policyMacroGroup?: PolicyMacroGroup;
+  classificationOrigin?: ClassificationOrigin;
+  classificationReason?: string;
+  ruleVersion?: string;
+  temporalScope?: TemporalScope;
+  needsBasedOverride?: boolean;
+  splits?: TransactionSplit[];
+  splitParentId?: string;
+  isSplitParent?: boolean;
   // Triagem Omnipresente & Alocação Proativa de Fonte
   fundingSource?: FundingSourceType;
   fundingGoalId?: string;
@@ -83,6 +116,21 @@ export interface StrategicSpendingIntent {
   createdAt: string;
 }
 
+export type IncomeSourceClassification =
+  | 'pf_net'
+  | 'pj_gross'
+  | 'internal_transfer'
+  | 'reimbursement'
+  | 'refund'
+  | 'reembolso'
+  | 'loan'
+  | 'emprestimo'
+  | 'principal_redemption'
+  | 'resgate_principal'
+  | 'passive_reinvested'
+  | 'renda_passiva_reinvestida'
+  | 'forecast';
+
 export interface IncomeItem {
   id: string;
   description: string;
@@ -90,6 +138,16 @@ export interface IncomeItem {
   date: string; // YYYY-MM-DD
   recipient: PaidBy;
   type: 'salario' | 'bonus' | 'extra' | 'restituicao' | 'outro';
+  status?: 'received' | 'pending' | 'projected' | 'internal_transfer';
+  classification?: IncomeSourceClassification;
+  taxRatePercent?: number;
+  monthlyAccountingCost?: number;
+  linkedShiftId?: string;
+  // 15: Previsão de recebimento e controle de realização
+  expectedDate?: string;
+  expectedAmount?: number;
+  realizedDifference?: number;
+  isForecast?: boolean;
 }
 
 export interface InstallmentPurchase {
@@ -111,6 +169,11 @@ export interface InstallmentPurchase {
   dueDay?: number; // Day of the month of the card invoice (e.g., 5, 10, 15, 20)
   store?: string; // e.g. "Tok&Stok", "Fast Shop", "Apple Store"
   notes?: string;
+  // 25B & 26A: Natureza, prioridade e obrigações da parcela
+  nature?: ExpenseNature;
+  priority?: ExpensePriority;
+  policyMacroGroup?: PolicyMacroGroup;
+  originalPurpose?: string;
 }
 
 export interface AdvanceInstallmentFundingSource {
@@ -154,6 +217,12 @@ export interface SavingsPiggyBank {
   completed?: boolean;
   isFireEligible?: boolean;
   coupleAgreement?: CoupleAgreement;
+  // 26A: Detalhamento explícito de destino, fatias e vínculo de ativo
+  accumulatedCents?: number;
+  committedCents?: number;
+  utilizedCents?: number;
+  availableCents?: number; // accumulated - committed - utilized
+  linkedBankAccountId?: string; // Vínculo de custódia real para evitar dupla contagem de patrimônio
 }
 
 export interface FiscalProfile {
@@ -166,8 +235,6 @@ export interface FiscalProfile {
   cnpjTaxRate?: number; // e.g. 6 (for 6%)
   accountingMonthlyCost?: number; // e.g. 350
 }
-
-export type IncomeSourceClassification = 'pf_net' | 'pj_gross' | 'internal_transfer' | 'reimbursement';
 
 export interface IncomeSourceRule {
   id: string;
@@ -280,6 +347,13 @@ export interface CategoryKeywordRule {
   keyword: string; // uppercase keyword, e.g. "UBER", "NETFLIX", "IFOOD"
   category: CategoryKey;
   subcategory?: string;
+  // 25B: Regras explícitas de natureza, prioridade e versão da regra
+  nature?: ExpenseNature;
+  priority?: ExpensePriority;
+  policyMacroGroup?: PolicyMacroGroup;
+  ruleVersion?: string;
+  isAuthorizedRule?: boolean;
+  temporalScope?: TemporalScope;
 }
 
 export interface DetectedSubscription {
@@ -432,14 +506,57 @@ export interface BankImportedTransaction {
   subcategory?: string;
   matchedRule?: string;
   fitid?: string;
+  // 25B: Classificação e divisões (splits)
+  nature?: ExpenseNature;
+  priority?: ExpensePriority;
+  policyMacroGroup?: PolicyMacroGroup;
+  classificationOrigin?: ClassificationOrigin;
+  classificationReason?: string;
+  ruleVersion?: string;
+  splits?: TransactionSplit[];
 }
 
 export type DestinationKey = CategoryKey | 'investimentos';
 
+export type FinanceSyncStatus =
+  | 'local'
+  | 'loading'
+  | 'saving'
+  | 'saved'
+  | 'partial'
+  | 'error'
+  | 'conflict';
+
+export type MacroGroupKey = 'fixos' | 'variaveis' | 'investimentos';
+
+export interface MacroGroupAllocation {
+  percentage: number;
+  amountR$: number;
+}
+
+export interface BudgetPlanPolicyMeta {
+  policyId: string; // e.g. 'policy-60-30-10' or 'custom-user-policy'
+  policyName: string; // e.g. 'Política Flexível 60/30/10'
+  policyVersion: string; // e.g. '1.0'
+  validFrom: string; // YYYY-MM
+  validTo?: string; // YYYY-MM
+  authoredByUid?: string;
+  incomeSourceMode: 'planned_net' | 'economic_realized' | 'hybrid';
+  // 25B: Modo estrito (proporções) vs modo alternativo por necessidades
+  policyMode?: 'strict_proportions' | 'needs_based';
+  policyExplanation?: string;
+}
+
 export interface BudgetPlanContract {
+  id?: string;
   competence: string; // YYYY-MM
   plannedNetIncome: number;
   version: string;
+  schemaVersion?: string; // '2.0'
+  planRevision?: number; // Incremental revision counter per competence (1, 2, 3...)
+  policyMeta?: BudgetPlanPolicyMeta;
+  macroGroups?: Record<MacroGroupKey, MacroGroupAllocation>;
+  categoryGroupMapping?: Record<CategoryKey, 'fixos' | 'variaveis'>;
   categoryPercentages: Record<DestinationKey, number>;
   categoryAmountsR$: Record<DestinationKey, number>;
   categoryLocks: Record<DestinationKey, boolean>;
@@ -511,6 +628,54 @@ export interface AppState {
   coupleWishlist?: CoupleWishlistItem[];
   coupleFixedBills?: FixedBillAlert[];
   dreamSimulations?: DreamSimulation[];
+  // 26A: Registro durável de operações financeiras (comandos atômicos com idempotência e conciliação)
+  financialOperations?: FinancialOperationRecord[];
+}
+
+export type FinancialOperationType =
+  | 'CATEGORY_REINFORCEMENT' // Reforço temporário de envelope da categoria
+  | 'GOAL_DIRECT_PURCHASE'   // Compra direta financiada por caixinha/meta (fora do teto da categoria)
+  | 'GOAL_DEPOSIT'           // Aporte na caixinha/meta
+  | 'GOAL_WITHDRAWAL'        // Resgate da caixinha/meta
+  | 'GOAL_TRANSFER'          // Transferência entre metas (Meta A -> Meta B)
+  | 'EXPENSE_RECORD'         // Registro de despesa
+  | 'INCOME_RECORD';         // Registro de receita
+
+export type FinancialOperationState =
+  | 'planned'
+  | 'processing'
+  | 'occurred_manual'
+  | 'reconciled'
+  | 'reverted';
+
+export interface FinancialOperationRecord {
+  id: string; // operationId estável
+  type: FinancialOperationType;
+  amountCents: number; // Centavos inteiros preservados
+  amountR$: number; // Valor equivalente em Reais
+  authorizedBy: string; // uid ou role 'partner1' | 'partner2' | 'both'
+  sourceRef: {
+    type: 'account' | 'piggy_bank' | 'income' | 'reserve' | 'external';
+    id: string;
+    name?: string;
+  };
+  targetRef: {
+    type: 'category' | 'piggy_bank' | 'expense' | 'external';
+    id: string;
+    name?: string;
+  };
+  competence: string; // YYYY-MM
+  date: string; // YYYY-MM-DD
+  revision: number;
+  state: FinancialOperationState;
+  reconciliationRef?: string;
+  reversalOf?: string;
+  fundingSlice?: {
+    path: 'budget_reinforcement' | 'direct_goal_purchase';
+    allocatedCents: number;
+  };
+  createdAt: string;
+  notes?: string;
 }
 
 export type ShiftSector =
@@ -744,6 +909,12 @@ export interface CoupleGoal {
   history: CoupleGoalContribution[];
   createdAt: string;
   coupleAgreement?: CoupleAgreement;
+  // 26A: Detalhamento explícito de fatias e custódia patrimonial
+  accumulatedCents?: number;
+  committedCents?: number;
+  utilizedCents?: number;
+  availableCents?: number; // accumulated - committed - utilized
+  linkedBankAccountId?: string; // Vínculo de conta/CDB para evitar contagem duplicada
 }
 
 export interface CoupleWishlistItem {

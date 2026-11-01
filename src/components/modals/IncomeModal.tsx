@@ -15,8 +15,9 @@ import {
   PlusCircle,
 } from 'lucide-react';
 import { useFinance } from '../../context/FinanceContext';
-import { PaidBy, ShiftSector, MedicalShift } from '../../types/finance';
+import { PaidBy, ShiftSector, MedicalShift, IncomeSourceClassification } from '../../types/finance';
 import { formatCurrency } from '../../utils/formatters';
+import { migrateLegacyShiftAllocations } from '../../utils/shiftReconciliation';
 
 interface IncomeModalProps {
   isOpen: boolean;
@@ -30,8 +31,8 @@ export const IncomeModal: React.FC<IncomeModalProps> = ({ isOpen, onClose, defau
   const {
     state,
     addIncome,
+    registerIncomeWithReconciliation,
     addMedicalShift,
-    reconcileShiftWithIncome,
     triggerCelebration,
   } = useFinance();
 
@@ -41,6 +42,7 @@ export const IncomeModal: React.FC<IncomeModalProps> = ({ isOpen, onClose, defau
   const [incomeType, setIncomeType] = useState<IncomeTypeKey>('salario');
   const [description, setDescription] = useState<string>('');
   const [successCelebration, setSuccessCelebration] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   // Medical Shift Integration State
   const [shiftReceiptMode, setShiftReceiptMode] = useState<'pending_shift' | 'new_shift'>('pending_shift');
@@ -55,10 +57,28 @@ export const IncomeModal: React.FC<IncomeModalProps> = ({ isOpen, onClose, defau
   const dialogRef = useDialogFocus(isOpen, onClose);
 
   const pendingShifts = useMemo(() => {
-    return (state.medicalShifts || []).filter(
-      s => s.status === 'pending' || s.status === 'overdue'
-    );
-  }, [state.medicalShifts]);
+    return (state.medicalShifts || []).filter(s => {
+      if (s.status === 'received') return false;
+      if (s.executionStatus === 'cancelled') return false;
+      // Filtra por titular se o modal já definiu o parceiro (partner1 ou partner2)
+      if (recipient === 'partner1' && s.partner !== 'partner1') return false;
+      if (recipient === 'partner2' && s.partner !== 'partner2') return false;
+
+      // Saldo derivado das alocações em centavos
+      const ledgers = migrateLegacyShiftAllocations(
+        state.medicalShifts || [],
+        state.incomes || [],
+        state.shiftIncomeAllocations || []
+      );
+      const receivedCents = ledgers.reduce(
+        (sum, entry) => sum + (entry.allocations[s.id] || 0),
+        0
+      );
+      const totalShiftCents = Math.round((s.netAmount ?? s.grossAmount) * 100);
+      const outstandingCents = Math.max(0, totalShiftCents - receivedCents);
+      return outstandingCents > 0;
+    });
+  }, [state.medicalShifts, state.incomes, state.shiftIncomeAllocations, recipient]);
 
   if (!isOpen) return null;
 
@@ -73,7 +93,19 @@ export const IncomeModal: React.FC<IncomeModalProps> = ({ isOpen, onClose, defau
 
   const handleSelectPendingShift = (shift: MedicalShift) => {
     setSelectedPendingShiftId(shift.id);
-    const val = shift.netAmount || shift.grossAmount;
+    const ledgers = migrateLegacyShiftAllocations(
+      state.medicalShifts || [],
+      state.incomes || [],
+      state.shiftIncomeAllocations || []
+    );
+    const receivedCents = ledgers.reduce(
+      (sum, entry) => sum + (entry.allocations[shift.id] || 0),
+      0
+    );
+    const totalShiftCents = Math.round((shift.netAmount ?? shift.grossAmount) * 100);
+    const outstandingCents = Math.max(0, totalShiftCents - receivedCents);
+    const val = outstandingCents / 100;
+
     setAmount(val.toString());
     setHospitalName(shift.hospitalName);
     setShiftHours(shift.durationHours);
@@ -97,7 +129,15 @@ export const IncomeModal: React.FC<IncomeModalProps> = ({ isOpen, onClose, defau
   };
 
   const handleSave = () => {
+    if (isSubmitting) return;
+    setIsSubmitting(true);
+
     const numAmount = parseFloat(amount.replace(',', '.'));
+    if (!numAmount || numAmount <= 0) {
+      setIsSubmitting(false);
+      return;
+    }
+
     const partnerName =
       recipient === 'partner1'
         ? state.profile.partner1Name
@@ -106,29 +146,37 @@ export const IncomeModal: React.FC<IncomeModalProps> = ({ isOpen, onClose, defau
         : 'Casal';
 
     const today = defaultDate || new Date().toISOString().split('T')[0];
-    const incomeId = `income-${Date.now()}`;
+    const canonicalIncomeId = `inc-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 
     if (incomeType === 'plantao') {
       const finalHosp = hospitalName.trim() || 'Hospital Geral';
       const finalDesc = description.trim() || `Plantão ${finalHosp} (${shiftHours}h) - ${partnerName}`;
+      const shiftPartner: 'partner1' | 'partner2' =
+        recipient === 'partner2' ? 'partner2' : 'partner1';
 
-      // 1. Add income record
-      addIncome({
-        description: finalDesc,
-        amount: numAmount,
-        date: today,
-        recipient,
-        type: 'extra',
-      });
-
-      // 2. Integrate with shifts
       if (shiftReceiptMode === 'pending_shift' && selectedPendingShiftId) {
-        // Reconcile existing pending shift
-        reconcileShiftWithIncome(selectedPendingShiftId, incomeId, false, numAmount);
+        // Conciliação atômica consistente com identidade canônica única
+        registerIncomeWithReconciliation(
+          {
+            id: canonicalIncomeId,
+            description: finalDesc,
+            amount: numAmount,
+            date: today,
+            recipient: shiftPartner,
+            type: 'extra',
+            classification: 'pj_gross',
+            linkedShiftId: selectedPendingShiftId,
+          },
+          selectedPendingShiftId,
+          numAmount,
+          false
+        );
       } else {
-        // Register new shift as already received
+        // Novo plantão criado e quitado com a mesma identidade
+        const newShiftId = `shift-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
         addMedicalShift({
-          partner: recipient === 'partner2' ? 'partner2' : 'partner1',
+          id: newShiftId,
+          partner: shiftPartner,
           title: `Plantão ${finalHosp}`,
           hospitalName: finalHosp,
           sector: shiftSector,
@@ -140,20 +188,45 @@ export const IncomeModal: React.FC<IncomeModalProps> = ({ isOpen, onClose, defau
           estimatedPayDate: today,
           actualPayDate: today,
           status: 'received',
-          linkedIncomeId: incomeId,
+          linkedIncomeId: canonicalIncomeId,
           linkedIncomeDescription: finalDesc,
         });
+
+        registerIncomeWithReconciliation(
+          {
+            id: canonicalIncomeId,
+            description: finalDesc,
+            amount: numAmount,
+            date: today,
+            recipient: shiftPartner,
+            type: 'extra',
+            classification: 'pj_gross',
+            linkedShiftId: newShiftId,
+          },
+          newShiftId,
+          numAmount,
+          false
+        );
       }
     } else {
       const typeObj = quickIncomeTypes.find(t => t.key === incomeType);
       const finalDesc = description.trim() || `${typeObj?.label || 'Entrada'} (${partnerName})`;
 
+      let classification: IncomeSourceClassification | undefined = 'pf_net';
+      if (incomeType === 'restituicao') {
+        classification = 'reimbursement';
+      } else if (incomeType === 'outro') {
+        classification = undefined;
+      }
+
       addIncome({
+        id: canonicalIncomeId,
         description: finalDesc,
         amount: numAmount,
         date: today,
         recipient,
-        type: incomeType === 'salario' ? 'salario' : incomeType === 'bonus' ? 'bonus' : 'extra',
+        type: incomeType, // Preserva tipo exato (salario, bonus, extra, restituicao, outro)
+        classification,
       });
     }
 
@@ -162,6 +235,7 @@ export const IncomeModal: React.FC<IncomeModalProps> = ({ isOpen, onClose, defau
 
     setTimeout(() => {
       setSuccessCelebration(false);
+      setIsSubmitting(false);
       handleReset();
       onClose();
     }, 1300);
@@ -483,7 +557,7 @@ export const IncomeModal: React.FC<IncomeModalProps> = ({ isOpen, onClose, defau
                                     </div>
                                     <div className="text-right">
                                       <span className="font-bold text-teal-700 dark:text-teal-300 block tabular-nums">
-                                        {formatCurrency(shift.netAmount || shift.grossAmount)}
+                                        {formatCurrency(shift.netAmount ?? shift.grossAmount)}
                                       </span>
                                       {isSelected && (
                                         <span className="text-[10px] font-black text-teal-600 flex items-center justify-end gap-0.5">

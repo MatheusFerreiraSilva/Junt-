@@ -1,95 +1,121 @@
-import { CategoryKey, CategoryKeywordRule, DetectedSubscription, ExpenseItem } from '../types/finance';
+import {
+  CategoryKey,
+  CategoryKeywordRule,
+  DetectedSubscription,
+  ExpenseItem,
+  ExpenseNature,
+  ExpensePriority,
+  PolicyMacroGroup,
+  ClassificationOrigin,
+} from '../types/finance';
 
 export const DEFAULT_KEYWORD_RULES: CategoryKeywordRule[] = [
   // Transporte & Mobilidade (Nova Categoria Oficial)
-  { id: 'kw-1', keyword: 'UBER', category: 'transporte', subcategory: 'app de transporte' },
-  { id: 'kw-2', keyword: '99', category: 'transporte', subcategory: 'app de transporte' },
-  { id: 'kw-t1', keyword: 'POSTO', category: 'transporte', subcategory: 'combustivel' },
-  { id: 'kw-t2', keyword: 'GASOLINA', category: 'transporte', subcategory: 'combustivel' },
-  { id: 'kw-t3', keyword: 'IPVA', category: 'transporte', subcategory: 'impostos veiculares' },
-  { id: 'kw-t4', keyword: 'LICENCIAMENTO', category: 'transporte', subcategory: 'impostos veiculares' },
-  { id: 'kw-t5', keyword: 'SEM PARAR', category: 'transporte', subcategory: 'pedagio & tag' },
-  { id: 'kw-t6', keyword: 'VELOE', category: 'transporte', subcategory: 'pedagio & tag' },
-  { id: 'kw-t7', keyword: 'CONECTCAR', category: 'transporte', subcategory: 'pedagio & tag' },
-  { id: 'kw-t8', keyword: 'ESTACIONAMENTO', category: 'transporte', subcategory: 'estacionamento' },
-  { id: 'kw-t9', keyword: 'OFICINA', category: 'transporte', subcategory: 'manutencao auto' },
-  { id: 'kw-t10', keyword: 'MECANICA', category: 'transporte', subcategory: 'manutencao auto' },
-  { id: 'kw-t11', keyword: 'PNEU', category: 'transporte', subcategory: 'manutencao auto' },
+  { id: 'kw-1', keyword: 'UBER', category: 'transporte', subcategory: 'app de transporte', nature: 'variavel', priority: 'importante', policyMacroGroup: 'variaveis', ruleVersion: '1.0' },
+  { id: 'kw-2', keyword: '99', category: 'transporte', subcategory: 'app de transporte', nature: 'variavel', priority: 'importante', policyMacroGroup: 'variaveis', ruleVersion: '1.0' },
+  { id: 'kw-t1', keyword: 'POSTO', category: 'transporte', subcategory: 'combustivel', nature: 'variavel', priority: 'essencial', policyMacroGroup: 'variaveis', ruleVersion: '1.0' },
+  { id: 'kw-t2', keyword: 'GASOLINA', category: 'transporte', subcategory: 'combustivel', nature: 'variavel', priority: 'essencial', policyMacroGroup: 'variaveis', ruleVersion: '1.0' },
+  { id: 'kw-t3', keyword: 'IPVA', category: 'transporte', subcategory: 'impostos veiculares', nature: 'eventual', priority: 'essencial', policyMacroGroup: 'variaveis', ruleVersion: '1.0' },
+  { id: 'kw-t4', keyword: 'LICENCIAMENTO', category: 'transporte', subcategory: 'impostos veiculares', nature: 'eventual', priority: 'essencial', policyMacroGroup: 'variaveis', ruleVersion: '1.0' },
+  { id: 'kw-t5', keyword: 'SEM PARAR', category: 'transporte', subcategory: 'pedagio & tag', nature: 'variavel', priority: 'importante', policyMacroGroup: 'variaveis', ruleVersion: '1.0' },
+  { id: 'kw-t6', keyword: 'VELOE', category: 'transporte', subcategory: 'pedagio & tag', nature: 'variavel', priority: 'importante', policyMacroGroup: 'variaveis', ruleVersion: '1.0' },
+  { id: 'kw-t7', keyword: 'CONECTCAR', category: 'transporte', subcategory: 'pedagio & tag', nature: 'variavel', priority: 'importante', policyMacroGroup: 'variaveis', ruleVersion: '1.0' },
+  { id: 'kw-t8', keyword: 'ESTACIONAMENTO', category: 'transporte', subcategory: 'estacionamento', nature: 'variavel', priority: 'dispensavel', policyMacroGroup: 'variaveis', ruleVersion: '1.0' },
+  { id: 'kw-t9', keyword: 'OFICINA', category: 'transporte', subcategory: 'manutencao auto', nature: 'eventual', priority: 'importante', policyMacroGroup: 'variaveis', ruleVersion: '1.0' },
+  { id: 'kw-t10', keyword: 'MECANICA', category: 'transporte', subcategory: 'manutencao auto', nature: 'eventual', priority: 'importante', policyMacroGroup: 'variaveis', ruleVersion: '1.0' },
+  { id: 'kw-t11', keyword: 'PNEU', category: 'transporte', subcategory: 'manutencao auto', nature: 'eventual', priority: 'essencial', policyMacroGroup: 'variaveis', ruleVersion: '1.0' },
 
-  // Lazer & Assinaturas
-  { id: 'kw-3', keyword: 'NETFLIX', category: 'lazer', subcategory: 'streaming' },
-  { id: 'kw-4', keyword: 'SPOTIFY', category: 'lazer', subcategory: 'musica' },
-  { id: 'kw-5', keyword: 'DISNEY', category: 'lazer', subcategory: 'streaming' },
-  { id: 'kw-6', keyword: 'AMAZON PRIME', category: 'lazer', subcategory: 'assinatura' },
-  { id: 'kw-7', keyword: 'HBO', category: 'lazer', subcategory: 'streaming' },
-  { id: 'kw-8', keyword: 'CINEMA', category: 'lazer', subcategory: 'entretenimento' },
-  { id: 'kw-9', keyword: 'INGRESSO', category: 'lazer', subcategory: 'entretenimento' },
-  { id: 'kw-10', keyword: 'AIRBNB', category: 'lazer', subcategory: 'viagem' },
-  { id: 'kw-11', keyword: 'AZUL', category: 'lazer', subcategory: 'passagens' },
-  { id: 'kw-12', keyword: 'LATAM', category: 'lazer', subcategory: 'passagens' },
-  { id: 'kw-13', keyword: 'GOL', category: 'lazer', subcategory: 'passagens' },
+  // Lazer & Assinaturas (Assinatura recorrente estável é fixa no formato estrito, mas dispensável na prioridade)
+  { id: 'kw-3', keyword: 'NETFLIX', category: 'lazer', subcategory: 'streaming', nature: 'fixa', priority: 'dispensavel', policyMacroGroup: 'fixos', ruleVersion: '1.0' },
+  { id: 'kw-4', keyword: 'SPOTIFY', category: 'lazer', subcategory: 'musica', nature: 'fixa', priority: 'dispensavel', policyMacroGroup: 'fixos', ruleVersion: '1.0' },
+  { id: 'kw-5', keyword: 'DISNEY', category: 'lazer', subcategory: 'streaming', nature: 'fixa', priority: 'dispensavel', policyMacroGroup: 'fixos', ruleVersion: '1.0' },
+  { id: 'kw-6', keyword: 'AMAZON PRIME', category: 'lazer', subcategory: 'assinatura', nature: 'fixa', priority: 'dispensavel', policyMacroGroup: 'fixos', ruleVersion: '1.0' },
+  { id: 'kw-7', keyword: 'HBO', category: 'lazer', subcategory: 'streaming', nature: 'fixa', priority: 'dispensavel', policyMacroGroup: 'fixos', ruleVersion: '1.0' },
+  { id: 'kw-8', keyword: 'CINEMA', category: 'lazer', subcategory: 'entretenimento', nature: 'eventual', priority: 'dispensavel', policyMacroGroup: 'variaveis', ruleVersion: '1.0' },
+  { id: 'kw-9', keyword: 'INGRESSO', category: 'lazer', subcategory: 'entretenimento', nature: 'eventual', priority: 'dispensavel', policyMacroGroup: 'variaveis', ruleVersion: '1.0' },
+  { id: 'kw-10', keyword: 'AIRBNB', category: 'lazer', subcategory: 'viagem', nature: 'eventual', priority: 'dispensavel', policyMacroGroup: 'variaveis', ruleVersion: '1.0' },
+  { id: 'kw-11', keyword: 'AZUL', category: 'lazer', subcategory: 'passagens', nature: 'eventual', priority: 'dispensavel', policyMacroGroup: 'variaveis', ruleVersion: '1.0' },
+  { id: 'kw-12', keyword: 'LATAM', category: 'lazer', subcategory: 'passagens', nature: 'eventual', priority: 'dispensavel', policyMacroGroup: 'variaveis', ruleVersion: '1.0' },
+  { id: 'kw-13', keyword: 'GOL', category: 'lazer', subcategory: 'passagens', nature: 'eventual', priority: 'dispensavel', policyMacroGroup: 'variaveis', ruleVersion: '1.0' },
 
-  // Comida & Alimentação
-  { id: 'kw-14', keyword: 'IFOOD', category: 'comida', subcategory: 'delivery' },
-  { id: 'kw-15', keyword: 'RESTAURANTE', category: 'comida', subcategory: 'restaurante' },
-  { id: 'kw-16', keyword: 'LANCHONETE', category: 'comida', subcategory: 'lanche' },
-  { id: 'kw-17', keyword: 'PADARIA', category: 'comida', subcategory: 'padaria' },
-  { id: 'kw-18', keyword: 'SUPERMERCADO', category: 'comida', subcategory: 'supermercado' },
-  { id: 'kw-19', keyword: 'PAO DE ACUCAR', category: 'comida', subcategory: 'supermercado' },
-  { id: 'kw-20', keyword: 'CARREFOUR', category: 'comida', subcategory: 'supermercado' },
-  { id: 'kw-21', keyword: 'MERCADO', category: 'comida', subcategory: 'supermercado' },
-  { id: 'kw-22', keyword: 'FEIRA', category: 'comida', subcategory: 'hortifruti' },
-  { id: 'kw-23', keyword: 'STARBUCKS', category: 'comida', subcategory: 'cafeteria' },
-  { id: 'kw-24', keyword: 'MCDONALD', category: 'comida', subcategory: 'fast-food' },
+  // Comida & Alimentação (Supermercado é essencial, mas variável no valor)
+  { id: 'kw-14', keyword: 'IFOOD', category: 'comida', subcategory: 'delivery', nature: 'variavel', priority: 'dispensavel', policyMacroGroup: 'variaveis', ruleVersion: '1.0' },
+  { id: 'kw-15', keyword: 'RESTAURANTE', category: 'comida', subcategory: 'restaurante', nature: 'variavel', priority: 'dispensavel', policyMacroGroup: 'variaveis', ruleVersion: '1.0' },
+  { id: 'kw-16', keyword: 'LANCHONETE', category: 'comida', subcategory: 'lanche', nature: 'variavel', priority: 'dispensavel', policyMacroGroup: 'variaveis', ruleVersion: '1.0' },
+  { id: 'kw-17', keyword: 'PADARIA', category: 'comida', subcategory: 'padaria', nature: 'variavel', priority: 'importante', policyMacroGroup: 'variaveis', ruleVersion: '1.0' },
+  { id: 'kw-18', keyword: 'SUPERMERCADO', category: 'comida', subcategory: 'supermercado', nature: 'variavel', priority: 'essencial', policyMacroGroup: 'variaveis', ruleVersion: '1.0' },
+  { id: 'kw-19', keyword: 'PAO DE ACUCAR', category: 'comida', subcategory: 'supermercado', nature: 'variavel', priority: 'essencial', policyMacroGroup: 'variaveis', ruleVersion: '1.0' },
+  { id: 'kw-20', keyword: 'CARREFOUR', category: 'comida', subcategory: 'supermercado', nature: 'variavel', priority: 'essencial', policyMacroGroup: 'variaveis', ruleVersion: '1.0' },
+  { id: 'kw-21', keyword: 'MERCADO', category: 'comida', subcategory: 'supermercado', nature: 'variavel', priority: 'essencial', policyMacroGroup: 'variaveis', ruleVersion: '1.0' },
+  { id: 'kw-22', keyword: 'FEIRA', category: 'comida', subcategory: 'hortifruti', nature: 'variavel', priority: 'essencial', policyMacroGroup: 'variaveis', ruleVersion: '1.0' },
+  { id: 'kw-23', keyword: 'STARBUCKS', category: 'comida', subcategory: 'cafeteria', nature: 'variavel', priority: 'dispensavel', policyMacroGroup: 'variaveis', ruleVersion: '1.0' },
+  { id: 'kw-24', keyword: 'MCDONALD', category: 'comida', subcategory: 'fast-food', nature: 'variavel', priority: 'dispensavel', policyMacroGroup: 'variaveis', ruleVersion: '1.0' },
 
   // Moradia & Contas Fixas
-  { id: 'kw-25', keyword: 'ALUGUEL', category: 'moradia', subcategory: 'aluguel' },
-  { id: 'kw-26', keyword: 'CONDOMINIO', category: 'moradia', subcategory: 'condominio' },
-  { id: 'kw-27', keyword: 'ENEL', category: 'moradia', subcategory: 'energia' },
-  { id: 'kw-28', keyword: 'LUZ', category: 'moradia', subcategory: 'energia' },
-  { id: 'kw-29', keyword: 'SABESP', category: 'moradia', subcategory: 'agua' },
-  { id: 'kw-30', keyword: 'CLARO', category: 'moradia', subcategory: 'internet' },
-  { id: 'kw-31', keyword: 'VIVO', category: 'moradia', subcategory: 'internet' },
-  { id: 'kw-32', keyword: 'LEROY', category: 'moradia', subcategory: 'manutencao' },
-  { id: 'kw-33', keyword: 'TOK&STOK', category: 'moradia', subcategory: 'moveis' },
+  { id: 'kw-25', keyword: 'ALUGUEL', category: 'moradia', subcategory: 'aluguel', nature: 'fixa', priority: 'essencial', policyMacroGroup: 'fixos', ruleVersion: '1.0' },
+  { id: 'kw-26', keyword: 'CONDOMINIO', category: 'moradia', subcategory: 'condominio', nature: 'fixa', priority: 'essencial', policyMacroGroup: 'fixos', ruleVersion: '1.0' },
+  { id: 'kw-27', keyword: 'ENEL', category: 'moradia', subcategory: 'energia', nature: 'fixa', priority: 'essencial', policyMacroGroup: 'fixos', ruleVersion: '1.0' },
+  { id: 'kw-28', keyword: 'LUZ', category: 'moradia', subcategory: 'energia', nature: 'fixa', priority: 'essencial', policyMacroGroup: 'fixos', ruleVersion: '1.0' },
+  { id: 'kw-29', keyword: 'SABESP', category: 'moradia', subcategory: 'agua', nature: 'fixa', priority: 'essencial', policyMacroGroup: 'fixos', ruleVersion: '1.0' },
+  { id: 'kw-30', keyword: 'CLARO', category: 'moradia', subcategory: 'internet', nature: 'fixa', priority: 'essencial', policyMacroGroup: 'fixos', ruleVersion: '1.0' },
+  { id: 'kw-31', keyword: 'VIVO', category: 'moradia', subcategory: 'internet', nature: 'fixa', priority: 'essencial', policyMacroGroup: 'fixos', ruleVersion: '1.0' },
+  { id: 'kw-32', keyword: 'LEROY', category: 'moradia', subcategory: 'manutencao', nature: 'eventual', priority: 'importante', policyMacroGroup: 'variaveis', ruleVersion: '1.0' },
+  { id: 'kw-33', keyword: 'TOK&STOK', category: 'moradia', subcategory: 'moveis', nature: 'eventual', priority: 'dispensavel', policyMacroGroup: 'variaveis', ruleVersion: '1.0' },
 
-  // Proteção & Saúde
-  { id: 'kw-34', keyword: 'DROGASIL', category: 'protecao', subcategory: 'farmacia' },
-  { id: 'kw-35', keyword: 'DROGA RAIA', category: 'protecao', subcategory: 'farmacia' },
-  { id: 'kw-36', keyword: 'FARMACIA', category: 'protecao', subcategory: 'medicamentos' },
-  { id: 'kw-37', keyword: 'UNIMED', category: 'protecao', subcategory: 'plano de saude' },
-  { id: 'kw-38', keyword: 'BRADESCO SAUDE', category: 'protecao', subcategory: 'plano de saude' },
-  { id: 'kw-39', keyword: 'SULAMERICA', category: 'protecao', subcategory: 'seguro' },
-  { id: 'kw-40', keyword: 'PORTO SEGURO', category: 'protecao', subcategory: 'seguro' },
-  { id: 'kw-41', keyword: 'CONSULTA', category: 'protecao', subcategory: 'medico' },
-  { id: 'kw-42', keyword: 'LABORATORIO', category: 'protecao', subcategory: 'exames' },
+  // Proteção & Saúde (Consumo; plano é fixo, farmácia/remédio é variável, ambos consumo)
+  { id: 'kw-34', keyword: 'DROGASIL', category: 'protecao', subcategory: 'farmacia', nature: 'variavel', priority: 'essencial', policyMacroGroup: 'variaveis', ruleVersion: '1.0' },
+  { id: 'kw-35', keyword: 'DROGA RAIA', category: 'protecao', subcategory: 'farmacia', nature: 'variavel', priority: 'essencial', policyMacroGroup: 'variaveis', ruleVersion: '1.0' },
+  { id: 'kw-36', keyword: 'FARMACIA', category: 'protecao', subcategory: 'medicamentos', nature: 'variavel', priority: 'essencial', policyMacroGroup: 'variaveis', ruleVersion: '1.0' },
+  { id: 'kw-37', keyword: 'UNIMED', category: 'protecao', subcategory: 'plano de saude', nature: 'fixa', priority: 'essencial', policyMacroGroup: 'fixos', ruleVersion: '1.0' },
+  { id: 'kw-38', keyword: 'BRADESCO SAUDE', category: 'protecao', subcategory: 'plano de saude', nature: 'fixa', priority: 'essencial', policyMacroGroup: 'fixos', ruleVersion: '1.0' },
+  { id: 'kw-39', keyword: 'SULAMERICA', category: 'protecao', subcategory: 'seguro', nature: 'fixa', priority: 'essencial', policyMacroGroup: 'fixos', ruleVersion: '1.0' },
+  { id: 'kw-40', keyword: 'PORTO SEGURO', category: 'protecao', subcategory: 'seguro', nature: 'fixa', priority: 'essencial', policyMacroGroup: 'fixos', ruleVersion: '1.0' },
+  { id: 'kw-41', keyword: 'CONSULTA', category: 'protecao', subcategory: 'medico', nature: 'variavel', priority: 'essencial', policyMacroGroup: 'variaveis', ruleVersion: '1.0' },
+  { id: 'kw-42', keyword: 'LABORATORIO', category: 'protecao', subcategory: 'exames', nature: 'eventual', priority: 'essencial', policyMacroGroup: 'variaveis', ruleVersion: '1.0' },
 
   // Profissional & Formação
-  { id: 'kw-43', keyword: 'CRM', category: 'profissional', subcategory: 'anuidade' },
-  { id: 'kw-44', keyword: 'CONGRESSO', category: 'profissional', subcategory: 'evento' },
-  { id: 'kw-45', keyword: 'CURSO', category: 'profissional', subcategory: 'educacao' },
-  { id: 'kw-46', keyword: 'UPTODATE', category: 'profissional', subcategory: 'software medico' },
-  { id: 'kw-47', keyword: 'MEDGRUPO', category: 'profissional', subcategory: 'estudo' },
-  { id: 'kw-48', keyword: 'LIVRARIA', category: 'profissional', subcategory: 'livros' },
-  { id: 'kw-49', keyword: 'EQUIPAMENTO', category: 'profissional', subcategory: 'instrumental' },
+  { id: 'kw-43', keyword: 'CRM', category: 'profissional', subcategory: 'anuidade', nature: 'fixa', priority: 'essencial', policyMacroGroup: 'fixos', ruleVersion: '1.0' },
+  { id: 'kw-44', keyword: 'CONGRESSO', category: 'profissional', subcategory: 'evento', nature: 'eventual', priority: 'importante', policyMacroGroup: 'variaveis', ruleVersion: '1.0' },
+  { id: 'kw-45', keyword: 'CURSO', category: 'profissional', subcategory: 'educacao', nature: 'eventual', priority: 'importante', policyMacroGroup: 'variaveis', ruleVersion: '1.0' },
+  { id: 'kw-46', keyword: 'UPTODATE', category: 'profissional', subcategory: 'software medico', nature: 'fixa', priority: 'essencial', policyMacroGroup: 'fixos', ruleVersion: '1.0' },
+  { id: 'kw-47', keyword: 'MEDGRUPO', category: 'profissional', subcategory: 'estudo', nature: 'fixa', priority: 'essencial', policyMacroGroup: 'fixos', ruleVersion: '1.0' },
+  { id: 'kw-48', keyword: 'LIVRARIA', category: 'profissional', subcategory: 'livros', nature: 'eventual', priority: 'importante', policyMacroGroup: 'variaveis', ruleVersion: '1.0' },
+  { id: 'kw-49', keyword: 'EQUIPAMENTO', category: 'profissional', subcategory: 'instrumental', nature: 'eventual', priority: 'essencial', policyMacroGroup: 'variaveis', ruleVersion: '1.0' },
 ];
 
+export interface CategorizeResult {
+  category: CategoryKey;
+  subcategory?: string;
+  matchedKeyword?: string;
+  nature: ExpenseNature;
+  priority: ExpensePriority;
+  policyMacroGroup: PolicyMacroGroup;
+  classificationOrigin: ClassificationOrigin;
+  ruleVersion?: string;
+}
+
 /**
- * Automatically infers category and subcategory from description using custom rules
+ * Automatically infers category, nature, priority and policy macro group from description
  */
 export function categorizeTransaction(
   description: string,
   customRules: CategoryKeywordRule[] = DEFAULT_KEYWORD_RULES
-): { category: CategoryKey; subcategory?: string; matchedKeyword?: string } {
+): CategorizeResult {
   const normalized = description.toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
 
   for (const rule of customRules) {
     const normKeyword = rule.keyword.toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
     if (normalized.includes(normKeyword)) {
+      const origin: ClassificationOrigin = rule.isAuthorizedRule ? 'authorized_rule' : 'auto_suggestion';
       return {
         category: rule.category,
         subcategory: rule.subcategory,
         matchedKeyword: rule.keyword,
+        nature: rule.nature || 'variavel',
+        priority: rule.priority || 'importante',
+        policyMacroGroup: rule.policyMacroGroup || (rule.nature === 'fixa' ? 'fixos' : 'variaveis'),
+        classificationOrigin: origin,
+        ruleVersion: rule.ruleVersion || '1.0',
       };
     }
   }
@@ -98,6 +124,11 @@ export function categorizeTransaction(
   return {
     category: 'lazer',
     subcategory: 'outros',
+    nature: 'variavel',
+    priority: 'dispensavel',
+    policyMacroGroup: 'variaveis',
+    classificationOrigin: 'auto_suggestion',
+    ruleVersion: '1.0',
   };
 }
 

@@ -79,6 +79,31 @@ describe.skipIf(!enabled)('Firestore couple isolation (emulator only)', () => {
     await assertFails(deleteDoc(ref));
     await assertSucceeds(setDoc(ref, { field: 'expenses', record: null, deleted: true, schemaVersion: 1 }));
   });
+  it('allows monthlyBudgetPlans entities and validates couple financial metadata', async () => {
+    const alice = env.authenticatedContext('alice').firestore();
+    const planRef = doc(alice, 'couples/a/entities/monthlyBudgetPlans:2026-10');
+    await assertSucceeds(setDoc(planRef, {
+      field: 'monthlyBudgetPlans',
+      record: { id: '2026-10', competence: '2026-10', plannedNetIncome: 12000, categoryPercentages: { moradia: 30 } },
+      deleted: false,
+      schemaVersion: 1,
+    }));
+    await assertSucceeds(updateDoc(doc(alice, 'couples/a'), {
+      emergencyReserveMonthsTarget: 6,
+      expectedYieldAnnual: 6.5,
+      streakMonths: 3,
+      isInitialHomePhase: false,
+      protectionYieldAccumulated: 250.5,
+      freedomYieldAccumulated: 1200,
+      categoryLocks: { moradia: true, lazer: false },
+      city: 'São Paulo - SP',
+      partner1Specialty: 'Cardiologia',
+      partner2Specialty: 'Dermatologia',
+    }));
+    await assertFails(updateDoc(doc(alice, 'couples/a'), { emergencyReserveMonthsTarget: 0 }));
+    await assertFails(updateDoc(doc(alice, 'couples/a'), { expectedYieldAnnual: 120 }));
+    await assertFails(updateDoc(doc(alice, 'couples/a'), { unapprovedKey: 'invalid' }));
+  });
 
   describe('account avatars', () => {
     beforeEach(async () => {

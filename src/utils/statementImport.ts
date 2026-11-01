@@ -215,6 +215,10 @@ export async function parseOfxStatement(
       category: catResult.category,
       subcategory: catResult.subcategory,
       matchedRule: catResult.matchedKeyword,
+      nature: catResult.nature,
+      priority: catResult.priority,
+      policyMacroGroup: catResult.policyMacroGroup,
+      classificationOrigin: catResult.classificationOrigin,
       fitid: fitId || undefined,
     });
   }
@@ -390,6 +394,10 @@ export async function parseCsvStatement(
       category: catResult.category,
       subcategory: catResult.subcategory,
       matchedRule: catResult.matchedKeyword,
+      nature: catResult.nature,
+      priority: catResult.priority,
+      policyMacroGroup: catResult.policyMacroGroup,
+      classificationOrigin: catResult.classificationOrigin,
       fitid: csvFitId || undefined,
     });
   }

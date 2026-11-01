@@ -33,6 +33,7 @@ import {
   CategoryInfo,
   DestinationKey,
   BudgetPlanContract,
+  FinanceSyncStatus,
   ExpenseItem,
   IncomeItem,
   InstallmentPurchase,
@@ -110,6 +111,7 @@ import {
 } from '../utils/coupleReconciliation';
 import { calculateFoodPacingMetrics } from '../utils/foodPacingEngine';
 import { generateAIPredictiveInsights } from '../utils/aiPredictiveInsightsEngine';
+import { upgradeBudgetPlanContract, selectEligibleNetIncome } from '../utils/domainSelectors';
 
 export const CATEGORIES_BASE: Record<CategoryKey, { name: string; emoji: string; description: string; colorHex: string; bgLight: string; borderHex: string }> = {
   moradia: {
@@ -405,7 +407,13 @@ export interface FinanceContextType {
   updateExpense: (id: string, expense: Partial<ExpenseItem>) => void;
   editExpense: (expenseOrId: string | ExpenseItem, expense?: Partial<ExpenseItem>) => void;
   deleteExpense: (id: string) => void;
-  addIncome: (income: Omit<IncomeItem, 'id'>) => void;
+  addIncome: (income: (Omit<IncomeItem, 'id'> & { id?: string }) | IncomeItem) => IncomeItem;
+  registerIncomeWithReconciliation: (
+    incomeData: (Omit<IncomeItem, 'id'> & { id?: string }) | IncomeItem,
+    shiftId?: string,
+    reconcileAmount?: number,
+    rememberHospitalRule?: boolean
+  ) => { income: IncomeItem; shiftReconciled?: boolean };
   deleteIncome: (id: string, forceUnlink?: boolean) => void;
   addInstallment: (installment: Omit<InstallmentPurchase, 'id' | 'paidInstallmentsCount' | 'active'>) => void;
   recordInstallmentPayment: (id: string) => void;
@@ -611,7 +619,7 @@ export interface FinanceContextType {
   medicalShifts: MedicalShift[];
   medicalShiftPresets: MedicalShiftPreset[];
   hospitalMappingRules: HospitalIncomeMappingRule[];
-  addMedicalShift: (shift: Omit<MedicalShift, 'id'>) => void;
+  addMedicalShift: (shift: (Omit<MedicalShift, 'id'> & { id?: string }) | MedicalShift) => MedicalShift;
   updateMedicalShift: (id: string, updates: Partial<MedicalShift>) => void;
   deleteMedicalShift: (id: string) => void;
   reconcileShiftWithIncome: (shiftId: string, incomeId: string, rememberHospitalRule?: boolean, amount?: number) => void;
@@ -627,6 +635,8 @@ export interface FinanceContextType {
   userProfile: UserAuthProfile | null;
   coupleAccount: CoupleAccountData | null;
   isCloudSynced: boolean;
+  financeSyncStatus: FinanceSyncStatus;
+  syncConflict: string | null;
   signUpWithEmail: (email: string, password: string, displayName: string, partner1Name: string, partner2Name: string) => Promise<void>;
   signInWithEmail: (email: string, password: string) => Promise<void>;
   signInWithGoogle: () => Promise<void>;
@@ -693,10 +703,43 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
   });
   const [userProfile, setUserProfile] = useState<UserAuthProfile | null>(null);
   const [coupleAccount, setCoupleAccount] = useState<CoupleAccountData | null>(null);
-  const [isCloudSynced, setIsCloudSynced] = useState(false);
+  const [isHeaderSaving, setIsHeaderSaving] = useState(false);
+  const [isHeaderConfirmed, setIsHeaderConfirmed] = useState(false);
+  const [isEntitySaving, setIsEntitySaving] = useState(false);
+  const [isEntityConfirmed, setIsEntityConfirmed] = useState(false);
+  const [syncConflict, setSyncConflict] = useState<string | null>(null);
+  const [saveProgress, setSaveProgress] = useState<{ saved: number; total: number } | null>(null);
   const [isHydratingCloud, setIsHydratingCloud] = useState(Boolean(auth.currentUser));
   const [cloudLoadError, setCloudLoadError] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<'couple' | 'partner1' | 'partner2'>('couple');
+
+  const financeSyncStatus: FinanceSyncStatus = useMemo(() => {
+    if (!currentUser || !coupleAccount?.id || currentUser.isAnonymous) return 'local';
+    if (isHydratingCloud) return 'loading';
+    if (cloudLoadError) return 'error';
+    if (syncConflict) return 'conflict';
+    if (isHeaderSaving || isEntitySaving) {
+      if (saveProgress && saveProgress.saved > 0 && saveProgress.saved < saveProgress.total) {
+        return 'partial';
+      }
+      return 'saving';
+    }
+    if (isHeaderConfirmed && isEntityConfirmed) return 'saved';
+    return 'local';
+  }, [
+    currentUser,
+    coupleAccount?.id,
+    isHydratingCloud,
+    cloudLoadError,
+    syncConflict,
+    isHeaderSaving,
+    isEntitySaving,
+    saveProgress,
+    isHeaderConfirmed,
+    isEntityConfirmed,
+  ]);
+
+  const isCloudSynced = financeSyncStatus === 'saved';
 
   const [state, setState] = useState<AppState>(INITIAL_STATE);
   const [appearanceSyncStatus, setAppearanceSyncStatus] = useState<AppearanceSyncStatus>('local');
@@ -817,7 +860,12 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
       setCacheOwner(null);
       setUserProfile(null);
       setCoupleAccount(null);
-      setIsCloudSynced(false);
+      setIsHeaderSaving(false);
+      setIsHeaderConfirmed(false);
+      setIsEntitySaving(false);
+      setIsEntityConfirmed(false);
+      setSyncConflict(null);
+      setSaveProgress(null);
       setCloudLoadError(null);
       setIsHydratingCloud(Boolean(user));
       setCacheCoupleId(null);
@@ -838,7 +886,7 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
             if (profileData.coupleId) {
               const coupleRef = doc(db, 'couples', profileData.coupleId);
               let previousCoupleSnapshot: Record<string, unknown> | null = null;
-              coupleListener.current = onSnapshot(coupleRef, (cSnap) => {
+              coupleListener.current = onSnapshot(coupleRef, { includeMetadataChanges: true }, (cSnap) => {
                 if (disposed || generation !== sessionGeneration.current) return;
                 if (cSnap.exists()) {
                   const cData = cSnap.data();
@@ -851,7 +899,14 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
                   previousCoupleSnapshot = cData;
                   if (avatarOnly) return;
                   if (!entityListener.current) {
-                    const legacy = Object.fromEntries(ENTITY_FIELDS.map(field => [field, Array.isArray(cData[field]) ? cData[field] : []])) as EntityState;
+                    const legacy = Object.fromEntries(ENTITY_FIELDS.map(field => {
+                      if (field === 'monthlyBudgetPlans') {
+                        if (cData.monthlyBudgetPlans && typeof cData.monthlyBudgetPlans === 'object' && !Array.isArray(cData.monthlyBudgetPlans)) {
+                          return [field, Object.entries(cData.monthlyBudgetPlans).map(([comp, plan]: [string, any]) => ({ ...plan, id: comp, competence: comp }))];
+                        }
+                      }
+                      return [field, Array.isArray(cData[field]) ? cData[field] : []];
+                    })) as EntityState;
                     // Mark listener creation immediately to avoid duplicate migrations.
                     entityListener.current = () => {};
                     void migrateEntities(db, profileData.coupleId, legacy, () => !disposed && generation === sessionGeneration.current && auth.currentUser?.uid === user.uid).then(() => {
@@ -859,17 +914,48 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
                       entityListener.current = subscribeEntities(db, profileData.coupleId, (remote, confirmed) => {
                         if (generation !== sessionGeneration.current) return;
                         const previous = entityBaseline.current;
-                        entityBaseline.current = Object.fromEntries(ENTITY_FIELDS.map(field => [field,
-                          conflictAwareBaseline(previous[field] || [], (stateRef.current[field] || []) as unknown as import('../lib/entitySync').SyncEntity[], remote[field] || [])
-                        ])) as EntityState;
+                        const nextBaseline: EntityState = {};
+                        for (const field of ENTITY_FIELDS) {
+                          if (field === 'monthlyBudgetPlans') {
+                            const localPlansArray = Object.values(stateRef.current.monthlyBudgetPlans || {}).map(p => ({ ...p, id: p.competence || (p as any).id }));
+                            nextBaseline[field] = conflictAwareBaseline(previous[field] || [], localPlansArray as any, remote[field] || []);
+                          } else {
+                            nextBaseline[field] = conflictAwareBaseline(previous[field] || [], (stateRef.current[field] || []) as any, remote[field] || []);
+                          }
+                        }
+                        entityBaseline.current = nextBaseline;
                         entityReady.current = true;
-                        setState(prev => ({ ...prev, ...Object.fromEntries(ENTITY_FIELDS.map(field => [field,
-                          rebaseEntities(previous[field] || [], prev[field] as unknown as import('../lib/entitySync').SyncEntity[] || [], remote[field] || [])
-                        ])) }));
+
+                        setState(prev => {
+                          const nextState: Partial<AppState> = {};
+                          for (const field of ENTITY_FIELDS) {
+                            if (field === 'monthlyBudgetPlans') {
+                              const localPlansArray = Object.values(prev.monthlyBudgetPlans || {}).map(p => ({ ...p, id: p.competence || (p as any).id }));
+                              const rebased = rebaseEntities(previous[field] || [], localPlansArray as any, remote[field] || []);
+                              const plansMap: Record<string, BudgetPlanContract> = {};
+                              for (const item of rebased) {
+                                const comp = ((item as any).competence || item.id) as string;
+                                if (comp) plansMap[comp] = upgradeBudgetPlanContract(item as unknown as BudgetPlanContract);
+                              }
+                              nextState.monthlyBudgetPlans = plansMap;
+                            } else {
+                              const localList = (prev[field] as any) || [];
+                              nextState[field] = rebaseEntities(previous[field] || [], localList, remote[field] || []) as any;
+                            }
+                          }
+                          return { ...prev, ...nextState };
+                        });
                         setIsHydratingCloud(false);
-                        setIsCloudSynced(confirmed);
-                      }, () => { setIsCloudSynced(false); setCloudLoadError('Não foi possível acessar os registros. Verifique sua conexão e as permissões da conta.'); });
-                    }).catch(() => { entityListener.current = null; setIsCloudSynced(false); setCloudLoadError('Não foi possível carregar os registros. Seu cache foi preservado. Verifique a conexão e tente novamente.'); });
+                        setIsEntityConfirmed(confirmed);
+                      }, () => {
+                        setIsEntityConfirmed(false);
+                        setCloudLoadError('Não foi possível acessar os registros. Verifique sua conexão e as permissões da conta.');
+                      });
+                    }).catch(() => {
+                      entityListener.current = null;
+                      setIsEntityConfirmed(false);
+                      setCloudLoadError('Não foi possível carregar os registros. Seu cache foi preservado. Verifique a conexão e tente novamente.');
+                    });
                   }
 
                   setCoupleAccount({
@@ -893,23 +979,36 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
                       partner2Career: cData.partner2Career || prev.profile.partner2Career,
                       partner1Name: cData.partner1Name || prev.profile.partner1Name,
                       partner2Name: cData.partner2Name || prev.profile.partner2Name,
+                      partner1Specialty: cData.partner1Specialty !== undefined ? cData.partner1Specialty : prev.profile.partner1Specialty,
+                      partner2Specialty: cData.partner2Specialty !== undefined ? cData.partner2Specialty : prev.profile.partner2Specialty,
+                      city: cData.city !== undefined ? cData.city : prev.profile.city,
                       partner1Income: cData.partner1Income !== undefined ? cData.partner1Income : (prev.profile.partner1Income ?? 0),
                       partner2Income: cData.partner2Income !== undefined ? cData.partner2Income : (prev.profile.partner2Income ?? 0),
                       investmentsPercentage: cData.investmentsPercentage !== undefined ? cData.investmentsPercentage : (prev.profile.investmentsPercentage ?? 20),
+                      emergencyReserveMonthsTarget: cData.emergencyReserveMonthsTarget !== undefined ? cData.emergencyReserveMonthsTarget : (prev.profile.emergencyReserveMonthsTarget ?? 6),
+                      expectedYieldAnnual: cData.expectedYieldAnnual !== undefined ? cData.expectedYieldAnnual : (prev.profile.expectedYieldAnnual ?? 6.5),
+                      streakMonths: cData.streakMonths !== undefined ? cData.streakMonths : (prev.profile.streakMonths ?? 0),
+                      isInitialHomePhase: cData.isInitialHomePhase !== undefined ? cData.isInitialHomePhase : prev.profile.isInitialHomePhase,
                     },
                     categoryPercentages: cData.categoryPercentages || prev.categoryPercentages,
                     categoryFloors: cData.categoryFloors || prev.categoryFloors,
+                    categoryLocks: cData.categoryLocks || prev.categoryLocks,
                     protectionCurrentAmount: cData.protectionCurrentAmount !== undefined ? cData.protectionCurrentAmount : prev.protectionCurrentAmount,
                     protectionTotalInvested: cData.protectionTotalInvested !== undefined ? cData.protectionTotalInvested : prev.protectionTotalInvested,
+                    protectionYieldAccumulated: cData.protectionYieldAccumulated !== undefined ? cData.protectionYieldAccumulated : prev.protectionYieldAccumulated,
                     isProtectionComplete: cData.isProtectionComplete !== undefined ? cData.isProtectionComplete : prev.isProtectionComplete,
                     freedomTotalInvested: cData.freedomTotalInvested !== undefined ? cData.freedomTotalInvested : prev.freedomTotalInvested,
+                    freedomYieldAccumulated: cData.freedomYieldAccumulated !== undefined ? cData.freedomYieldAccumulated : prev.freedomYieldAccumulated,
                     monthlyDepositGuides: cData.monthlyDepositGuides || prev.monthlyDepositGuides,
                     completedMonthDeposits: cData.completedMonthDeposits || prev.completedMonthDeposits,
                     surplusTransfers: Array.isArray(cData.surplusTransfers) ? cData.surplusTransfers : prev.surplusTransfers,
                     dismissedSurplusMonths: Array.isArray(cData.dismissedSurplusMonths) ? cData.dismissedSurplusMonths : prev.dismissedSurplusMonths,
                   }));
+
+                  const headerConfirmed = !cSnap.metadata.hasPendingWrites && !cSnap.metadata.fromCache;
+                  setIsHeaderConfirmed(headerConfirmed);
                 } else { setCloudLoadError('O espaço financeiro desta conta não foi encontrado.'); }
-              }, () => { setIsCloudSynced(false); setCloudLoadError('Não foi possível abrir este casal. Verifique a conexão e o vínculo da sua conta.'); });
+              }, () => { setIsHeaderConfirmed(false); setCloudLoadError('Não foi possível abrir este casal. Verifique a conexão e o vínculo da sua conta.'); });
             } else { setIsHydratingCloud(false); }
           } else { setIsHydratingCloud(false); }
         } catch (err) {
@@ -919,7 +1018,8 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
       } else {
         setUserProfile(null);
         setCoupleAccount(null);
-        setIsCloudSynced(false);
+        setIsHeaderConfirmed(false);
+        setIsEntityConfirmed(false);
         setCurrentUser(prev => prev || ({
           uid: 'guest-default-user',
           displayName: 'Você',
@@ -950,21 +1050,90 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
     if (!coupleAccount?.id || !currentUser || !entityReady.current) return;
     const generation = sessionGeneration.current;
     const baseline = entityBaseline.current;
-    const current = Object.fromEntries(ENTITY_FIELDS.map(field => [field, state[field] || []])) as unknown as EntityState;
+    const current: EntityState = {};
+    for (const field of ENTITY_FIELDS) {
+      if (field === 'monthlyBudgetPlans') {
+        current[field] = Object.values(state.monthlyBudgetPlans || {}).map(p => ({ ...p, id: p.competence || (p as any).id }));
+      } else {
+        current[field] = (state[field] as any) || [];
+      }
+    }
+
     const timer = setTimeout(async () => {
       if (generation !== sessionGeneration.current || auth.currentUser?.uid !== currentUser.uid) return;
       try {
-        setIsCloudSynced(false);
-        await saveEntities(db, coupleAccount.id, baseline, current, () => generation === sessionGeneration.current && auth.currentUser?.uid === currentUser.uid);
-        if (generation === sessionGeneration.current) setIsCloudSynced(true);
-      } catch (error) {
-        if (generation === sessionGeneration.current) setIsCloudSynced(false);
+        setIsEntitySaving(true);
+        setSyncConflict(null);
+        const result = await saveEntities(
+          db,
+          coupleAccount.id,
+          baseline,
+          current,
+          {
+            isActive: () => generation === sessionGeneration.current && auth.currentUser?.uid === currentUser.uid,
+            onChunkSaved: (progress) => {
+              if (generation !== sessionGeneration.current) return;
+              setSaveProgress({ saved: progress.savedCount, total: progress.totalCount });
+              // Update baseline progressively so completed chunks are never duplicated on retry
+              const nextBaseline = { ...entityBaseline.current };
+              for (const item of progress.confirmedChanges) {
+                const list = nextBaseline[item.field] ? [...nextBaseline[item.field]!] : [];
+                const idx = list.findIndex(r => r.id === item.id);
+                if (item.after) {
+                  if (idx >= 0) list[idx] = item.after; else list.push(item.after);
+                } else if (idx >= 0) {
+                  list.splice(idx, 1);
+                }
+                nextBaseline[item.field] = list;
+              }
+              entityBaseline.current = nextBaseline;
+            },
+          }
+        );
+        if (generation === sessionGeneration.current) {
+          setIsEntitySaving(false);
+          setIsEntityConfirmed(result.completed);
+          setSaveProgress(null);
+        }
+      } catch (error: any) {
+        if (generation === sessionGeneration.current) {
+          setIsEntitySaving(false);
+          setIsEntityConfirmed(false);
+          setSaveProgress(null);
+          if (error?.message?.includes('alterado pelo seu par')) {
+            setSyncConflict(error.message);
+          }
+        }
         console.warn('Não foi possível salvar os registros. Alterações locais preservadas.', error);
       }
     }, 400);
     return () => clearTimeout(timer);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [coupleAccount?.id, currentUser?.uid, state.expenses, state.incomes, state.installments, state.piggyBanks, state.strategicIntents, state.medicalShifts, state.shiftIncomeAllocations, state.bankImportedTransactions, state.medicalShiftPresets, state.hospitalMappingRules, state.incomeSourceRules, state.pendingConfirmations, state.linkedAccounts, state.detectedSubscriptions, state.keywordRules, state.coupleGoals, state.coupleWishlist, state.coupleFixedBills, state.dreamSimulations, state.pluggyAccounts]);
+  }, [
+    coupleAccount?.id,
+    currentUser?.uid,
+    state.expenses,
+    state.incomes,
+    state.installments,
+    state.piggyBanks,
+    state.strategicIntents,
+    state.medicalShifts,
+    state.shiftIncomeAllocations,
+    state.bankImportedTransactions,
+    state.medicalShiftPresets,
+    state.hospitalMappingRules,
+    state.incomeSourceRules,
+    state.pendingConfirmations,
+    state.linkedAccounts,
+    state.detectedSubscriptions,
+    state.keywordRules,
+    state.coupleGoals,
+    state.coupleWishlist,
+    state.coupleFixedBills,
+    state.dreamSimulations,
+    state.pluggyAccounts,
+    state.monthlyBudgetPlans,
+  ]);
 
   // Realtime Cloud Persistence: Save shared couple state to Firestore (debounced)
   useEffect(() => {
@@ -977,25 +1146,35 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
     const generation = sessionGeneration.current;
     const timer = setTimeout(async () => {
       if (generation !== sessionGeneration.current || auth.currentUser?.uid !== currentUser.uid) return;
-      setIsCloudSynced(false);
       try {
+        setIsHeaderSaving(true);
         const coupleRef = doc(db, 'couples', coupleAccount.id);
         await setDoc(
           coupleRef,
           {
             categoryPercentages: state.categoryPercentages,
-            categoryFloors: state.categoryFloors,
+            categoryFloors: state.categoryFloors || {},
+            categoryLocks: state.categoryLocks || {},
             partner1Career: state.profile.partner1Career || null,
             partner2Career: state.profile.partner2Career || null,
             partner1Income: state.profile.partner1Income,
             partner2Income: state.profile.partner2Income,
             partner1Name: state.profile.partner1Name,
             partner2Name: state.profile.partner2Name,
+            partner1Specialty: state.profile.partner1Specialty || '',
+            partner2Specialty: state.profile.partner2Specialty || '',
+            city: state.profile.city || 'Brasil',
+            emergencyReserveMonthsTarget: state.profile.emergencyReserveMonthsTarget ?? 6,
+            expectedYieldAnnual: state.profile.expectedYieldAnnual ?? 6.5,
+            streakMonths: state.profile.streakMonths ?? 0,
+            isInitialHomePhase: Boolean(state.profile.isInitialHomePhase),
             investmentsPercentage: state.profile.investmentsPercentage ?? 20,
             protectionCurrentAmount: state.protectionCurrentAmount,
             protectionTotalInvested: state.protectionTotalInvested,
+            protectionYieldAccumulated: state.protectionYieldAccumulated || 0,
             isProtectionComplete: state.isProtectionComplete,
             freedomTotalInvested: state.freedomTotalInvested,
+            freedomYieldAccumulated: state.freedomYieldAccumulated || 0,
             monthlyDepositGuides: state.monthlyDepositGuides || {},
             completedMonthDeposits: state.completedMonthDeposits || {},
             surplusTransfers: state.surplusTransfers || [],
@@ -1005,9 +1184,15 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
           },
           { merge: true }
         );
-        if (generation === sessionGeneration.current) setIsCloudSynced(true);
+        if (generation === sessionGeneration.current) {
+          setIsHeaderSaving(false);
+          setIsHeaderConfirmed(true);
+        }
       } catch (err) {
-        setIsCloudSynced(false);
+        if (generation === sessionGeneration.current) {
+          setIsHeaderSaving(false);
+          setIsHeaderConfirmed(false);
+        }
         console.warn('Failed to sync couple state to Firestore', err);
       }
     }, 800);
@@ -1016,34 +1201,33 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     coupleAccount?.id,
-    state.expenses,
-    state.incomes,
-    state.pluggyAccounts,
-    state.installments,
-    state.piggyBanks,
     state.categoryPercentages,
     state.categoryFloors,
+    state.categoryLocks,
     state.profile.partner1Career,
     state.profile.partner2Career,
     state.profile.partner1Income,
     state.profile.partner2Income,
     state.profile.partner1Name,
     state.profile.partner2Name,
+    state.profile.partner1Specialty,
+    state.profile.partner2Specialty,
+    state.profile.city,
+    state.profile.emergencyReserveMonthsTarget,
+    state.profile.expectedYieldAnnual,
+    state.profile.streakMonths,
+    state.profile.isInitialHomePhase,
     state.profile.investmentsPercentage,
     state.protectionCurrentAmount,
     state.protectionTotalInvested,
+    state.protectionYieldAccumulated,
     state.isProtectionComplete,
     state.freedomTotalInvested,
+    state.freedomYieldAccumulated,
     state.monthlyDepositGuides,
     state.completedMonthDeposits,
     state.surplusTransfers,
     state.dismissedSurplusMonths,
-    state.strategicIntents,
-    state.medicalShifts,
-    state.coupleGoals,
-    state.coupleWishlist,
-    state.coupleFixedBills,
-    state.dreamSimulations,
     currentUser?.uid,
   ]);
 
@@ -1111,13 +1295,15 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
     entityListener.current = null;
     entityReady.current = false;
     entityBaseline.current = {};
-    entityListener.current?.();
-    entityListener.current = null;
-    entityReady.current = false;
+    setIsHeaderSaving(false);
+    setIsHeaderConfirmed(false);
+    setIsEntitySaving(false);
+    setIsEntityConfirmed(false);
+    setSyncConflict(null);
+    setSaveProgress(null);
     setUserProfile(prev => prev ? { ...prev, coupleId: '' } : null);
     setCoupleAccount(null);
     setState({ ...INITIAL_STATE });
-    setIsCloudSynced(false);
   };
 
   const signOutUser = async () => {
@@ -1129,12 +1315,17 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
     entityListener.current = null;
     entityReady.current = false;
     entityBaseline.current = {};
+    setIsHeaderSaving(false);
+    setIsHeaderConfirmed(false);
+    setIsEntitySaving(false);
+    setIsEntityConfirmed(false);
+    setSyncConflict(null);
+    setSaveProgress(null);
     setCacheOwner(null);
     setState({ ...INITIAL_STATE });
     setCurrentUser(null);
     setUserProfile(null);
     setCoupleAccount(null);
-    setIsCloudSynced(false);
     await signOut(auth);
   };
 
@@ -2476,15 +2667,82 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
     triggerCelebration();
   };
 
-  const addIncome = (income: Omit<IncomeItem, 'id'>) => {
+  const addIncome = (income: (Omit<IncomeItem, 'id'> & { id?: string }) | IncomeItem): IncomeItem => {
+    const canonicalId = income.id || `inc-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
     const newIncome: IncomeItem = {
       ...income,
-      id: `inc-${Date.now()}`,
+      id: canonicalId,
     };
     setState(prev => ({
       ...prev,
-      incomes: [newIncome, ...prev.incomes],
+      incomes: [newIncome, ...prev.incomes.filter(i => i.id !== canonicalId)],
     }));
+    return newIncome;
+  };
+
+  const registerIncomeWithReconciliation = (
+    incomeData: (Omit<IncomeItem, 'id'> & { id?: string }) | IncomeItem,
+    shiftId?: string,
+    reconcileAmount?: number,
+    rememberHospitalRule?: boolean
+  ): { income: IncomeItem; shiftReconciled?: boolean } => {
+    const canonicalId = incomeData.id || `inc-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    const newIncome: IncomeItem = {
+      ...incomeData,
+      id: canonicalId,
+    };
+
+    setState(prev => {
+      const nextIncomes = [newIncome, ...prev.incomes.filter(i => i.id !== canonicalId)];
+      let updatedShifts = prev.medicalShifts || [];
+      let updatedLedgers = prev.shiftIncomeAllocations || [];
+      let updatedRules = prev.hospitalMappingRules || DEFAULT_HOSPITAL_MAPPING_RULES;
+
+      if (shiftId) {
+        const targetShift = updatedShifts.find(s => s.id === shiftId);
+        if (targetShift) {
+          try {
+            const ledgers = migrateLegacyShiftAllocations(updatedShifts, nextIncomes, updatedLedgers);
+            const allocation = applyShiftAllocation(
+              updatedShifts,
+              nextIncomes,
+              ledgers,
+              shiftId,
+              canonicalId,
+              reconcileAmount
+            );
+            updatedShifts = allocation.shifts;
+            updatedLedgers = allocation.ledgers;
+
+            if (rememberHospitalRule) {
+              const cleanDesc = newIncome.description.replace(/^(TED|DOC|PIX|TRANSF|CRED)\s+/i, '').trim();
+              const keyword = cleanDesc.split(' ').slice(0, 3).join(' ') || targetShift.hospitalName;
+              const newRule: HospitalIncomeMappingRule = {
+                id: `rule-hosp-${Date.now()}`,
+                hospitalName: targetShift.hospitalName,
+                keywordPattern: keyword.toUpperCase(),
+                partner: targetShift.partner,
+                createdAt: new Date().toISOString(),
+              };
+              updatedRules = [newRule, ...updatedRules];
+            }
+          } catch (err) {
+            console.warn('Erro ao conciliar plantão com receita atômica:', err);
+          }
+        }
+      }
+
+      return {
+        ...prev,
+        incomes: nextIncomes,
+        medicalShifts: updatedShifts,
+        shiftIncomeAllocations: updatedLedgers,
+        hospitalMappingRules: updatedRules,
+      };
+    });
+
+    triggerCelebration();
+    return { income: newIncome, shiftReconciled: Boolean(shiftId) };
   };
 
   const deleteIncome = (id: string, forceUnlink = false) => {
@@ -2510,19 +2768,28 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
         };
       }
 
-      // Revert linked medical shifts so they return to unpayout status
+      const updatedAllocations = (prev.shiftIncomeAllocations || []).filter(l => l.id !== id);
+
+      // Revert or recalculate linked medical shifts based on remaining allocations
       const updatedShifts = (prev.medicalShifts || []).map(shift => {
-        if (shift.linkedIncomeId === id) {
+        const hadAllocationInDeleted = Boolean(allocated && allocated.allocations[shift.id] !== undefined);
+        if (shift.linkedIncomeId === id || hadAllocationInDeleted) {
+          const remainingReceivedCents = updatedAllocations.reduce(
+            (sum, l) => sum + (l.allocations[shift.id] || 0),
+            0
+          );
+          const totalCents = Math.round((shift.netAmount ?? shift.grossAmount) * 100);
+          const isFullyPaid = remainingReceivedCents >= totalCents && totalCents > 0;
+          const remainingLinkedIncome = updatedAllocations.find(l => l.allocations[shift.id] !== undefined)?.id;
+
           return {
             ...shift,
-            status: 'pending' as const,
-            linkedIncomeId: undefined,
+            status: isFullyPaid ? ('received' as const) : ('pending' as const),
+            linkedIncomeId: isFullyPaid ? shift.linkedIncomeId : remainingLinkedIncome,
           };
         }
         return shift;
       });
-
-      const updatedAllocations = (prev.shiftIncomeAllocations || []).filter(l => l.id !== id);
 
       return {
         ...prev,
@@ -2980,16 +3247,18 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
   // ==========================================
   // GESTÃO DE PLANTÕES MÉDICOS & ESCALAS
   // ==========================================
-  const addMedicalShift = (shift: Omit<MedicalShift, 'id'>) => {
+  const addMedicalShift = (shift: (Omit<MedicalShift, 'id'> & { id?: string }) | MedicalShift): MedicalShift => {
+    const canonicalId = shift.id || `shift-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     const newShift: MedicalShift = {
       ...shift,
-      id: `shift-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      id: canonicalId,
     };
     setState(prev => ({
       ...prev,
       medicalShifts: [newShift, ...(prev.medicalShifts || [])],
     }));
     triggerCelebration();
+    return newShift;
   };
 
   const updateMedicalShift = (id: string, updates: Partial<MedicalShift>) => {
@@ -4191,17 +4460,18 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
   };
 
   const applyBudgetPlanContract = (plan: BudgetPlanContract) => {
+    const upgradedPlan = upgradeBudgetPlanContract(plan);
     setState(prev => {
       const nextCategoryPercentages: Record<CategoryKey, number> = {
-        moradia: plan.categoryPercentages.moradia ?? prev.categoryPercentages.moradia,
-        transporte: plan.categoryPercentages.transporte ?? prev.categoryPercentages.transporte,
-        comida: plan.categoryPercentages.comida ?? prev.categoryPercentages.comida,
-        lazer: plan.categoryPercentages.lazer ?? prev.categoryPercentages.lazer,
-        protecao: plan.categoryPercentages.protecao ?? prev.categoryPercentages.protecao,
-        profissional: plan.categoryPercentages.profissional ?? prev.categoryPercentages.profissional,
+        moradia: upgradedPlan.categoryPercentages.moradia ?? prev.categoryPercentages.moradia,
+        transporte: upgradedPlan.categoryPercentages.transporte ?? prev.categoryPercentages.transporte,
+        comida: upgradedPlan.categoryPercentages.comida ?? prev.categoryPercentages.comida,
+        lazer: upgradedPlan.categoryPercentages.lazer ?? prev.categoryPercentages.lazer,
+        protecao: upgradedPlan.categoryPercentages.protecao ?? prev.categoryPercentages.protecao,
+        profissional: upgradedPlan.categoryPercentages.profissional ?? prev.categoryPercentages.profissional,
       };
 
-      const nextInvestmentsPercentage = plan.categoryPercentages.investimentos ?? (prev.profile.investmentsPercentage || 20);
+      const nextInvestmentsPercentage = upgradedPlan.categoryPercentages.investimentos ?? (prev.profile.investmentsPercentage || 20);
 
       const nextCategoryLocks = {
         ...(prev.categoryLocks || {
@@ -4213,12 +4483,12 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
           profissional: false,
           investimentos: false,
         }),
-        ...plan.categoryLocks,
+        ...upgradedPlan.categoryLocks,
       };
 
       const nextMonthlyPlans = {
         ...(prev.monthlyBudgetPlans || {}),
-        [plan.competence]: plan,
+        [upgradedPlan.competence]: upgradedPlan,
       };
 
       return {
@@ -4729,6 +4999,7 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
         editExpense,
         deleteExpense,
         addIncome,
+        registerIncomeWithReconciliation,
         deleteIncome,
         addInstallment,
         recordInstallmentPayment,
@@ -4879,6 +5150,8 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
         userProfile,
         coupleAccount,
         isCloudSynced,
+        financeSyncStatus,
+        syncConflict,
         signUpWithEmail,
         signInWithEmail,
         signInWithGoogle,
