@@ -217,6 +217,9 @@ export interface SavingsPiggyBank {
   completed?: boolean;
   isFireEligible?: boolean;
   coupleAgreement?: CoupleAgreement;
+  // 27: Controle seguro de ciclo de vida e arquivamento
+  archived?: boolean;
+  isDeleted?: boolean;
   // 26A: Detalhamento explícito de destino, fatias e vínculo de ativo
   accumulatedCents?: number;
   committedCents?: number;
@@ -909,6 +912,9 @@ export interface CoupleGoal {
   history: CoupleGoalContribution[];
   createdAt: string;
   coupleAgreement?: CoupleAgreement;
+  // 27: Controle seguro de arquivamento e tombstones
+  archived?: boolean;
+  isDeleted?: boolean;
   // 26A: Detalhamento explícito de fatias e custódia patrimonial
   accumulatedCents?: number;
   committedCents?: number;
@@ -931,6 +937,16 @@ export interface CoupleWishlistItem {
   status: 'desejo' | 'convertido_meta' | 'comprado';
   convertedGoalId?: string;
   createdAt: string;
+  isDeleted?: boolean;
+}
+
+export interface FixedBillAlertOccurrenceRecord {
+  status: 'paid' | 'pending' | 'overdue';
+  paidAt?: string;
+  paidAmount?: number;
+  paidBy?: PaidBy;
+  paymentMethod?: string;
+  linkedExpenseId?: string;
 }
 
 export interface FixedBillAlert {
@@ -945,6 +961,9 @@ export interface FixedBillAlert {
   status: 'pending' | 'paid' | 'overdue';
   lastPaidMonth?: string; // YYYY-MM
   isRecurring: boolean;
+  active?: boolean; // true = ativo; false = desativado/pausado
+  history?: Record<string, FixedBillAlertOccurrenceRecord>; // Competência (YYYY-MM) -> registro
+  isDeleted?: boolean;
 }
 
 export interface DreamSimulation {
@@ -961,6 +980,8 @@ export interface DreamSimulation {
   partner1SharePct: number; // e.g. 50
   partner2SharePct: number; // e.g. 50
   createdAt: string;
+  convertedGoalId?: string;
+  isDeleted?: boolean;
 }
 
 export interface CoupleFIREMetrics {

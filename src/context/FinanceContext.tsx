@@ -420,12 +420,13 @@ export interface FinanceContextType {
   markInstallmentPaidStep: (id: string) => void;
   deleteInstallment: (id: string) => void;
   dismissCompletedInstallmentNotification: (id: string) => void;
-  addPiggyBank: (piggy: Omit<SavingsPiggyBank, 'id'>) => void;
-  updatePiggyBank: (id: string, updates: Partial<SavingsPiggyBank>) => void;
-  deletePiggyBank: (id: string) => void;
-  removePiggyBank: (id: string) => void;
-  depositPiggyBank: (id: string, amount: number) => void;
-  depositToPiggyBank: (id: string, amount: number) => void;
+  addPiggyBank: (piggy: (Omit<SavingsPiggyBank, 'id'> & { id?: string }) | SavingsPiggyBank) => SavingsPiggyBank;
+  updatePiggyBank: (id: string, updates: Partial<SavingsPiggyBank> & Partial<import('../types/finance').CoupleGoal>) => void;
+  archivePiggyBank: (id: string, archive?: boolean) => void;
+  deletePiggyBank: (id: string, force?: boolean) => void;
+  removePiggyBank: (id: string, force?: boolean) => void;
+  depositPiggyBank: (id: string, amount: number, contributor?: 'partner1' | 'partner2' | 'both', note?: string) => void;
+  depositToPiggyBank: (id: string, amount: number, contributor?: 'partner1' | 'partner2' | 'both', note?: string) => void;
   withdrawPiggyBank: (id: string, amount: number) => void;
   withdrawFromPiggyBank: (id: string, amount: number) => void;
   setCurrentMonth: (month: string) => void;
@@ -522,9 +523,19 @@ export interface FinanceContextType {
   displayedRemaining: number;
 
   updateCoupleHub: (updates: Pick<Partial<AppState>, 'coupleGoals' | 'coupleWishlist' | 'coupleFixedBills' | 'dreamSimulations' | 'strategicIntents' | 'expenses' | 'piggyBanks'>) => void;
-  payFixedBill: (billId: string, monthKey?: string) => void;
+  payFixedBill: (billId: string, monthKey?: string, options?: { actualAmount?: number; actualDate?: string; paymentMethod?: string; paidBy?: PaidBy }) => void;
   unpayFixedBill: (billId: string, monthKey?: string) => void;
+  addFixedBill: (bill: Omit<FixedBillAlert, 'id'>) => FixedBillAlert;
+  updateFixedBill: (id: string, updates: Partial<FixedBillAlert>) => void;
+  deleteFixedBill: (id: string) => void;
+  addWishlistItem: (item: Omit<CoupleWishlistItem, 'id' | 'status' | 'createdAt'>) => CoupleWishlistItem;
+  updateWishlistItem: (id: string, updates: Partial<CoupleWishlistItem>) => void;
+  deleteWishlistItem: (id: string) => void;
   convertWishlistToGoal: (wishlistId: string) => void;
+  addDreamSimulation: (dream: Omit<DreamSimulation, 'id' | 'createdAt'>) => DreamSimulation;
+  updateDreamSimulation: (id: string, updates: Partial<DreamSimulation>) => void;
+  deleteDreamSimulation: (id: string) => void;
+  convertDreamToGoal: (dreamId: string) => { goalId: string; piggy: SavingsPiggyBank };
   setGoalCoupleAgreement: (goalId: string, agreement: import('../types/finance').CoupleAgreement) => void;
   recordWeeklyCheckIn: (date?: string) => void;
 
@@ -2407,6 +2418,22 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
       let nextProtInvested = prev.protectionTotalInvested;
       let nextProtComplete = prev.isProtectionComplete;
       let nextPiggyBanks = prev.piggyBanks;
+      let nextBills = prev.coupleFixedBills || [];
+
+      if (target?.linkedBillId && target?.billCompetenceMonth) {
+        nextBills = nextBills.map(b => {
+          if (b.id === target.linkedBillId) {
+            const history = { ...(b.history || {}) };
+            delete history[target.billCompetenceMonth!];
+            return {
+              ...b,
+              status: 'pending' as const,
+              history,
+            };
+          }
+          return b;
+        });
+      }
 
       // Reverter dedução se o gasto era de reserva ou caixinha
       if (target?.fundingSource === 'reserve_excess') {
@@ -2426,6 +2453,7 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
       return {
         ...prev,
         expenses: prev.expenses.filter(e => e.id !== id),
+        coupleFixedBills: nextBills,
         protectionCurrentAmount: nextProtAmount,
         protectionTotalInvested: nextProtInvested,
         isProtectionComplete: nextProtComplete,
@@ -2885,12 +2913,14 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
     }));
   };
 
-  const addPiggyBank = (piggy: Omit<SavingsPiggyBank, 'id'>) => {
-    const id = `piggy-${Date.now()}`;
+  const addPiggyBank = (piggy: (Omit<SavingsPiggyBank, 'id'> & { id?: string }) | SavingsPiggyBank): SavingsPiggyBank => {
+    const id = piggy.id || `piggy-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     const newPiggy: SavingsPiggyBank = {
       ...piggy,
       id,
       currentAmount: piggy.currentAmount ?? 0,
+      monthlyDeposit: piggy.monthlyDeposit ?? 0,
+      archived: piggy.archived ?? false,
     };
     const newCoupleGoal: import('../types/finance').CoupleGoal = {
       id,
@@ -2901,50 +2931,72 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
       currentAmount: piggy.currentAmount ?? 0,
       partner1Contribution: (piggy.currentAmount ?? 0) / 2,
       partner2Contribution: (piggy.currentAmount ?? 0) / 2,
-      monthlyPlannedDeposit: piggy.monthlyDeposit || 0,
+      monthlyPlannedDeposit: piggy.monthlyDeposit ?? 0,
       isCompleted: (piggy.currentAmount ?? 0) >= piggy.targetAmount,
       history: [],
       createdAt: new Date().toISOString().split('T')[0],
       coupleAgreement: piggy.coupleAgreement,
+      archived: piggy.archived ?? false,
     };
     setState(prev => ({
       ...prev,
-      piggyBanks: [...prev.piggyBanks, newPiggy],
+      piggyBanks: [...prev.piggyBanks.filter(p => p.id !== id), newPiggy],
       coupleGoals: [...(prev.coupleGoals || []).filter(cg => cg.id !== id), newCoupleGoal],
     }));
     triggerCelebration();
+    return newPiggy;
   };
 
-  const updatePiggyBank = (id: string, updates: Partial<SavingsPiggyBank>) => {
+  const updatePiggyBank = (id: string, updates: Partial<SavingsPiggyBank> & Partial<import('../types/finance').CoupleGoal>) => {
     setState(prev => {
       const updatedPiggy = prev.piggyBanks.map(p => {
         if (p.id === id) {
-          const updated = { ...p, ...updates };
-          if (updated.targetAmount !== undefined && updated.currentAmount !== undefined) {
-            updated.completed = updated.currentAmount >= updated.targetAmount;
-          }
-          return updated;
+          const updatedName = updates.name !== undefined ? updates.name : (updates.title !== undefined ? updates.title : p.name);
+          const updatedEmoji = updates.emoji !== undefined ? updates.emoji : p.emoji;
+          const updatedTarget = updates.targetAmount !== undefined ? updates.targetAmount : p.targetAmount;
+          const updatedMonthly = updates.monthlyDeposit !== undefined ? updates.monthlyDeposit : (updates.monthlyPlannedDeposit !== undefined ? updates.monthlyPlannedDeposit : p.monthlyDeposit);
+          const updatedCur = updates.currentAmount !== undefined ? updates.currentAmount : p.currentAmount;
+          const updatedArchived = updates.archived !== undefined ? updates.archived : p.archived;
+          const updatedAgreement = updates.coupleAgreement !== undefined ? updates.coupleAgreement : p.coupleAgreement;
+
+          return {
+            ...p,
+            ...updates,
+            name: updatedName,
+            emoji: updatedEmoji,
+            targetAmount: updatedTarget,
+            monthlyDeposit: updatedMonthly,
+            currentAmount: updatedCur,
+            archived: updatedArchived,
+            coupleAgreement: updatedAgreement,
+            completed: updatedCur >= updatedTarget && updatedTarget > 0,
+          };
         }
         return p;
       });
 
       const updatedCoupleGoals = (prev.coupleGoals || []).map(cg => {
         if (cg.id === id) {
-          const title = updates.name !== undefined ? updates.name : cg.title;
-          const emoji = updates.emoji !== undefined ? updates.emoji : cg.emoji;
-          const targetAmount = updates.targetAmount !== undefined ? updates.targetAmount : cg.targetAmount;
-          const currentAmount = updates.currentAmount !== undefined ? updates.currentAmount : cg.currentAmount;
-          const monthlyPlannedDeposit = updates.monthlyDeposit !== undefined ? updates.monthlyDeposit : cg.monthlyPlannedDeposit;
-          const coupleAgreement = updates.coupleAgreement !== undefined ? updates.coupleAgreement : cg.coupleAgreement;
+          const updatedTitle = updates.title !== undefined ? updates.title : (updates.name !== undefined ? updates.name : cg.title);
+          const updatedEmoji = updates.emoji !== undefined ? updates.emoji : cg.emoji;
+          const updatedTarget = updates.targetAmount !== undefined ? updates.targetAmount : cg.targetAmount;
+          const updatedCur = updates.currentAmount !== undefined ? updates.currentAmount : cg.currentAmount;
+          const updatedMonthly = updates.monthlyPlannedDeposit !== undefined ? updates.monthlyPlannedDeposit : (updates.monthlyDeposit !== undefined ? updates.monthlyDeposit : cg.monthlyPlannedDeposit);
+          const updatedDeadline = updates.deadlineDate !== undefined ? updates.deadlineDate : cg.deadlineDate;
+          const updatedAgreement = updates.coupleAgreement !== undefined ? updates.coupleAgreement : cg.coupleAgreement;
+          const updatedArchived = updates.archived !== undefined ? updates.archived : cg.archived;
+
           return {
             ...cg,
-            title,
-            emoji,
-            targetAmount,
-            currentAmount,
-            monthlyPlannedDeposit,
-            coupleAgreement,
-            isCompleted: currentAmount >= targetAmount,
+            title: updatedTitle,
+            emoji: updatedEmoji,
+            targetAmount: updatedTarget,
+            currentAmount: updatedCur,
+            monthlyPlannedDeposit: updatedMonthly,
+            deadlineDate: updatedDeadline,
+            coupleAgreement: updatedAgreement,
+            archived: updatedArchived,
+            isCompleted: updatedCur >= updatedTarget && updatedTarget > 0,
           };
         }
         return cg;
@@ -2958,12 +3010,30 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
     });
   };
 
-  const deletePiggyBank = (id: string) => {
-    setState(prev => ({
-      ...prev,
-      piggyBanks: prev.piggyBanks.filter(p => p.id !== id),
-      coupleGoals: (prev.coupleGoals || []).filter(cg => cg.id !== id),
-    }));
+  const archivePiggyBank = (id: string, archive: boolean = true) => {
+    updatePiggyBank(id, { archived: archive });
+  };
+
+  const deletePiggyBank = (id: string, force = false) => {
+    setState(prev => {
+      const targetPiggy = prev.piggyBanks.find(p => p.id === id);
+      const targetGoal = (prev.coupleGoals || []).find(cg => cg.id === id);
+      const curAmount = targetPiggy?.currentAmount || targetGoal?.currentAmount || 0;
+
+      if (curAmount > 0 && !force) {
+        return {
+          ...prev,
+          piggyBanks: prev.piggyBanks.map(p => p.id === id ? { ...p, archived: true } : p),
+          coupleGoals: (prev.coupleGoals || []).map(cg => cg.id === id ? { ...cg, archived: true } : cg),
+        };
+      }
+
+      return {
+        ...prev,
+        piggyBanks: prev.piggyBanks.filter(p => p.id !== id),
+        coupleGoals: (prev.coupleGoals || []).filter(cg => cg.id !== id),
+      };
+    });
   };
 
   const removePiggyBank = deletePiggyBank;
@@ -3052,40 +3122,66 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
 
   const withdrawFromPiggyBank = withdrawPiggyBank;
 
-  const payFixedBill = (billId: string, monthKey?: string) => {
-    const todayStr = new Date().toISOString().split('T')[0];
+  const payFixedBill = (
+    billId: string,
+    monthKey?: string,
+    options?: { actualAmount?: number; actualDate?: string; paymentMethod?: string; paidBy?: PaidBy }
+  ) => {
     setState(prev => {
       const mKey = monthKey || prev.currentMonth;
       const targetBill = (prev.coupleFixedBills || []).find(b => b.id === billId);
       if (!targetBill) return prev;
+
+      const safeDueDay = Math.min(Math.max(1, targetBill.dueDay || 10), 28);
+      const payDate = options?.actualDate || `${mKey}-${String(safeDueDay).padStart(2, '0')}`;
+      const payAmount = options?.actualAmount ?? targetBill.amount;
+      const payer = options?.paidBy || (targetBill.assignedPayer === 'both' ? 'both' : targetBill.assignedPayer);
+      const method = options?.paymentMethod || (targetBill.autoPay ? 'debit' : 'pix');
 
       const autoExpense: ExpenseItem = {
         id: `exp-fb-${billId}-${mKey}`,
         linkedBillId: billId,
         billCompetenceMonth: mKey,
         description: `[Conta Fixa] ${targetBill.title}`,
-        amount: targetBill.amount,
+        amount: payAmount,
         category: targetBill.category,
-        date: todayStr,
-        paidBy: targetBill.assignedPayer === 'both' ? 'both' : targetBill.assignedPayer,
+        date: payDate,
+        paidBy: payer,
         notes: `Pagamento de conta fixa do mês de ${mKey} (Vencimento dia ${targetBill.dueDay})`,
         fundingSource: 'month_budget',
         assignedTo: 'couple',
-        paymentMethod: targetBill.autoPay ? 'debit' : 'pix',
+        paymentMethod: method as any,
+      };
+
+      const existingExpIndex = prev.expenses.findIndex(e => e.linkedBillId === billId && e.billCompetenceMonth === mKey);
+      let nextExpenses = [...prev.expenses];
+      if (existingExpIndex >= 0) {
+        nextExpenses[existingExpIndex] = autoExpense;
+      } else {
+        nextExpenses = [autoExpense, ...nextExpenses];
+      }
+
+      const billHistory = targetBill.history || {};
+      const updatedHistory = {
+        ...billHistory,
+        [mKey]: {
+          status: 'paid' as const,
+          paidAt: payDate,
+          paidAmount: payAmount,
+          paidBy: payer,
+          paymentMethod: method,
+          linkedExpenseId: autoExpense.id,
+        },
       };
 
       const updatedBills = (prev.coupleFixedBills || []).map(b =>
-        b.id === billId ? { ...b, status: 'paid' as const, lastPaidMonth: mKey } : b
+        b.id === billId ? { ...b, status: 'paid' as const, lastPaidMonth: mKey, history: updatedHistory } : b
       );
-
-      // Avoid duplicating if already present
-      const existingExp = prev.expenses.some(e => e.linkedBillId === billId && e.billCompetenceMonth === mKey);
-      const updatedExpenses = existingExp ? prev.expenses : [autoExpense, ...prev.expenses];
 
       return {
         ...prev,
         coupleFixedBills: updatedBills,
-        expenses: updatedExpenses,
+        expenses: nextExpenses,
       };
     });
   };
@@ -3096,16 +3192,14 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
       const targetBill = (prev.coupleFixedBills || []).find(b => b.id === billId);
       if (!targetBill) return prev;
 
+      const billHistory = { ...(targetBill.history || {}) };
+      delete billHistory[mKey];
+
       const updatedBills = (prev.coupleFixedBills || []).map(b =>
-        b.id === billId ? { ...b, status: 'pending' as const } : b
+        b.id === billId ? { ...b, status: 'pending' as const, history: billHistory } : b
       );
 
-      // Remove strictly expenses linked by linkedBillId and billCompetenceMonth (or description match within competence month)
-      const updatedExpenses = prev.expenses.filter(e => {
-        if (e.linkedBillId === billId && e.billCompetenceMonth === mKey) return false;
-        if (!e.linkedBillId && e.description === `[Conta Fixa] ${targetBill.title}` && e.date.startsWith(mKey)) return false;
-        return true;
-      });
+      const updatedExpenses = prev.expenses.filter(e => !(e.linkedBillId === billId && e.billCompetenceMonth === mKey));
 
       return {
         ...prev,
@@ -3115,52 +3209,152 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
     });
   };
 
+  const addFixedBill = (bill: Omit<FixedBillAlert, 'id'>): FixedBillAlert => {
+    const id = `bill-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    const newBill: FixedBillAlert = {
+      ...bill,
+      id,
+      active: bill.active ?? true,
+      status: bill.status || 'pending',
+      history: {},
+    };
+    setState(prev => ({
+      ...prev,
+      coupleFixedBills: [...(prev.coupleFixedBills || []), newBill],
+    }));
+    return newBill;
+  };
+
+  const updateFixedBill = (id: string, updates: Partial<FixedBillAlert>) => {
+    setState(prev => ({
+      ...prev,
+      coupleFixedBills: (prev.coupleFixedBills || []).map(b => b.id === id ? { ...b, ...updates } : b),
+    }));
+  };
+
+  const deleteFixedBill = (id: string) => {
+    setState(prev => ({
+      ...prev,
+      coupleFixedBills: (prev.coupleFixedBills || []).filter(b => b.id !== id),
+    }));
+  };
+
+  const addWishlistItem = (item: Omit<CoupleWishlistItem, 'id' | 'status' | 'createdAt'>): CoupleWishlistItem => {
+    const id = `wish-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    const newItem: CoupleWishlistItem = {
+      ...item,
+      id,
+      status: 'desejo',
+      createdAt: new Date().toISOString().split('T')[0],
+    };
+    setState(prev => ({
+      ...prev,
+      coupleWishlist: [newItem, ...(prev.coupleWishlist || [])],
+    }));
+    return newItem;
+  };
+
+  const updateWishlistItem = (id: string, updates: Partial<CoupleWishlistItem>) => {
+    setState(prev => ({
+      ...prev,
+      coupleWishlist: (prev.coupleWishlist || []).map(w => w.id === id ? { ...w, ...updates } : w),
+    }));
+  };
+
+  const deleteWishlistItem = (id: string) => {
+    setState(prev => ({
+      ...prev,
+      coupleWishlist: (prev.coupleWishlist || []).filter(w => w.id !== id),
+    }));
+  };
+
   const convertWishlistToGoal = (wishlistId: string) => {
-    setState(prev => {
-      const item = (prev.coupleWishlist || []).find(w => w.id === wishlistId);
-      if (!item) return prev;
+    const item = (state.coupleWishlist || []).find(w => w.id === wishlistId);
+    if (!item) return;
 
-      const newGoalId = `goal-${Date.now()}`;
-      const targetPrice = item.estimatedPrice;
+    if (item.status === 'convertido_meta' && item.convertedGoalId) {
+      return;
+    }
 
-      const newPiggy: SavingsPiggyBank = {
-        id: newGoalId,
-        name: item.title,
-        emoji: item.emoji,
-        purpose: `Desejo do Casal convertido: ${item.notes || item.category}`,
-        targetAmount: targetPrice,
-        monthlyDeposit: Math.round(targetPrice / 6),
-        currentAmount: 0,
-        completed: false,
-      };
+    const newGoalId = `goal-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    const targetPrice = item.estimatedPrice;
 
-      const newCoupleGoal: import('../types/finance').CoupleGoal = {
-        id: newGoalId,
-        title: item.title,
-        category: item.category === 'moradia' ? 'reforma' : item.category === 'transporte' ? 'veiculo' : 'outro',
-        emoji: item.emoji,
-        targetAmount: targetPrice,
-        currentAmount: 0,
-        partner1Contribution: 0,
-        partner2Contribution: 0,
-        monthlyPlannedDeposit: Math.round(targetPrice / 6),
-        isCompleted: false,
-        history: [],
-        createdAt: new Date().toISOString().split('T')[0],
-      };
+    const newPiggy: SavingsPiggyBank = {
+      id: newGoalId,
+      name: item.title,
+      emoji: item.emoji,
+      purpose: `Desejo do Casal convertido: ${item.notes || item.category}`,
+      targetAmount: targetPrice,
+      monthlyDeposit: Math.round(targetPrice / 6),
+      currentAmount: 0,
+      completed: false,
+    };
 
-      const updatedWishlist = (prev.coupleWishlist || []).map(w =>
+    addPiggyBank(newPiggy);
+
+    setState(prev => ({
+      ...prev,
+      coupleWishlist: (prev.coupleWishlist || []).map(w =>
         w.id === wishlistId ? { ...w, status: 'convertido_meta' as const, convertedGoalId: newGoalId } : w
-      );
+      ),
+    }));
 
-      return {
-        ...prev,
-        piggyBanks: [...prev.piggyBanks, newPiggy],
-        coupleGoals: [...(prev.coupleGoals || []), newCoupleGoal],
-        coupleWishlist: updatedWishlist,
-      };
-    });
     triggerCelebration();
+  };
+
+  const addDreamSimulation = (dream: Omit<DreamSimulation, 'id' | 'createdAt'>): DreamSimulation => {
+    const id = `dream-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    const newDream: DreamSimulation = {
+      ...dream,
+      id,
+      createdAt: new Date().toISOString().split('T')[0],
+    };
+    setState(prev => ({
+      ...prev,
+      dreamSimulations: [newDream, ...(prev.dreamSimulations || [])],
+    }));
+    return newDream;
+  };
+
+  const updateDreamSimulation = (id: string, updates: Partial<DreamSimulation>) => {
+    setState(prev => ({
+      ...prev,
+      dreamSimulations: (prev.dreamSimulations || []).map(d => d.id === id ? { ...d, ...updates } : d),
+    }));
+  };
+
+  const deleteDreamSimulation = (id: string) => {
+    setState(prev => ({
+      ...prev,
+      dreamSimulations: (prev.dreamSimulations || []).filter(d => d.id !== id),
+    }));
+  };
+
+  const convertDreamToGoal = (dreamId: string): { goalId: string; piggy: SavingsPiggyBank } => {
+    const dream = (state.dreamSimulations || []).find(d => d.id === dreamId);
+    if (!dream) throw new Error('Sonho não encontrado.');
+
+    if (dream.convertedGoalId) {
+      const existingPiggy = state.piggyBanks.find(p => p.id === dream.convertedGoalId);
+      if (existingPiggy) return { goalId: dream.convertedGoalId, piggy: existingPiggy };
+    }
+
+    const goalId = `goal-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    const newPiggy: SavingsPiggyBank = {
+      id: goalId,
+      name: dream.title,
+      emoji: dream.emoji || '🏠',
+      purpose: `Sonho do Casal convertido (${dream.monthsToAchieve} meses previstos)`,
+      targetAmount: dream.totalCost,
+      monthlyDeposit: dream.monthlySavings,
+      currentAmount: dream.downPayment || 0,
+      completed: (dream.downPayment || 0) >= dream.totalCost,
+    };
+
+    addPiggyBank(newPiggy);
+    updateDreamSimulation(dreamId, { convertedGoalId: goalId });
+
+    return { goalId, piggy: newPiggy };
   };
 
   const setGoalCoupleAgreement = (goalId: string, agreement: import('../types/finance').CoupleAgreement) => {
@@ -5008,6 +5202,7 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
         dismissCompletedInstallmentNotification,
         addPiggyBank,
         updatePiggyBank,
+        archivePiggyBank,
         deletePiggyBank,
         removePiggyBank,
         depositPiggyBank,
@@ -5084,7 +5279,17 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
         updateCoupleHub: (updates) => setState(prev => ({ ...prev, ...updates })),
         payFixedBill,
         unpayFixedBill,
+        addFixedBill,
+        updateFixedBill,
+        deleteFixedBill,
+        addWishlistItem,
+        updateWishlistItem,
+        deleteWishlistItem,
         convertWishlistToGoal,
+        addDreamSimulation,
+        updateDreamSimulation,
+        deleteDreamSimulation,
+        convertDreamToGoal,
         setGoalCoupleAgreement,
         recordWeeklyCheckIn,
         // Pluggy & Open finance

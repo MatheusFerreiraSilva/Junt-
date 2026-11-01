@@ -102,6 +102,7 @@ export const GoalsScreen: React.FC<GoalsScreenProps> = () => {
   const [editGoalMonthly, setEditGoalMonthly] = useState('');
   const [editGoalPurpose, setEditGoalPurpose] = useState('');
   const [editGoalImageUrl, setEditGoalImageUrl] = useState('');
+  const [editGoalDeadline, setEditGoalDeadline] = useState('');
 
   // Photo Selector Modal for existing Goal
   const [photoTargetGoal, setPhotoTargetGoal] = useState<SavingsPiggyBank | null>(null);
@@ -131,6 +132,8 @@ export const GoalsScreen: React.FC<GoalsScreenProps> = () => {
   // Goal deposit modal
   const [selectedGoalId, setSelectedGoalId] = useState<string | null>(null);
   const [goalDepositAmount, setGoalDepositAmount] = useState('');
+  const [goalDepositPayer, setGoalDepositPayer] = useState<'partner1' | 'partner2' | 'both'>('both');
+  const [goalDepositAction, setGoalDepositAction] = useState<'deposit' | 'withdraw'>('deposit');
 
   // ==========================================
   // BANK BALANCE & YIELD UPDATE MODALS (AUTORIZAÇÃO DO BANCO)
@@ -247,11 +250,17 @@ export const GoalsScreen: React.FC<GoalsScreenProps> = () => {
     e.preventDefault();
     const val = parseFloat(goalDepositAmount.replace(',', '.')) || 0;
     if (val > 0 && selectedGoalId) {
-      depositToGoal(selectedGoalId, val);
       const targetGoal = state.piggyBanks.find(g => g.id === selectedGoalId);
+      if (goalDepositAction === 'withdraw') {
+        depositToGoal(selectedGoalId, -Math.abs(val));
+        showToast(`Resgate de ${formatCurrency(val)} realizado do objetivo "${targetGoal?.name || 'Objetivo'}"! 💸`);
+      } else {
+        depositToGoal(selectedGoalId, val);
+        showToast(`Aporte de ${formatCurrency(val)} realizado em "${targetGoal?.name || 'Objetivo'}"! 🎯`);
+      }
       setSelectedGoalId(null);
       setGoalDepositAmount('');
-      showToast(`Aporte de ${formatCurrency(val)} realizado em "${targetGoal?.name || 'Objetivo'}"! 🎯`);
+      setGoalDepositAction('deposit');
     }
   };
 
@@ -315,6 +324,7 @@ export const GoalsScreen: React.FC<GoalsScreenProps> = () => {
     setEditGoalMonthly((goal.monthlyDeposit || 0).toString());
     setEditGoalPurpose(goal.purpose || '');
     setEditGoalImageUrl(goal.imageUrl || '');
+    setEditGoalDeadline(goal.deadlineDate || '');
   };
 
   const handleSaveEditGoal = (e: React.FormEvent) => {
@@ -326,11 +336,14 @@ export const GoalsScreen: React.FC<GoalsScreenProps> = () => {
 
     updatePiggyBank(editingGoal.id, {
       name: editGoalName.trim(),
+      title: editGoalName.trim(),
       emoji: editGoalEmoji || '🎯',
       targetAmount: target,
       monthlyDeposit: monthly,
+      monthlyPlannedDeposit: monthly,
       purpose: editGoalPurpose.trim() || 'Conquista planejada do casal',
       imageUrl: editGoalImageUrl.trim() || undefined,
+      deadlineDate: editGoalDeadline || undefined,
     });
 
     setEditingGoal(null);
@@ -3083,14 +3096,14 @@ export const GoalsScreen: React.FC<GoalsScreenProps> = () => {
       )}
 
       {/* ========================================================================= */}
-      {/* MODAL: APORTE EM OBJETIVO ESPECÍFICO */}
+      {/* MODAL: APORTE OU RESGATE EM OBJETIVO ESPECÍFICO */}
       {/* ========================================================================= */}
       {selectedGoalId && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-sm animate-in fade-in duration-200">
           <div className="relative w-full max-w-sm bg-white dark:bg-slate-900 rounded-3xl shadow-2xl border border-slate-200 dark:border-slate-800 p-6 space-y-4">
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
               <h3 className="text-base font-bold text-slate-900 dark:text-white font-display flex items-center gap-2">
-                <span>🎯 Aportar no Objetivo</span>
+                <span>{goalDepositAction === 'withdraw' ? '💸 Resgatar do Objetivo' : '🎯 Aportar no Objetivo'}</span>
               </h3>
               <button
                 onClick={() => setSelectedGoalId(null)}
@@ -3101,9 +3114,35 @@ export const GoalsScreen: React.FC<GoalsScreenProps> = () => {
             </div>
 
             <form onSubmit={handleDepositGoal} className="space-y-4 text-xs">
+              {/* Toggle Deposit / Withdraw */}
+              <div className="flex p-1 bg-slate-100 dark:bg-slate-800 rounded-xl">
+                <button
+                  type="button"
+                  onClick={() => setGoalDepositAction('deposit')}
+                  className={`flex-1 py-1.5 rounded-lg font-bold text-xs transition-all ${
+                    goalDepositAction === 'deposit'
+                      ? 'bg-sky-600 text-white shadow-xs'
+                      : 'text-slate-600 dark:text-slate-400'
+                  }`}
+                >
+                  + Aportar
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setGoalDepositAction('withdraw')}
+                  className={`flex-1 py-1.5 rounded-lg font-bold text-xs transition-all ${
+                    goalDepositAction === 'withdraw'
+                      ? 'bg-rose-600 text-white shadow-xs'
+                      : 'text-slate-600 dark:text-slate-400'
+                  }`}
+                >
+                  - Resgatar
+                </button>
+              </div>
+
               <div>
                 <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">
-                  Valor a Guardar (R$)
+                  {goalDepositAction === 'withdraw' ? 'Valor a Resgatar (R$)' : 'Valor a Guardar (R$)'}
                 </label>
                 <input
                   type="text"
@@ -3125,12 +3164,325 @@ export const GoalsScreen: React.FC<GoalsScreenProps> = () => {
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2 rounded-xl bg-sky-600 hover:bg-sky-700 text-white font-extrabold shadow-sm"
+                  className={`px-5 py-2 rounded-xl text-white font-extrabold shadow-sm ${
+                    goalDepositAction === 'withdraw' ? 'bg-rose-600 hover:bg-rose-700' : 'bg-sky-600 hover:bg-sky-700'
+                  }`}
                 >
-                  Confirmar Aporte
+                  {goalDepositAction === 'withdraw' ? 'Confirmar Resgate' : 'Confirmar Aporte'}
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* MODAL: EDITAR OBJETIVO COMPLETO */}
+      {/* ========================================================================= */}
+      {editingGoal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="relative w-full max-w-lg bg-white dark:bg-slate-900 rounded-3xl shadow-2xl border border-slate-200 dark:border-slate-800 p-6 space-y-5 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
+              <h3 className="text-base font-bold text-slate-900 dark:text-white font-display flex items-center gap-2">
+                <span>Editar Objetivo</span>
+                <span className="text-xs font-normal text-slate-400">({editingGoal.name})</span>
+              </h3>
+              <button
+                onClick={() => setEditingGoal(null)}
+                className="p-1.5 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveEditGoal} className="space-y-4 text-xs">
+              <div>
+                <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">
+                  Nome do Objetivo
+                </label>
+                <input
+                  type="text"
+                  value={editGoalName}
+                  onChange={e => setEditGoalName(e.target.value)}
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white font-bold"
+                  required
+                />
+              </div>
+
+              <div className="grid grid-cols-3 gap-3">
+                <div className="col-span-1">
+                  <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">
+                    Emoji
+                  </label>
+                  <input
+                    type="text"
+                    value={editGoalEmoji}
+                    onChange={e => setEditGoalEmoji(e.target.value)}
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-center text-lg"
+                  />
+                </div>
+                <div className="col-span-2">
+                  <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">
+                    Meta Total (R$)
+                  </label>
+                  <input
+                    type="text"
+                    value={editGoalTarget}
+                    onChange={e => setEditGoalTarget(e.target.value)}
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white font-bold"
+                    required
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">
+                    Aporte Mensal Planejado (R$)
+                  </label>
+                  <input
+                    type="text"
+                    value={editGoalMonthly}
+                    onChange={e => setEditGoalMonthly(e.target.value)}
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white font-bold"
+                  />
+                </div>
+                <div>
+                  <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">
+                    Data Alvo (Opcional)
+                  </label>
+                  <input
+                    type="date"
+                    value={editGoalDeadline}
+                    onChange={e => setEditGoalDeadline(e.target.value)}
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white font-medium"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">
+                  Propósito / Descrição
+                </label>
+                <input
+                  type="text"
+                  value={editGoalPurpose}
+                  onChange={e => setEditGoalPurpose(e.target.value)}
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white font-medium"
+                />
+              </div>
+
+              <div>
+                <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">
+                  URL da Imagem ou Foto
+                </label>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    placeholder="https://..."
+                    value={editGoalImageUrl}
+                    onChange={e => setEditGoalImageUrl(e.target.value)}
+                    className="flex-1 px-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white text-xs font-mono"
+                  />
+                  <input
+                    type="file"
+                    ref={editFileInputRef}
+                    className="hidden"
+                    accept="image/*"
+                    onChange={e => {
+                      const file = e.target.files?.[0];
+                      if (file) handleFileUpload(file, 'edit');
+                    }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => editFileInputRef.current?.click()}
+                    disabled={isUploadingPhoto}
+                    className="px-3 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-bold text-xs flex items-center gap-1.5 cursor-pointer shrink-0"
+                  >
+                    <Upload className="w-3.5 h-3.5" />
+                    <span>{isUploadingPhoto ? 'Carregando...' : 'Carregar'}</span>
+                  </button>
+                </div>
+                {editGoalImageUrl && (
+                  <div className="mt-2 h-24 rounded-2xl overflow-hidden border border-slate-200 dark:border-slate-700">
+                    <img src={editGoalImageUrl} alt="Preview" className="w-full h-full object-cover" />
+                  </div>
+                )}
+              </div>
+
+              <div className="pt-3 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const id = editingGoal.id;
+                    setEditingGoal(null);
+                    setDeletingGoalId(id);
+                  }}
+                  className="px-3.5 py-2 rounded-xl bg-rose-50 dark:bg-rose-950/40 text-rose-600 dark:text-rose-400 border border-rose-200 dark:border-rose-800 font-bold hover:bg-rose-100 transition-colors cursor-pointer"
+                >
+                  Excluir Objetivo
+                </button>
+
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setEditingGoal(null)}
+                    className="px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 font-bold"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="submit"
+                    className="px-5 py-2.5 rounded-xl bg-sky-600 hover:bg-sky-700 text-white font-extrabold shadow-sm"
+                  >
+                    Salvar Alterações
+                  </button>
+                </div>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* MODAL: CONFIRMAR EXCLUSÃO DE OBJETIVO */}
+      {/* ========================================================================= */}
+      {deletingGoalId && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="relative w-full max-w-sm bg-white dark:bg-slate-900 rounded-3xl shadow-2xl border border-slate-200 dark:border-slate-800 p-6 space-y-4">
+            <div className="flex items-center gap-3 text-rose-600 dark:text-rose-400">
+              <div className="w-10 h-10 rounded-2xl bg-rose-100 dark:bg-rose-950 flex items-center justify-center font-bold shrink-0">
+                <Trash2 className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-slate-900 dark:text-white font-display">
+                  Excluir Objetivo
+                </h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400">
+                  Confirmar remoção deste cofrinho
+                </p>
+              </div>
+            </div>
+
+            {(() => {
+              const goal = state.piggyBanks.find(g => g.id === deletingGoalId);
+              const hasBalance = (goal?.currentAmount || 0) > 0;
+              return (
+                <div className="space-y-3 text-xs text-slate-600 dark:text-slate-300">
+                  <p>
+                    Tem certeza que deseja excluir o objetivo <strong>"{goal?.name}"</strong>?
+                  </p>
+                  {hasBalance && (
+                    <div className="p-3 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-amber-900 dark:text-amber-200 text-[11px] leading-relaxed">
+                      🛡️ Este objetivo possui <strong>{formatCurrency(goal?.currentAmount || 0)}</strong> acumulados. Para proteger o patrimônio do casal, ele será arquivado ao invés de apagado.
+                    </div>
+                  )}
+                  <div className="pt-2 flex justify-end gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setDeletingGoalId(null)}
+                      className="px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 font-bold"
+                    >
+                      Cancelar
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteGoal(deletingGoalId)}
+                      className="px-5 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-extrabold shadow-sm cursor-pointer"
+                    >
+                      Confirmar
+                    </button>
+                  </div>
+                </div>
+              );
+            })()}
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* MODAL: SELETOR DE FOTO PARA OBJETIVO */}
+      {/* ========================================================================= */}
+      {photoTargetGoal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="relative w-full max-w-md bg-white dark:bg-slate-900 rounded-3xl shadow-2xl border border-slate-200 dark:border-slate-800 p-6 space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
+              <h3 className="text-base font-bold text-slate-900 dark:text-white font-display flex items-center gap-2">
+                <Camera className="w-4 h-4 text-sky-600" />
+                <span>Foto do Objetivo — {photoTargetGoal.name}</span>
+              </h3>
+              <button
+                onClick={() => setPhotoTargetGoal(null)}
+                className="p-1.5 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-4 text-xs">
+              <div className="space-y-2">
+                <label className="font-bold text-slate-700 dark:text-slate-300 block">
+                  Selecione uma imagem de inspiração ou envie a sua
+                </label>
+                <div className="grid grid-cols-3 gap-2">
+                  {GOAL_PHOTO_PRESETS.map((preset, idx) => (
+                    <button
+                      key={idx}
+                      type="button"
+                      onClick={() => {
+                        updatePiggyBank(photoTargetGoal.id, { imageUrl: preset.url });
+                        setPhotoTargetGoal(null);
+                        showToast(`Foto alterada para "${preset.label}"! 📷✨`);
+                      }}
+                      className="group relative h-20 rounded-xl overflow-hidden border border-slate-200 dark:border-slate-700 hover:border-sky-500 transition-all cursor-pointer"
+                    >
+                      <img src={preset.url} alt={preset.label} className="w-full h-full object-cover group-hover:scale-105 transition-transform" />
+                      <span className="absolute inset-x-0 bottom-0 p-1 bg-black/60 backdrop-blur-xs text-white text-[9px] font-bold truncate text-center">
+                        {preset.label}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="pt-2 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between gap-3">
+                <input
+                  type="file"
+                  ref={fileInputRef}
+                  className="hidden"
+                  accept="image/*"
+                  onChange={e => {
+                    const file = e.target.files?.[0];
+                    if (file) handleFileUpload(file, 'direct', photoTargetGoal.id);
+                  }}
+                />
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={isUploadingPhoto}
+                  className="flex-1 py-2.5 px-4 rounded-xl bg-sky-600 hover:bg-sky-700 text-white font-extrabold text-xs flex items-center justify-center gap-2 cursor-pointer shadow-xs"
+                >
+                  <Upload className="w-4 h-4" />
+                  <span>{isUploadingPhoto ? 'Processando foto...' : 'Enviar Foto do Dispositivo'}</span>
+                </button>
+
+                {photoTargetGoal.imageUrl && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      updatePiggyBank(photoTargetGoal.id, { imageUrl: undefined });
+                      setPhotoTargetGoal(null);
+                      showToast('Foto removida do objetivo.');
+                    }}
+                    className="py-2.5 px-3 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-rose-50 text-slate-600 hover:text-rose-600 font-bold text-xs cursor-pointer"
+                    title="Remover Foto Atual"
+                  >
+                    Remover
+                  </button>
+                )}
+              </div>
+            </div>
           </div>
         </div>
       )}
