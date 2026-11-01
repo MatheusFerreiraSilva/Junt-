@@ -70,6 +70,9 @@ import {
   MedicalShift,
   MedicalShiftPreset,
   HospitalIncomeMappingRule,
+  FixedBillAlert,
+  CoupleWishlistItem,
+  DreamSimulation,
 } from '../types/finance';
 import {
   DEFAULT_PUSH_SETTINGS,
