@@ -212,6 +212,7 @@ export interface SavingsPiggyBank {
   targetAmount: number;
   monthlyDeposit: number;
   targetMonths?: number;
+  deadlineDate?: string;
   totalInvested?: number;
   yieldAccumulated?: number;
   completed?: boolean;
