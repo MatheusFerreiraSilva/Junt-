@@ -3221,7 +3221,7 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
 
   const updatePiggyBank = (id: string, updates: PiggyBankUpdatePayload) => {
     setState(prev => {
-      const updatedPiggy = prev.piggyBanks.map(p => {
+      const updatedPiggy: SavingsPiggyBank[] = prev.piggyBanks.map(p => {
         if (p.id === id) {
           const updatedName = updates.name !== undefined ? updates.name : (updates.title !== undefined ? updates.title : p.name);
           const updatedEmoji = updates.emoji !== undefined ? updates.emoji : p.emoji;
@@ -3231,9 +3231,11 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
           const updatedArchived = updates.archived !== undefined ? updates.archived : p.archived;
           const updatedAgreement = updates.coupleAgreement !== undefined ? updates.coupleAgreement : p.coupleAgreement;
 
-          return {
+          const isCategoryKey = updates.category && ['moradia', 'comida', 'lazer', 'protecao', 'profissional', 'transporte'].includes(updates.category as string);
+          const piggyCategory = isCategoryKey ? (updates.category as CategoryKey) : p.category;
+
+          const updatedItem: SavingsPiggyBank = {
             ...p,
-            ...updates,
             name: updatedName,
             emoji: updatedEmoji,
             targetAmount: updatedTarget,
@@ -3241,13 +3243,15 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
             currentAmount: updatedCur,
             archived: updatedArchived,
             coupleAgreement: updatedAgreement,
+            category: piggyCategory,
             completed: updatedCur >= updatedTarget && updatedTarget > 0,
           };
+          return updatedItem;
         }
         return p;
       });
 
-      const updatedCoupleGoals = (prev.coupleGoals || []).map(cg => {
+      const updatedCoupleGoals: import('../types/finance').CoupleGoal[] = (prev.coupleGoals || []).map(cg => {
         if (cg.id === id) {
           const updatedTitle = updates.title !== undefined ? updates.title : (updates.name !== undefined ? updates.name : cg.title);
           const updatedEmoji = updates.emoji !== undefined ? updates.emoji : cg.emoji;
@@ -3258,7 +3262,10 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
           const updatedAgreement = updates.coupleAgreement !== undefined ? updates.coupleAgreement : cg.coupleAgreement;
           const updatedArchived = updates.archived !== undefined ? updates.archived : cg.archived;
 
-          return {
+          const isCoupleGoalCategory = updates.category && ['viagem', 'imovel', 'veiculo', 'reforma', 'reserva', 'liberdade', 'outro'].includes(updates.category as string);
+          const goalCategory = isCoupleGoalCategory ? (updates.category as import('../types/finance').CoupleGoal['category']) : cg.category;
+
+          const updatedGoal: import('../types/finance').CoupleGoal = {
             ...cg,
             title: updatedTitle,
             emoji: updatedEmoji,
@@ -3268,8 +3275,10 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
             deadlineDate: updatedDeadline,
             coupleAgreement: updatedAgreement,
             archived: updatedArchived,
+            category: goalCategory,
             isCompleted: updatedCur >= updatedTarget && updatedTarget > 0,
           };
+          return updatedGoal;
         }
         return cg;
       });
