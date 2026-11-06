@@ -85,6 +85,7 @@ export interface ExpenseItem {
   fundingGoalName?: string;
   strategicIntentId?: string;
   isExcludedFromMonthlyBudget?: boolean;
+  exclusionReason?: 'manual' | 'asset_funding' | 'goal_direct';
   triageDone?: boolean;
   reconciledWithIntent?: boolean;
   paymentMethod?: 'pix' | 'debit' | 'credit' | 'cash';
@@ -250,6 +251,7 @@ export interface SavingsPiggyBank {
   completed?: boolean;
   isFireEligible?: boolean;
   coupleAgreement?: CoupleAgreement;
+  category?: CategoryKey;
   // 27: Controle seguro de ciclo de vida e arquivamento
   archived?: boolean;
   isDeleted?: boolean;

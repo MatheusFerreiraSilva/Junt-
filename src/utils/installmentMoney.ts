@@ -10,12 +10,12 @@ export function installmentCents(totalOrItem: number | InstallmentPurchase, coun
   let total: number;
   let count: number;
 
-  if (typeof totalOrItem === 'object' && totalOrItem !== null) {
-    total = totalOrItem.totalAmount;
-    count = totalOrItem.installmentsCount;
-  } else {
+  if (typeof totalOrItem === 'number') {
     total = totalOrItem;
     count = countArg!;
+  } else {
+    total = totalOrItem.totalAmount;
+    count = totalOrItem.installmentsCount;
   }
 
   if (!Number.isFinite(total) || total < 0 || !Number.isInteger(count) || count < 1 || count > 600) {

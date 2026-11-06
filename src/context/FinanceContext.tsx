@@ -44,6 +44,7 @@ import {
   ExpenseItem,
   IncomeItem,
   InstallmentPurchase,
+  InstallmentOccurrenceRecord,
   SavingsPiggyBank,
   CoupleProfile,
   PaidBy,
