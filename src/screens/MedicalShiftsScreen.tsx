@@ -25,6 +25,7 @@ import {
   calculateHourlyYieldRanking,
   projectCashFlowTimeline,
   isPerformedShift,
+  getShiftBalance,
 } from '../utils/shiftsEngine';
 import { formatCurrency, formatMonthYear } from '../utils/formatters';
 import { MedicalShiftModal } from '../components/modals/MedicalShiftModal';
@@ -67,32 +68,48 @@ export const MedicalShiftsScreen: React.FC = () => {
     return list.filter((s) => s.partner === partnerFilter);
   }, [medicalShifts, partnerFilter]);
 
-  // Monthly Metrics
+  // Monthly Metrics based on exact integer-cent allocations
   const monthlyMetrics = useMemo(() => {
-    return calculateShiftMetrics(partnerShifts, selectedMonth, partnerFilter);
-  }, [partnerShifts, selectedMonth, partnerFilter]);
+    return calculateShiftMetrics(partnerShifts, selectedMonth, partnerFilter, state.shiftIncomeAllocations || []);
+  }, [partnerShifts, selectedMonth, partnerFilter, state.shiftIncomeAllocations]);
 
   // Hourly Yield Ranking
   const hourlyRanking = useMemo(() => {
     return calculateHourlyYieldRanking(partnerShifts);
   }, [partnerShifts]);
 
-  // Projection inputs come only from the couple's registered baseline.
-  const totalFixedExpensesAmount = monthlyFixedExpensesAvg + (totalActiveInstallmentsAmountMonth || 0);
+  // Proportional share of couple fixed expenses: individual filters do NOT inherit 100% of couple fixed costs
+  const coupleIncome = (state.profile?.partner1Income || 0) + (state.profile?.partner2Income || 0);
+  const partnerShareRatio =
+    partnerFilter === 'partner1'
+      ? (coupleIncome > 0 ? (state.profile?.partner1Income || 0) / coupleIncome : 0.5)
+      : partnerFilter === 'partner2'
+      ? (coupleIncome > 0 ? (state.profile?.partner2Income || 0) / coupleIncome : 0.5)
+      : 1.0;
+
+  const totalFixedExpensesAmount = Math.round(
+    (monthlyFixedExpensesAvg + (totalActiveInstallmentsAmountMonth || 0)) * partnerShareRatio
+  );
   const averageMonthlyIncome = partnerFilter === 'partner1' ? state.profile.partner1Income : partnerFilter === 'partner2' ? state.profile.partner2Income : state.profile.partner1Income + state.profile.partner2Income;
   const includedCareers = partnerFilter === 'partner1' ? [state.profile.partner1Career] : partnerFilter === 'partner2' ? [state.profile.partner2Career] : [state.profile.partner1Career, state.profile.partner2Career];
   const canPlanShifts = includedCareers.every(career => career && ['residencia', 'atuacao'].includes(career.stage));
 
-  // Cash Flow Timeline for next 6 months
+  // Cash Flow Timeline for next 6 months with allocations and career stages
   const cashFlowTimeline = useMemo(() => {
     return projectCashFlowTimeline(
       partnerShifts,
       totalFixedExpensesAmount,
       averageMonthlyIncome,
       selectedMonth,
-      6
+      6,
+      state.shiftIncomeAllocations || [],
+      {
+        partnerFilter,
+        partner1Career: state.profile?.partner1Career,
+        partner2Career: state.profile?.partner2Career,
+      }
     );
-  }, [partnerShifts, totalFixedExpensesAmount, averageMonthlyIncome, selectedMonth]);
+  }, [partnerShifts, totalFixedExpensesAmount, averageMonthlyIncome, selectedMonth, state.shiftIncomeAllocations, partnerFilter, state.profile?.partner1Career, state.profile?.partner2Career]);
 
   // Prescription for selected month
   const activeMonthProjection = useMemo(() => {
@@ -598,10 +615,12 @@ export const MedicalShiftsScreen: React.FC = () => {
             {displayShifts.map((shift) => {
               const contract = CONTRACT_CONFIG[shift.contractType];
               const sectorConf = SECTOR_CONFIG[shift.sector];
+              const balance = getShiftBalance(shift, state.shiftIncomeAllocations || []);
+              const receivedAmount = balance.receivedAmount;
+              const outstandingAmount = balance.pendingAmount;
+              const overallocatedAmount = balance.overallocatedAmount;
+              const isReceived = balance.isFullyPaid;
               const allocatedCents = (state.shiftIncomeAllocations || []).reduce((sum, ledger) => sum + (ledger.allocations[shift.id] || 0), 0);
-              const receivedAmount = allocatedCents / 100 || (shift.status === 'received' ? shift.netAmount ?? shift.grossAmount : 0);
-              const outstandingAmount = Math.max(0, (shift.netAmount ?? shift.grossAmount) - receivedAmount);
-              const isReceived = outstandingAmount <= 0;
               const executionLabel = ({ scheduled: 'Agendado', performed: 'Realizado', cancelled: 'Cancelado', replaced: 'Substituído' })[shift.executionStatus || (isPerformedShift(shift) ? 'performed' : 'scheduled')];
               const todayStr = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().split('T')[0];
               const isOverdue =
@@ -638,6 +657,16 @@ export const MedicalShiftsScreen: React.FC = () => {
                           <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-stone-200 dark:bg-stone-700 text-stone-700 dark:text-stone-300 font-semibold">
                             {shift.durationHours}h
                           </span>
+                          {shift.startTime && shift.endTime && (
+                            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-indigo-500/10 text-indigo-700 dark:text-indigo-300 font-medium">
+                              {shift.startTime}–{shift.endTime}{shift.endTime <= shift.startTime ? ' 🌙' : ''}
+                            </span>
+                          )}
+                          {Boolean(shift.commuteMinutes) && (
+                            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-stone-100 dark:bg-stone-800 text-stone-500">
+                              🚗 {shift.commuteMinutes}m
+                            </span>
+                          )}
                         </div>
                         <h4 className="font-bold text-sm text-stone-900 dark:text-stone-100">
                           {shift.hospitalName}
@@ -650,7 +679,7 @@ export const MedicalShiftsScreen: React.FC = () => {
 
                     <div className="text-right">
                       <span className="text-sm font-black text-stone-900 dark:text-stone-100 block">
-                        {formatCurrency(shift.grossAmount)}
+                        {formatCurrency(balance.expectedAmount)}
                       </span>
                       <span className="text-[10px] text-stone-400 font-medium">
                         R$ {hourly.toFixed(0)}/h
@@ -685,7 +714,22 @@ export const MedicalShiftsScreen: React.FC = () => {
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-2 text-xs"><div className="p-2 rounded-lg bg-emerald-50 dark:bg-emerald-950/30"><span className="block text-[10px] text-stone-500">Recebido e alocado</span><strong className="text-emerald-700 dark:text-emerald-300">{formatCurrency(receivedAmount)}</strong></div><div className="p-2 rounded-lg bg-amber-50 dark:bg-amber-950/30"><span className="block text-[10px] text-stone-500">Saldo a receber</span><strong className="text-amber-800 dark:text-amber-300">{formatCurrency(outstandingAmount)}</strong></div></div>
+                  <div className="grid grid-cols-2 gap-2 text-xs">
+                    <div className="p-2 rounded-lg bg-emerald-50 dark:bg-emerald-950/30">
+                      <span className="block text-[10px] text-stone-500">Recebido e alocado</span>
+                      <strong className="text-emerald-700 dark:text-emerald-300">{formatCurrency(receivedAmount)}</strong>
+                    </div>
+                    <div className="p-2 rounded-lg bg-amber-50 dark:bg-amber-950/30">
+                      <span className="block text-[10px] text-stone-500">Saldo a receber</span>
+                      <strong className="text-amber-800 dark:text-amber-300">{formatCurrency(outstandingAmount)}</strong>
+                    </div>
+                  </div>
+                  {overallocatedAmount > 0 && (
+                    <div className="p-2 rounded-lg bg-purple-50 dark:bg-purple-950/30 border border-purple-200 dark:border-purple-800/40 text-[11px] text-purple-800 dark:text-purple-300">
+                      <span>Diferença alocada a maior: </span>
+                      <strong>+{formatCurrency(overallocatedAmount)}</strong>
+                    </div>
+                  )}
                   {allocatedCents > 0 && <button className="text-xs text-stone-500 underline underline-offset-4 text-left" onClick={() => undoShiftReconciliation(shift.id)}>Desfazer vínculo com recebimentos</button>}
                   {/* Open Finance badge if linked */}
                   {shift.linkedIncomeId && (

@@ -1,4 +1,11 @@
-import { installmentInMonth } from '../utils/installmentMoney';
+import {
+  installmentInMonth,
+  buildInstallmentSchedule,
+  payOccurrence,
+  advanceOccurrences,
+  reverseOccurrencePayment,
+  previewAdvanceImpact,
+} from '../utils/installmentMoney';
 import React, { createContext, useContext, useState, useEffect, useMemo, useCallback, useRef, ReactNode } from 'react';
 import confetti from 'canvas-confetti';
 import { applyShiftAllocation, undoShiftAllocations, migrateLegacyShiftAllocations } from '../utils/shiftReconciliation';
@@ -418,9 +425,15 @@ export interface FinanceContextType {
     rememberHospitalRule?: boolean
   ) => { income: IncomeItem; shiftReconciled?: boolean };
   deleteIncome: (id: string, forceUnlink?: boolean) => void;
-  addInstallment: (installment: Omit<InstallmentPurchase, 'id' | 'paidInstallmentsCount' | 'active'>) => void;
-  recordInstallmentPayment: (id: string) => void;
-  markInstallmentPaidStep: (id: string) => void;
+  addInstallment: (
+    installment: Omit<InstallmentPurchase, 'id' | 'paidInstallmentsCount' | 'active'> & {
+      paidInstallmentsCount?: number;
+    }
+  ) => InstallmentPurchase;
+  recordInstallmentPayment: (id: string, targetNumberOrId?: string | number) => void;
+  markInstallmentPaidStep: (id: string, targetNumberOrId?: string | number) => void;
+  reverseInstallmentPayment: (installmentId: string, occurrenceNumberOrId: string | number) => void;
+  previewAdvanceInstallment: (installmentId: string, count: number, discountR$?: number) => ReturnType<typeof previewAdvanceImpact> | null;
   deleteInstallment: (id: string) => void;
   dismissCompletedInstallmentNotification: (id: string) => void;
   addPiggyBank: (piggy: (Omit<SavingsPiggyBank, 'id'> & { id?: string }) | SavingsPiggyBank) => SavingsPiggyBank;
@@ -2295,13 +2308,51 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
   // ==========================================
   // EXPENSES, INCOMES, INSTALLMENTS & PIGGYBANKS
   // ==========================================
+  // ACTIONS: EXPENSES (CRIAR E EDITAR)
+  // ==========================================
   const addExpense = (expense: Omit<ExpenseItem, 'id'>) => {
+    const numAmount = Math.round(Number(expense.amount) * 100) / 100;
+    if (!Number.isFinite(numAmount) || numAmount <= 0 || numAmount > 10000000) {
+      throw new Error('Informe um valor de despesa válido e maior que zero (até R$ 10.000.000).');
+    }
+
+    const desc = (expense.description || '').trim();
+    if (!desc) {
+      throw new Error('Informe a descrição da despesa.');
+    }
+
+    const dateStr = expense.date && /^\d{4}-\d{2}-\d{2}$/.test(expense.date)
+      ? expense.date
+      : new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().split('T')[0];
+
+    const dateObj = new Date(dateStr + 'T12:00:00Z');
+    if (!Number.isFinite(dateObj.getTime()) || dateObj.toISOString().slice(0, 10) !== dateStr) {
+      throw new Error(`Data civil inválida: "${dateStr}".`);
+    }
+
+    const fundingSource: FundingSourceType = expense.fundingSource || 'month_budget';
+
+    // Validação de saldo da fonte patrimonial
+    if (fundingSource === 'piggy_bank' && expense.fundingGoalId) {
+      const goal = state.piggyBanks.find(g => g.id === expense.fundingGoalId);
+      if (goal && goal.currentAmount < numAmount) {
+        throw new Error(
+          `Saldo insuficiente no cofrinho "${goal.name}". Saldo disponível: R$ ${goal.currentAmount.toFixed(2)}.`
+        );
+      }
+    } else if (fundingSource === 'reserve_excess') {
+      if (emergencyReserveExcessAmount < numAmount) {
+        throw new Error(
+          `Saldo insuficiente no excesso da reserva de emergência. Excesso disponível: R$ ${emergencyReserveExcessAmount.toFixed(2)}.`
+        );
+      }
+    }
+
     let finalCat = expense.category;
     let finalSub = expense.subcategory;
-    if (expense.description) {
-      const match = autoCategorizeDescription(expense.description);
+    if (desc) {
+      const match = autoCategorizeDescription(desc);
       if (match.matchedKeyword) {
-        // REGRA DE PROTEÇÃO: Nunca sobrescreve uma categoria explicitamente selecionada
         if (!finalCat) {
           finalCat = match.category;
           if (!finalSub) finalSub = match.subcategory;
@@ -2311,15 +2362,19 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
       }
     }
 
-    const fundingSource: FundingSourceType = expense.fundingSource || 'month_budget';
+    const exclusionReason = expense.exclusionReason || (fundingSource !== 'month_budget' ? 'asset_funding' : (expense.isExcludedFromMonthlyBudget ? 'manual' : undefined));
     const isExcluded = fundingSource !== 'month_budget' || !!expense.isExcludedFromMonthlyBudget;
 
     const newExpense: ExpenseItem = {
       ...expense,
+      description: desc,
+      amount: numAmount,
+      date: dateStr,
       category: finalCat,
       subcategory: finalSub,
       fundingSource,
       isExcludedFromMonthlyBudget: isExcluded,
+      exclusionReason,
       triageDone: expense.triageDone ?? (fundingSource !== 'month_budget'),
       id: `exp-${Date.now()}`,
     };
@@ -2845,40 +2900,179 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
   };
 
   const addInstallment = (
-    installment: Omit<InstallmentPurchase, 'id' | 'paidInstallmentsCount' | 'active'>
-  ) => {
-    const newInstallment: InstallmentPurchase = {
-      ...installment,
-      id: `inst-${Date.now()}`,
-      paidInstallmentsCount: 0,
-      active: true,
+    installment: Omit<InstallmentPurchase, 'id' | 'paidInstallmentsCount' | 'active'> & {
+      paidInstallmentsCount?: number;
+    }
+  ): InstallmentPurchase => {
+    // 1. Validate title
+    const title = (installment.title || '').trim();
+    if (!title) {
+      throw new Error('Informe o nome/descrição do parcelamento.');
+    }
+
+    // 2. Validate totalAmount
+    const totalAmount = Math.round(Number(installment.totalAmount) * 100) / 100;
+    if (!Number.isFinite(totalAmount) || totalAmount <= 0 || totalAmount > 10000000) {
+      throw new Error('Informe um valor total válido e maior que zero (até R$ 10.000.000).');
+    }
+
+    // 3. Validate installmentsCount
+    const count = Number(installment.installmentsCount);
+    if (!Number.isInteger(count) || count < 1 || count > 600) {
+      throw new Error('A quantidade de parcelas deve ser um número inteiro entre 1 e 600.');
+    }
+
+    // 4. Validate dates & civil calendar
+    const todayStr = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+    const purchaseDate = installment.purchaseDate && /^\d{4}-\d{2}-\d{2}$/.test(installment.purchaseDate)
+      ? installment.purchaseDate
+      : todayStr;
+
+    const dateObj = new Date(purchaseDate + 'T12:00:00Z');
+    if (!Number.isFinite(dateObj.getTime()) || dateObj.toISOString().slice(0, 10) !== purchaseDate) {
+      throw new Error(`Data civil inválida: "${purchaseDate}".`);
+    }
+
+    const startMonth = installment.startMonth && /^\d{4}-\d{2}$/.test(installment.startMonth)
+      ? installment.startMonth
+      : purchaseDate.slice(0, 7);
+
+    const dueDay = installment.dueDay && Number.isInteger(installment.dueDay) && installment.dueDay >= 1 && installment.dueDay <= 31
+      ? installment.dueDay
+      : parseInt(purchaseDate.slice(8, 10), 10) || 10;
+
+    // 5. Clean bankName (DO NOT auto-fill fake Itaú Personalité if empty/unspecified)
+    const bankName = installment.bankName && installment.bankName.trim()
+      ? installment.bankName.trim()
+      : undefined;
+
+    // 6. Infer categorization & nature if missing
+    const catResult = autoCategorizeDescription(title);
+    const nature = installment.nature || catResult.nature;
+    const priority = installment.priority || catResult.priority;
+    const policyMacroGroup = installment.policyMacroGroup || catResult.policyMacroGroup;
+
+    // 7. Calculate exact calculatedInstallmentAmount for BRL display
+    const calculatedInstallmentAmount = +(totalAmount / count).toFixed(2);
+
+    // 8. Handle ongoing/legacy purchase paidInstallmentsCount
+    const paidCount = Math.min(Math.max(0, installment.paidInstallmentsCount || 0), count);
+
+    // 9. Idempotency Check by requestId
+    const requestId = installment.requestId || `req-inst-${title}-${totalAmount}-${count}-${startMonth}`;
+    const existingReq = state.installments.find(i => i.requestId === requestId);
+    if (existingReq) {
+      return existingReq;
+    }
+
+    const newId = `inst-${Date.now()}`;
+    const draftPurchase: InstallmentPurchase = {
+      id: newId,
+      title,
+      category: installment.category,
+      type: installment.type || 'card_consumption',
+      totalAmount,
+      installmentsCount: count,
+      installmentAmount: installment.installmentAmount || calculatedInstallmentAmount,
+      startMonth,
+      purchaseDate,
+      dueDay,
+      paidInstallmentsCount: paidCount,
+      active: paidCount < count,
+      paidBy: installment.paidBy || 'both',
+      splitPartner1Pct: installment.splitPartner1Pct ?? (installment.paidBy === 'partner1' ? 100 : installment.paidBy === 'partner2' ? 0 : 50),
+      splitPartner2Pct: installment.splitPartner2Pct ?? (installment.paidBy === 'partner1' ? 0 : installment.paidBy === 'partner2' ? 100 : 50),
+      bankName,
+      store: installment.store?.trim() || undefined,
+      notes: installment.notes?.trim() || undefined,
+      nature,
+      priority,
+      policyMacroGroup,
+      totalCashAmount: installment.totalCashAmount,
+      requestId,
     };
-    setState(prev => ({
-      ...prev,
-      installments: [newInstallment, ...prev.installments],
-    }));
+
+    // Initialize exact cent schedule occurrences
+    const initialSchedule = buildInstallmentSchedule(draftPurchase, state.currentMonth);
+    const initialOccurrenceRecords: Record<string, InstallmentOccurrenceRecord> = {};
+    initialSchedule.forEach(occ => {
+      initialOccurrenceRecords[occ.occurrenceId] = occ;
+    });
+
+    const newInstallment: InstallmentPurchase = {
+      ...draftPurchase,
+      occurrenceRecords: initialOccurrenceRecords,
+    };
+
+    setState(prev => {
+      // Secondary idempotency guard against double clicks within 2 seconds
+      const recentDup = prev.installments.find(
+        i =>
+          i.title === newInstallment.title &&
+          i.totalAmount === newInstallment.totalAmount &&
+          i.installmentsCount === newInstallment.installmentsCount &&
+          i.startMonth === newInstallment.startMonth &&
+          Math.abs(parseInt(i.id.replace('inst-', ''), 10) - Date.now()) < 3000
+      );
+      if (recentDup) return prev;
+
+      return {
+        ...prev,
+        installments: [newInstallment, ...prev.installments],
+      };
+    });
+
+    return newInstallment;
   };
 
-  const recordInstallmentPayment = (id: string) => {
+  const recordInstallmentPayment = (id: string, targetNumberOrId?: string | number) => {
     setState(prev => {
-      const updated = prev.installments.map(inst => {
-        if (inst.id === id) {
-          const nextCount = inst.paidInstallmentsCount + 1;
-          const isDone = nextCount >= inst.installmentsCount;
-          return {
-            ...inst,
-            paidInstallmentsCount: nextCount,
-            active: !isDone,
-            completedNotified: isDone ? false : inst.completedNotified,
-          };
-        }
-        return inst;
-      });
+      const inst = prev.installments.find(i => i.id === id);
+      if (!inst) return prev;
 
+      const result = payOccurrence(inst, targetNumberOrId);
+      if (result.alreadyPaid) {
+        // Idempotência estrita: se a ocorrência já foi paga, a repetição é no-op
+        // Nunca avança para pagar a próxima parcela por duplo-clique ou retry
+        return prev;
+      }
+
+      const occurrence = result.paidOccurrence;
+      const expenseDate = occurrence.paidAt || new Date().toISOString().slice(0, 10);
+      const expenseId = `exp-inst-${inst.id}-${occurrence.installmentNumber}`;
+
+      // Verifica se a despesa já existe para esta parcela exata para não duplicar consumo
+      const hasExpense = prev.expenses.some(
+        e =>
+          e.id === expenseId ||
+          (e.installmentId === inst.id && e.installmentIndex === occurrence.installmentNumber)
+      );
+
+      const nextExpenses = hasExpense
+        ? prev.expenses
+        : [
+            {
+              id: expenseId,
+              description: `${inst.title} (${occurrence.installmentNumber}/${inst.installmentsCount})`,
+              amount: occurrence.amountR$,
+              date: expenseDate,
+              paidBy: inst.paidBy,
+              category: inst.category,
+              nature: inst.nature || 'fixa',
+              priority: inst.priority || 'essencial',
+              policyMacroGroup: inst.policyMacroGroup || 'fixos',
+              installmentId: inst.id,
+              installmentIndex: occurrence.installmentNumber,
+              triageDone: true,
+            },
+            ...prev.expenses,
+          ];
+
+      const updated = prev.installments.map(i => (i.id === id ? result.updatedItem : i));
       const finishedOne = updated.find(i => i.id === id && !i.active);
       const newNotifications = [...prev.notifications];
 
-      if (finishedOne) {
+      if (finishedOne && !inst.completedNotified) {
         newNotifications.unshift({
           id: `notif-done-${Date.now()}`,
           title: 'Parcela 100% Quitada! 🎉',
@@ -2893,12 +3087,85 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
       return {
         ...prev,
         installments: updated,
+        expenses: nextExpenses,
         notifications: newNotifications,
       };
     });
   };
 
   const markInstallmentPaidStep = recordInstallmentPayment;
+
+  const reverseInstallmentPayment = (installmentId: string, occurrenceNumberOrId: string | number) => {
+    setState(prev => {
+      const targetInst = prev.installments.find(i => i.id === installmentId);
+      if (!targetInst) return prev;
+
+      const reverseResult = reverseOccurrencePayment(targetInst, occurrenceNumberOrId);
+      const restoredFunding = reverseResult.restoredFunding;
+      const occNum = reverseResult.reversedOccurrence.installmentNumber;
+
+      let nextProtAmount = prev.protectionCurrentAmount;
+      let nextProtInvested = prev.protectionTotalInvested;
+      let nextPiggyBanks = [...prev.piggyBanks];
+      let nextExpenses = [...prev.expenses];
+
+      // Recompõe exatamente a fonte original se foi antecipação
+      if (restoredFunding?.fromProtectionExcess && restoredFunding.fromProtectionExcess > 0) {
+        nextProtAmount += restoredFunding.fromProtectionExcess;
+        nextProtInvested += restoredFunding.fromProtectionExcess;
+      }
+      if (restoredFunding?.fromGoalId && restoredFunding.fromGoalAmount && restoredFunding.fromGoalAmount > 0) {
+        nextPiggyBanks = nextPiggyBanks.map(g => {
+          if (g.id === restoredFunding.fromGoalId) {
+            const nextCur = g.currentAmount + (restoredFunding.fromGoalAmount || 0);
+            return { ...g, currentAmount: nextCur, completed: nextCur >= g.targetAmount };
+          }
+          return g;
+        });
+      }
+
+      // Remove despesa vinculada de operação se houver
+      if (reverseResult.restoredExpenseId) {
+        nextExpenses = nextExpenses.filter(e => e.id !== reverseResult.restoredExpenseId);
+      }
+      // Remove despesa da parcela das despesas comuns
+      nextExpenses = nextExpenses.filter(
+        e => !(e.installmentId === installmentId && e.installmentIndex === occNum)
+      );
+
+      const updatedInstallments = prev.installments.map(i =>
+        i.id === installmentId ? reverseResult.updatedItem : i
+      );
+
+      const notif: AppNotification = {
+        id: `notif-rev-${Date.now()}`,
+        title: 'Estorno de Parcela Efetuado',
+        message: `A parcela ${occNum}/${targetInst.installmentsCount} de "${targetInst.title}" foi estornada e suas fontes foram recompostas.`,
+        timestamp: 'Agora mesmo',
+        type: 'info',
+        isRead: false,
+      };
+
+      return {
+        ...prev,
+        installments: updatedInstallments,
+        protectionCurrentAmount: nextProtAmount,
+        protectionTotalInvested: nextProtInvested,
+        piggyBanks: nextPiggyBanks,
+        expenses: nextExpenses,
+        notifications: [notif, ...prev.notifications],
+      };
+    });
+  };
+
+  const previewAdvanceInstallment = useCallback(
+    (installmentId: string, count: number, discountR$: number = 0) => {
+      const targetInst = state.installments.find(i => i.id === installmentId);
+      if (!targetInst) return null;
+      return previewAdvanceImpact(targetInst, count, discountR$);
+    },
+    [state.installments]
+  );
 
   const deleteInstallment = (id: string) => {
     setState(prev => ({
@@ -3461,11 +3728,70 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
   const updateMedicalShift = (id: string, updates: Partial<MedicalShift>) => {
     setState(prev => {
       const shift = prev.medicalShifts?.find(s => s.id === id);
-      const linked = prev.shiftIncomeAllocations?.some(ledger => (ledger.allocations[id] || 0) > 0) || Boolean(shift?.linkedIncomeId);
-      if (linked && ['partner', 'grossAmount', 'netAmount', 'dateWorked', 'executionStatus', 'status', 'linkedIncomeId'].some(key => Object.prototype.hasOwnProperty.call(updates, key) && JSON.stringify(updates[key as keyof MedicalShift]) !== JSON.stringify(shift?.[key as keyof MedicalShift]))) {
-        return { ...prev, notifications: [{ id: 'shift-edit:' + id, title: 'Plantão com recebimento conciliado', message: 'Desfaça a conciliação antes de alterar os dados financeiros ou a execução deste plantão.', timestamp: 'Agora', type: 'alert' as const, isRead: false }, ...prev.notifications.filter(n => n.id !== 'shift-edit:' + id)] };
+      if (!shift) return prev;
+      const allocatedCents = (prev.shiftIncomeAllocations || []).reduce(
+        (sum, ledger) => sum + (ledger.allocations[id] || 0),
+        0
+      );
+      const isLinked = allocatedCents > 0 || Boolean(shift.linkedIncomeId);
+
+      if (isLinked && updates.partner && updates.partner !== shift.partner) {
+        return {
+          ...prev,
+          notifications: [
+            {
+              id: 'shift-edit:' + id,
+              title: 'Plantão com recebimento conciliado',
+              message: 'Desfaça a conciliação antes de alterar o parceiro deste plantão.',
+              timestamp: 'Agora',
+              type: 'alert' as const,
+              isRead: false,
+            },
+            ...prev.notifications.filter(n => n.id !== 'shift-edit:' + id),
+          ],
+        };
       }
-      return { ...prev, medicalShifts: (prev.medicalShifts || []).map(s => s.id === id ? { ...s, ...updates, id: s.id } : s) };
+
+      const updatedShift: MedicalShift = {
+        ...shift,
+        ...updates,
+        id: shift.id,
+      };
+
+      const expected = updatedShift.netAmount !== undefined ? updatedShift.netAmount : (updatedShift.grossAmount ?? 0);
+      const expectedCents = Math.round(expected * 100);
+      const pendingCents = Math.max(0, expectedCents - allocatedCents);
+      const overallocatedCents = Math.max(0, allocatedCents - expectedCents);
+
+      updatedShift.reconciledAmount = allocatedCents / 100;
+      updatedShift.pendingAmount = pendingCents / 100;
+      updatedShift.overallocatedAmount = overallocatedCents / 100;
+
+      if (allocatedCents > 0) {
+        updatedShift.status = allocatedCents >= expectedCents ? 'received' : 'pending';
+      }
+
+      let nextNotifications = prev.notifications;
+      if (overallocatedCents > 0) {
+        const diffR$ = (overallocatedCents / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+        nextNotifications = [
+          {
+            id: 'shift-overallocated:' + id,
+            title: 'Sobrealocação Detectada no Plantão',
+            message: `O valor esperado foi alterado para menos do que já foi alocado. Diferença de ${diffR$} recebida a mais.`,
+            timestamp: 'Agora',
+            type: 'info' as const,
+            isRead: false,
+          },
+          ...prev.notifications.filter(n => n.id !== 'shift-overallocated:' + id),
+        ];
+      }
+
+      return {
+        ...prev,
+        medicalShifts: (prev.medicalShifts || []).map(s => (s.id === id ? updatedShift : s)),
+        notifications: nextNotifications,
+      };
     });
   };
 
@@ -3599,42 +3925,107 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
     const targetId = typeof expenseOrId === 'object' ? expenseOrId.id : expenseOrId;
     const incomingFields = typeof expenseOrId === 'object' ? expenseOrId : (updates || {});
 
+    const oldExp = state.expenses.find(e => e.id === targetId);
+    if (!oldExp) return;
+
+    const draftDesc = (incomingFields.description !== undefined ? incomingFields.description : oldExp.description).trim();
+    if (!draftDesc) {
+      throw new Error('Informe a descrição da despesa.');
+    }
+
+    const draftAmount = Math.round(Number(incomingFields.amount !== undefined ? incomingFields.amount : oldExp.amount) * 100) / 100;
+    if (!Number.isFinite(draftAmount) || draftAmount <= 0 || draftAmount > 10000000) {
+      throw new Error('Informe um valor de despesa válido e maior que zero (até R$ 10.000.000).');
+    }
+
+    const draftDate = incomingFields.date !== undefined ? incomingFields.date : oldExp.date;
+    if (draftDate && (!/^\d{4}-\d{2}-\d{2}$/.test(draftDate) || !Number.isFinite(new Date(draftDate + 'T12:00:00Z').getTime()))) {
+      throw new Error(`Data civil inválida: "${draftDate}".`);
+    }
+
+    const oldSource: FundingSourceType = oldExp.fundingSource || 'month_budget';
+    const newSource: FundingSourceType = incomingFields.fundingSource !== undefined
+      ? incomingFields.fundingSource
+      : oldSource;
+    const newGoalId = incomingFields.fundingGoalId !== undefined ? incomingFields.fundingGoalId : oldExp.fundingGoalId;
+
+    // Validar saldo da nova fonte (considerando o estorno da fonte antiga)
+    if (newSource === 'piggy_bank' && newGoalId) {
+      const targetGoal = state.piggyBanks.find(g => g.id === newGoalId);
+      const restoredGoalAmount = targetGoal
+        ? targetGoal.currentAmount + (oldSource === 'piggy_bank' && oldExp.fundingGoalId === newGoalId ? oldExp.amount : 0)
+        : 0;
+      if (restoredGoalAmount < draftAmount) {
+        throw new Error(
+          `Saldo insuficiente no cofrinho "${targetGoal?.name || 'selecionado'}". Saldo disponível (com estorno): R$ ${restoredGoalAmount.toFixed(2)}.`
+        );
+      }
+    } else if (newSource === 'reserve_excess') {
+      const restoredReserveExcess = emergencyReserveExcessAmount + (oldSource === 'reserve_excess' ? oldExp.amount : 0);
+      if (restoredReserveExcess < draftAmount) {
+        throw new Error(
+          `Saldo insuficiente no excesso da reserva de emergência. Excesso disponível (com estorno): R$ ${restoredReserveExcess.toFixed(2)}.`
+        );
+      }
+    }
+
     setState(prev => {
-      const oldExp = prev.expenses.find(e => e.id === targetId);
-      if (!oldExp) return prev;
-
-      const newExp: ExpenseItem = {
-        ...oldExp,
-        ...incomingFields,
-      };
-
-      // Keep fundingSource and isExcludedFromMonthlyBudget consistent
-      const oldSource: FundingSourceType = oldExp.fundingSource || 'month_budget';
-      const newSource: FundingSourceType = incomingFields.fundingSource !== undefined
-        ? incomingFields.fundingSource
-        : (newExp.fundingSource || oldSource);
-      newExp.fundingSource = newSource;
-      newExp.isExcludedFromMonthlyBudget = newSource !== 'month_budget' || !!newExp.isExcludedFromMonthlyBudget;
+      const currentOld = prev.expenses.find(e => e.id === targetId);
+      if (!currentOld) return prev;
 
       let nextProtAmount = prev.protectionCurrentAmount;
       let nextProtInvested = prev.protectionTotalInvested;
       let nextPiggyBanks = prev.piggyBanks;
 
       // 1. Reverter dedução anterior da fonte antiga
-      if (oldSource === 'reserve_excess') {
-        nextProtAmount += oldExp.amount;
-        nextProtInvested += oldExp.amount;
-      } else if (oldSource === 'piggy_bank' && oldExp.fundingGoalId) {
+      const cOldSource: FundingSourceType = currentOld.fundingSource || 'month_budget';
+      if (cOldSource === 'reserve_excess') {
+        nextProtAmount += currentOld.amount;
+        nextProtInvested += currentOld.amount;
+      } else if (cOldSource === 'piggy_bank' && currentOld.fundingGoalId) {
         nextPiggyBanks = nextPiggyBanks.map(g => {
-          if (g.id === oldExp.fundingGoalId) {
-            const nextCur = g.currentAmount + oldExp.amount;
+          if (g.id === currentOld.fundingGoalId) {
+            const nextCur = g.currentAmount + currentOld.amount;
             return { ...g, currentAmount: nextCur, completed: nextCur >= g.targetAmount };
           }
           return g;
         });
       }
 
-      // 2. Aplicar nova dedução sobre a nova fonte
+      // 2. Formular objeto atualizado e escopo orçamentário
+      let exclusionReason = incomingFields.exclusionReason;
+      let isExcluded = incomingFields.isExcludedFromMonthlyBudget;
+
+      if (newSource !== 'month_budget') {
+        isExcluded = true;
+        exclusionReason = 'asset_funding';
+      } else if (cOldSource !== 'month_budget') {
+        // Mudando de caixinha/reserva de volta para orçamento mensal
+        if (currentOld.exclusionReason === 'manual' || exclusionReason === 'manual') {
+          isExcluded = true;
+          exclusionReason = 'manual';
+        } else {
+          isExcluded = false;
+          exclusionReason = undefined;
+        }
+      } else if (isExcluded === undefined) {
+        isExcluded = currentOld.isExcludedFromMonthlyBudget;
+        exclusionReason = currentOld.exclusionReason;
+      }
+
+      const newExp: ExpenseItem = {
+        ...currentOld,
+        ...incomingFields,
+        description: draftDesc,
+        amount: draftAmount,
+        date: draftDate || currentOld.date,
+        fundingSource: newSource,
+        fundingGoalId: newGoalId,
+        isExcludedFromMonthlyBudget: isExcluded,
+        exclusionReason,
+      };
+
+      // 3. Aplicar nova dedução sobre a nova fonte
       if (newSource === 'reserve_excess') {
         nextProtAmount = Math.max(0, nextProtAmount - newExp.amount);
         nextProtInvested = Math.max(0, nextProtInvested - newExp.amount);
@@ -4975,23 +5366,18 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
       const targetInst = prev.installments.find(i => i.id === payload.installmentId);
       if (!targetInst) return prev;
 
-      const nextPaidCount = Math.min(
-        targetInst.installmentsCount,
-        targetInst.paidInstallmentsCount + payload.installmentsToAdvance
-      );
-      const isFinished = nextPaidCount >= targetInst.installmentsCount;
-
-      const updatedInstallments = prev.installments.map(i => {
-        if (i.id === payload.installmentId) {
-          return {
-            ...i,
-            paidInstallmentsCount: nextPaidCount,
-            active: !isFinished,
-            completedNotified: isFinished ? false : i.completedNotified,
-          };
-        }
-        return i;
+      const advanceResult = advanceOccurrences(targetInst, {
+        count: payload.installmentsToAdvance,
+        specificOccurrenceIds: payload.specificOccurrenceIds,
+        discountR$: payload.discountAmount,
+        funding: payload.funding,
+        operationId: `op-adv-${Date.now()}`,
       });
+
+      const updatedInstallments = prev.installments.map(i =>
+        i.id === payload.installmentId ? advanceResult.updatedItem : i
+      );
+      const isFinished = !advanceResult.updatedItem.active;
 
       let nextProtAmount = prev.protectionCurrentAmount;
       let nextProtInvested = prev.protectionTotalInvested;
@@ -5046,10 +5432,17 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
         });
       }
 
+      const effectivePaidR$ = advanceResult.effectivePaidCents / 100;
+      const discountR$ = advanceResult.discountCents / 100;
+      const discountMsg =
+        discountR$ > 0
+          ? ` (Desconto: R$ ${discountR$.toLocaleString('pt-BR', { minimumFractionDigits: 2 })})`
+          : '';
+
       const notif: AppNotification = {
         id: `notif-adv-${Date.now()}`,
         title: isFinished ? 'Compra 100% Quitada com Sucesso! 🚀' : 'Parcelas Adiantadas! ⚡',
-        message: `${payload.installmentsToAdvance}x parcela(s) de "${targetInst.title}" foram adiantadas (R$ ${payload.totalAdvanceAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}). Margem liberada no teto de 20%!`,
+        message: `${advanceResult.advancedOccurrences.length}x parcela(s) de "${targetInst.title}" foram adiantadas (R$ ${effectivePaidR$.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}${discountMsg}). Margem liberada no teto de 20%!`,
         timestamp: 'Agora mesmo',
         type: 'success',
         isRead: false,
@@ -5200,6 +5593,8 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
         deleteIncome,
         addInstallment,
         recordInstallmentPayment,
+        reverseInstallmentPayment,
+        previewAdvanceInstallment,
         markInstallmentPaidStep,
         deleteInstallment,
         dismissCompletedInstallmentNotification,

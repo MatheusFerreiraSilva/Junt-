@@ -27,8 +27,14 @@ export const InstallmentModal: React.FC<InstallmentModalProps> = ({ isOpen, onCl
   const [category, setCategory] = useState<CategoryKey>('moradia');
   const [paidBy, setPaidBy] = useState<PaidBy>('both');
   const [splitPartner1Pct, setSplitPartner1Pct] = useState<number>(50);
-  const [bankName, setBankName] = useState<string>('Itaú Personalité');
+  const [bankName, setBankName] = useState<string>('');
+  const [purchaseDate, setPurchaseDate] = useState<string>(
+    new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10)
+  );
+  const [dueDayInput, setDueDayInput] = useState<string>('10');
+  const [paidInstallmentsCountInput, setPaidInstallmentsCountInput] = useState<string>('0');
   const [successCelebration, setSuccessCelebration] = useState(false);
+  const [modalValidationError, setModalValidationError] = useState('');
 
   const dialogRef = useDialogFocus(isOpen, onClose);
 
@@ -46,20 +52,27 @@ export const InstallmentModal: React.FC<InstallmentModalProps> = ({ isOpen, onCl
   ];
 
   const parsedTotal = parseFloat(totalAmount.replace(',', '.')) || 0;
-  const calculatedInstallmentAmount = +(parsedTotal / installmentsCount).toFixed(2);
+  const calculatedInstallmentAmount = +(parsedTotal / Math.max(1, installmentsCount)).toFixed(2);
 
   // Impact on installment limit rule
   const limitPct = installmentLimitPercentage || (state.profile.isInitialHomePhase ? 20 : 10);
   const projectedTotalMonthly = totalActiveInstallmentsAmountMonth + calculatedInstallmentAmount;
   const projectedPct = totalIncome > 0 ? Math.round((projectedTotalMonthly / totalIncome) * 100) : 0;
-  const willExceedLimit = projectedPct > limitPct;
+  const willExceedLimit = totalIncome > 0 && projectedPct > limitPct;
 
   const handleNext = () => {
+    setModalValidationError('');
     if (step === 1) {
-      if (!title.trim()) return;
+      if (!title.trim()) {
+        setModalValidationError('Informe o nome da compra parcelada.');
+        return;
+      }
       setStep(2);
     } else if (step === 2) {
-      if (!parsedTotal || parsedTotal <= 0) return;
+      if (!parsedTotal || parsedTotal <= 0) {
+        setModalValidationError('Informe um valor total válido e maior que zero.');
+        return;
+      }
       setStep(3);
     } else if (step === 3) {
       setStep(4);
@@ -71,6 +84,7 @@ export const InstallmentModal: React.FC<InstallmentModalProps> = ({ isOpen, onCl
   };
 
   const handleSave = () => {
+    setModalValidationError('');
     const p1Pct =
       paidBy === 'partner1'
         ? 100
@@ -81,37 +95,52 @@ export const InstallmentModal: React.FC<InstallmentModalProps> = ({ isOpen, onCl
         : splitPartner1Pct;
     const p2Pct = 100 - p1Pct;
 
-    addInstallment({
-      title: title.trim(),
-      category,
-      totalAmount: parsedTotal,
-      installmentsCount,
-      installmentAmount: calculatedInstallmentAmount,
-      startMonth: state.currentMonth,
-      paidBy,
-      splitPartner1Pct: p1Pct,
-      splitPartner2Pct: p2Pct,
-      bankName: bankName || 'Itaú Personalité',
-    });
+    const dueDay = parseInt(dueDayInput, 10);
+    const paidCount = parseInt(paidInstallmentsCountInput, 10) || 0;
 
-    setSuccessCelebration(true);
-    triggerCelebration();
+    try {
+      addInstallment({
+        title: title.trim(),
+        category,
+        totalAmount: parsedTotal,
+        installmentsCount,
+        installmentAmount: calculatedInstallmentAmount,
+        purchaseDate,
+        startMonth: purchaseDate ? purchaseDate.slice(0, 7) : state.currentMonth,
+        dueDay: Number.isInteger(dueDay) && dueDay >= 1 && dueDay <= 31 ? dueDay : undefined,
+        paidBy,
+        splitPartner1Pct: p1Pct,
+        splitPartner2Pct: p2Pct,
+        bankName: bankName.trim() || undefined,
+        paidInstallmentsCount: paidCount,
+      });
 
-    setTimeout(() => {
-      setSuccessCelebration(false);
-      setStep(1);
-      setTitle('');
-      setTotalAmount('');
-      setInstallmentsCount(6);
-      onClose();
-    }, 1300);
+      setSuccessCelebration(true);
+      triggerCelebration();
+
+      setTimeout(() => {
+        setSuccessCelebration(false);
+        setStep(1);
+        setTitle('');
+        setTotalAmount('');
+        setInstallmentsCount(6);
+        setBankName('');
+        setPaidInstallmentsCountInput('0');
+        onClose();
+      }, 1300);
+    } catch (err: any) {
+      setModalValidationError(err.message || 'Erro ao registrar parcelamento.');
+    }
   };
 
   const handleClose = () => {
+    setModalValidationError('');
     setStep(1);
     setTitle('');
     setTotalAmount('');
     setInstallmentsCount(6);
+    setBankName('');
+    setPaidInstallmentsCountInput('0');
     onClose();
   };
 
@@ -145,6 +174,13 @@ export const InstallmentModal: React.FC<InstallmentModalProps> = ({ isOpen, onCl
 
         {/* Content Body */}
         <div className="p-6 overflow-y-auto flex-1 flex flex-col justify-center">
+          {modalValidationError && (
+            <div className="mb-4 p-3 rounded-2xl bg-rose-50 dark:bg-rose-950/60 border border-rose-200 dark:border-rose-900 text-rose-800 dark:text-rose-200 text-xs font-bold flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4 shrink-0 text-rose-600" />
+              <span>{modalValidationError}</span>
+            </div>
+          )}
+
           {successCelebration ? (
             <div className="py-12 flex flex-col items-center justify-center text-center">
               <div className="w-16 h-16 rounded-full bg-accent-surface text-accent-primary flex items-center justify-center mb-4">
@@ -275,8 +311,14 @@ export const InstallmentModal: React.FC<InstallmentModalProps> = ({ isOpen, onCl
                         {installmentsCount} parcelas de <strong>{formatCurrency(calculatedInstallmentAmount)}</strong>/mês.
                       </div>
                       <div className="mt-0.5 text-[11px] opacity-90">
-                        Comprometimento total da renda passará para <strong>{projectedPct}%</strong>{' '}
-                        {willExceedLimit ? `(acima do teto seguro de ${limitPct}%) ⚠️` : `(dentro do limite seguro de ${limitPct}%) ✅`}
+                        {totalIncome <= 0 ? (
+                          <span>Renda não cadastrada no perfil — impacto direto no orçamento do casal.</span>
+                        ) : (
+                          <>
+                            Comprometimento total da renda passará para <strong>{projectedPct}%</strong>{' '}
+                            {willExceedLimit ? `(acima do teto seguro de ${limitPct}%) ⚠️` : `(dentro do limite seguro de ${limitPct}%) ✅`}
+                          </>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -418,21 +460,67 @@ export const InstallmentModal: React.FC<InstallmentModalProps> = ({ isOpen, onCl
                   </div>
 
                   {/* Bank Account / Credit Card Selector */}
-                  <div className="pt-2 max-w-md mx-auto w-full space-y-1.5">
-                    <label className="text-xs font-bold text-slate-700 dark:text-slate-300 block">
-                      De qual conta ou cartão sai este débito? 🏦
-                    </label>
-                    <select
-                      value={bankName}
-                      onChange={e => setBankName(e.target.value)}
-                      className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-900 dark:text-white"
-                    >
-                      <option value="Nubank Ultravioleta">🟣 Nubank Ultravioleta</option>
-                      <option value="Itaú Personalité">🟠 Itaú Personalité</option>
-                      <option value="BTG Pactual Banking">🔵 BTG Pactual Banking</option>
-                      <option value="XP Investimentos">🟡 XP Investimentos</option>
-                      <option value="Outra Conta Bancária">🏦 Outra Conta Bancária</option>
-                    </select>
+                  <div className="pt-2 max-w-md mx-auto w-full space-y-3">
+                    <div className="space-y-1">
+                      <label className="text-xs font-bold text-slate-700 dark:text-slate-300 block">
+                        De qual conta ou cartão sai este débito? 🏦 (opcional)
+                      </label>
+                      <select
+                        value={bankName}
+                        onChange={e => setBankName(e.target.value)}
+                        className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-900 dark:text-white"
+                      >
+                        <option value="">Nenhum cartão / banco selecionado (Não informado)</option>
+                        <option value="Nubank Ultravioleta">🟣 Nubank Ultravioleta</option>
+                        <option value="Itaú Personalité">🟠 Itaú Personalité</option>
+                        <option value="BTG Pactual Banking">🔵 BTG Pactual Banking</option>
+                        <option value="XP Investimentos">🟡 XP Investimentos</option>
+                        <option value="Outra Conta Bancária">🏦 Outra Conta Bancária</option>
+                      </select>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2 text-xs">
+                      <div className="space-y-1">
+                        <label className="font-bold text-slate-700 dark:text-slate-300 block">
+                          Data da compra:
+                        </label>
+                        <input
+                          type="date"
+                          value={purchaseDate}
+                          onChange={e => setPurchaseDate(e.target.value)}
+                          className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 font-bold"
+                        />
+                      </div>
+
+                      <div className="space-y-1">
+                        <label className="font-bold text-slate-700 dark:text-slate-300 block">
+                          Dia do vencimento (1-31):
+                        </label>
+                        <input
+                          type="number"
+                          min="1"
+                          max="31"
+                          value={dueDayInput}
+                          onChange={e => setDueDayInput(e.target.value)}
+                          className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 font-bold"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="font-bold text-slate-700 dark:text-slate-300 block text-xs">
+                        Compra em andamento? Parcelas já pagas anteriormente (opcional):
+                      </label>
+                      <input
+                        type="number"
+                        min="0"
+                        max={installmentsCount - 1}
+                        value={paidInstallmentsCountInput}
+                        onChange={e => setPaidInstallmentsCountInput(e.target.value)}
+                        placeholder="0"
+                        className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-bold"
+                      />
+                    </div>
                   </div>
 
                   {/* Percentage Slider when 'custom' selected */}

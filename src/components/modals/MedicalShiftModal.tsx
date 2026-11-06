@@ -10,6 +10,7 @@ import {
   Briefcase,
   Trash2,
   CheckCircle,
+  AlertTriangle,
 } from 'lucide-react';
 import { useFinance } from '../../context/FinanceContext';
 import {
@@ -22,6 +23,7 @@ import {
   SECTOR_CONFIG,
   CONTRACT_CONFIG,
   calculateEstimatedPayDate,
+  checkShiftOverlap,
 } from '../../utils/shiftsEngine';
 
 interface MedicalShiftModalProps {
@@ -80,12 +82,58 @@ export const MedicalShiftModal: React.FC<MedicalShiftModalProps> = ({
     shiftToEdit ? shiftToEdit.estimatedPayDate : ''
   );
   const [notes, setNotes] = useState<string>(shiftToEdit?.notes || '');
+  const [startTime, setStartTime] = useState<string>(shiftToEdit?.startTime || '');
+  const [endTime, setEndTime] = useState<string>(shiftToEdit?.endTime || '');
+  const [commuteMinutes, setCommuteMinutes] = useState<string>(
+    shiftToEdit?.commuteMinutes !== undefined ? shiftToEdit.commuteMinutes.toString() : ''
+  );
   const [saveAsPreset, setSaveAsPreset] = useState<boolean>(false);
   const [presetTitle, setPresetTitle] = useState<string>('');
   const [showPresetManager, setShowPresetManager] = useState<boolean>(false);
 
   const [validationError, setValidationError] = useState('');
   const dialogRef = useDialogFocus(isOpen, onClose);
+
+  const isCrossMidnight = Boolean(startTime && endTime && endTime <= startTime);
+
+  const parsedCommute = commuteMinutes ? parseInt(commuteMinutes, 10) : undefined;
+  const parsedAmount = parseFloat(grossAmount) || 0;
+  const hourlyRate = durationHours > 0 ? parsedAmount / durationHours : 0;
+  const calculatedPayDate =
+    customPayDate || calculateEstimatedPayDate(dateWorked, estimatedDelayDays);
+
+  const overlapWarning = React.useMemo(() => {
+    if (!dateWorked || !startTime || !endTime) return null;
+    const tempShift: MedicalShift = {
+      id: shiftToEdit?.id || 'temp-id',
+      partner,
+      title: title || 'Plantão',
+      hospitalName: hospitalName || 'Hospital',
+      sector,
+      contractType,
+      dateWorked,
+      durationHours,
+      grossAmount: parsedAmount,
+      estimatedPayDate: calculatedPayDate,
+      status: 'pending',
+      startTime: startTime || undefined,
+      endTime: endTime || undefined,
+      commuteMinutes: parsedCommute,
+      timePrecision: 'exact',
+      executionStatus,
+    };
+
+    const otherShifts = (state.medicalShifts || []).filter(
+      s => s.id !== (shiftToEdit?.id || 'temp-id')
+    );
+    for (const other of otherShifts) {
+      const res = checkShiftOverlap(tempShift, other, true);
+      if (res.overlaps) {
+        return res.reason || 'Conflito de horário detectado com outro plantão.';
+      }
+    }
+    return null;
+  }, [shiftToEdit, partner, title, hospitalName, sector, contractType, dateWorked, durationHours, parsedAmount, calculatedPayDate, startTime, endTime, parsedCommute, executionStatus, state.medicalShifts]);
 
   if (!isOpen) return null;
 
@@ -109,11 +157,6 @@ export const MedicalShiftModal: React.FC<MedicalShiftModalProps> = ({
     setCustomPayDate(calculateEstimatedPayDate(dateWorked, typical));
   };
 
-  const parsedAmount = parseFloat(grossAmount) || 0;
-  const hourlyRate = durationHours > 0 ? parsedAmount / durationHours : 0;
-  const calculatedPayDate =
-    customPayDate || calculateEstimatedPayDate(dateWorked, estimatedDelayDays);
-
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!hospitalName.trim() || !Number.isFinite(parsedAmount) || parsedAmount <= 0 || !Number.isFinite(durationHours) || durationHours <= 0 || durationHours > 168 || !Number.isFinite(estimatedDelayDays) || estimatedDelayDays < 0 || estimatedDelayDays > 3650 || !/^\d{4}-\d{2}-\d{2}$/.test(dateWorked) || Number.isNaN(new Date(dateWorked + 'T12:00:00').getTime()) || !/^\d{4}-\d{2}-\d{2}$/.test(calculatedPayDate) || Number.isNaN(new Date(calculatedPayDate + 'T12:00:00').getTime())) { setValidationError('Confira hospital, valor, duração e datas antes de salvar.'); return; }
@@ -122,6 +165,13 @@ export const MedicalShiftModal: React.FC<MedicalShiftModalProps> = ({
 
     const finalTitle =
       title.trim() || `${hospitalName.trim()} (${durationHours}h)`;
+
+    const scheduleData = {
+      startTime: startTime || undefined,
+      endTime: endTime || undefined,
+      commuteMinutes: parsedCommute,
+      timePrecision: (startTime && endTime ? 'exact' : 'date_only') as 'exact' | 'date_only',
+    };
 
     if (shiftToEdit) {
       updateMedicalShift(shiftToEdit.id, {
@@ -137,6 +187,7 @@ export const MedicalShiftModal: React.FC<MedicalShiftModalProps> = ({
         netAmount: parsedAmount,
         estimatedPayDate: calculatedPayDate,
         notes: notes.trim() || undefined,
+        ...scheduleData,
       });
     } else {
       addMedicalShift({
@@ -152,6 +203,7 @@ export const MedicalShiftModal: React.FC<MedicalShiftModalProps> = ({
         estimatedPayDate: calculatedPayDate,
         status: 'pending',
         notes: notes.trim() || undefined,
+        ...scheduleData,
       });
 
       if (saveAsPreset && (presetTitle.trim() || hospitalName.trim())) {
@@ -410,7 +462,72 @@ export const MedicalShiftModal: React.FC<MedicalShiftModalProps> = ({
             </span>
           </div>
 
-          {/* Regime de Contratação & Prazo Estimado */}
+          {/* Horários & Planejamento de Escala (10) */}
+          <div className="p-3.5 rounded-2xl bg-stone-100/80 dark:bg-stone-900/80 border border-stone-200 dark:border-stone-800 space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-1.5 text-xs font-bold text-stone-700 dark:text-stone-300">
+                <Clock className="w-4 h-4 text-teal-600 dark:text-teal-400" />
+                Horário e Deslocamento (Agenda)
+              </div>
+              {isCrossMidnight && (
+                <span className="text-[10px] px-2 py-0.5 rounded-full bg-indigo-500/10 text-indigo-700 dark:text-indigo-300 font-semibold border border-indigo-500/20">
+                  🌙 Vira a noite (+1 dia)
+                </span>
+              )}
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+              <div>
+                <label className="block text-[11px] font-semibold text-stone-600 dark:text-stone-400 mb-1">
+                  Início
+                </label>
+                <input
+                  type="time"
+                  value={startTime}
+                  onChange={(e) => setStartTime(e.target.value)}
+                  className="w-full px-2.5 py-1.5 text-xs rounded-xl bg-white dark:bg-stone-800 border border-stone-200 dark:border-stone-700 focus:outline-none focus:ring-2 focus:ring-teal-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-semibold text-stone-600 dark:text-stone-400 mb-1">
+                  Término
+                </label>
+                <input
+                  type="time"
+                  value={endTime}
+                  onChange={(e) => setEndTime(e.target.value)}
+                  className="w-full px-2.5 py-1.5 text-xs rounded-xl bg-white dark:bg-stone-800 border border-stone-200 dark:border-stone-700 focus:outline-none focus:ring-2 focus:ring-teal-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-semibold text-stone-600 dark:text-stone-400 mb-1">
+                  Deslocamento (min)
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  max="360"
+                  step="5"
+                  value={commuteMinutes}
+                  onChange={(e) => setCommuteMinutes(e.target.value)}
+                  placeholder="Ex: 30"
+                  className="w-full px-2.5 py-1.5 text-xs rounded-xl bg-white dark:bg-stone-800 border border-stone-200 dark:border-stone-700 focus:outline-none focus:ring-2 focus:ring-teal-500"
+                />
+              </div>
+            </div>
+
+            {overlapWarning && (
+              <div className="p-2.5 rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-300 dark:border-amber-800/50 flex items-start gap-2 text-xs text-amber-800 dark:text-amber-200">
+                <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5 text-amber-600 dark:text-amber-400" />
+                <div>
+                  <p className="font-semibold">Aviso de Sobreposição na Escala</p>
+                  <p className="text-[11px] text-amber-700 dark:text-amber-300">{overlapWarning}</p>
+                </div>
+              </div>
+            )}
+          </div>
           <div className="p-3.5 rounded-2xl bg-stone-100/80 dark:bg-stone-900/80 border border-stone-200 dark:border-stone-800 space-y-3">
             <div className="flex items-center gap-1.5 text-xs font-bold text-stone-700 dark:text-stone-300">
               <Briefcase className="w-4 h-4 text-teal-600 dark:text-teal-400" />

@@ -29,7 +29,7 @@ describe('shiftsEngine: Gestão de Plantões Médicos', () => {
         dateWorked: '2026-10-05',
         durationHours: 12,
         grossAmount: 1800,
-        estimatedPayDate: '2026-11-05',
+        estimatedPayDate: '2026-11-20',
         status: 'pending',
       },
       {

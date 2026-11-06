@@ -1,8 +1,8 @@
 import { useDialogFocus } from '../../hooks/useDialogFocus';
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { X, ArrowRight, ArrowLeft, Check, Sparkles, Users, User, Percent, Shield, Target } from 'lucide-react';
 import { useFinance, CATEGORIES_BASE } from '../../context/FinanceContext';
-import { CategoryKey, PaidBy, FoodPillarType, FundingSourceType } from '../../types/finance';
+import { ExpenseItem, CategoryKey, PaidBy, FoodPillarType, FundingSourceType } from '../../types/finance';
 import { formatCurrency } from '../../utils/formatters';
 
 interface ExpenseModalProps {
@@ -10,6 +10,7 @@ interface ExpenseModalProps {
   onClose: () => void;
   defaultCategory?: CategoryKey;
   defaultDate?: string;
+  expenseToEdit?: ExpenseItem | null;
 }
 
 export const ExpenseModal: React.FC<ExpenseModalProps> = ({
@@ -17,11 +18,14 @@ export const ExpenseModal: React.FC<ExpenseModalProps> = ({
   onClose,
   defaultCategory,
   defaultDate,
+  expenseToEdit,
 }) => {
   const {
     state,
+    currentUser,
     emergencyReserveExcessAmount,
     addExpense,
+    editExpense,
     addInstallment,
     triggerCelebration,
   } = useFinance();
@@ -39,6 +43,51 @@ export const ExpenseModal: React.FC<ExpenseModalProps> = ({
   const [selectedGoalId, setSelectedGoalId] = useState<string>(() => state.piggyBanks[0]?.id || '');
   const [successCelebration, setSuccessCelebration] = useState(false);
   const [validationError, setValidationError] = useState('');
+
+  const userDraftKey = `expense_modal_draft_${currentUser?.uid || 'guest'}`;
+
+  // Hydration effect for expenseToEdit or user private draft
+  useEffect(() => {
+    if (!isOpen) return;
+
+    if (expenseToEdit) {
+      setAmount(expenseToEdit.amount.toString());
+      setCategory(expenseToEdit.category || defaultCategory || 'comida');
+      setDescription(expenseToEdit.description || '');
+      setFoodPillar(expenseToEdit.foodPillar || 'estrutural');
+      setPaidBy(expenseToEdit.paidBy || 'both');
+      setSplitPartner1Pct(expenseToEdit.splitPartner1Pct ?? 50);
+      setFundingSource(expenseToEdit.fundingSource || 'month_budget');
+      setSelectedGoalId(expenseToEdit.fundingGoalId || state.piggyBanks[0]?.id || '');
+      setPaymentMethod(expenseToEdit.paymentMethod || 'pix');
+      setIsInstallment(false);
+      setValidationError('');
+    } else {
+      const savedDraft = localStorage.getItem(userDraftKey);
+      if (savedDraft) {
+        try {
+          const parsed = JSON.parse(savedDraft);
+          if (parsed.amount) setAmount(parsed.amount);
+          if (parsed.description) setDescription(parsed.description);
+          if (parsed.category) setCategory(parsed.category);
+          if (parsed.paidBy) setPaidBy(parsed.paidBy);
+          if (parsed.fundingSource) setFundingSource(parsed.fundingSource);
+          if (parsed.paymentMethod) setPaymentMethod(parsed.paymentMethod);
+        } catch (_) {
+          // Ignore corrupted draft
+        }
+      }
+    }
+  }, [isOpen, expenseToEdit, defaultCategory, state.piggyBanks, userDraftKey]);
+
+  // Debounced saver for private user draft
+  useEffect(() => {
+    if (!isOpen || expenseToEdit) return;
+    if (amount || description) {
+      const draft = { amount, description, category, paidBy, fundingSource, paymentMethod };
+      localStorage.setItem(userDraftKey, JSON.stringify(draft));
+    }
+  }, [isOpen, expenseToEdit, amount, description, category, paidBy, fundingSource, paymentMethod, userDraftKey]);
 
   const dialogRef = useDialogFocus(isOpen, onClose);
 
@@ -128,57 +177,86 @@ export const ExpenseModal: React.FC<ExpenseModalProps> = ({
         : splitPartner1Pct;
     const p2Pct = 100 - p1Pct;
 
-    if (isInstallment) {
-      const installmentVal = +(numAmount / installmentsCount).toFixed(2);
-      addInstallment({
-        title: finalDesc,
-        category,
-        totalAmount: numAmount,
-        installmentsCount,
-        installmentAmount: installmentVal,
-        startMonth: state.currentMonth,
-        paidBy,
-        splitPartner1Pct: p1Pct,
-        splitPartner2Pct: p2Pct,
-      });
-    } else {
+    const shouldBeInstallment = isInstallment || (paymentMethod === 'credit' && installmentsCount > 1);
+
+    try {
       const targetGoal = state.piggyBanks.find(g => g.id === selectedGoalId);
-      addExpense({
-        description: finalDesc,
-        amount: numAmount,
-        category,
-        date: today,
-        paidBy,
-        splitPartner1Pct: p1Pct,
-        splitPartner2Pct: p2Pct,
-        foodPillar: category === 'comida' ? foodPillar : undefined,
-        fundingSource,
-        fundingGoalId: fundingSource === 'piggy_bank' ? selectedGoalId : undefined,
-        fundingGoalName: fundingSource === 'piggy_bank' ? targetGoal?.name : undefined,
-        paymentMethod: isInstallment ? 'credit' : paymentMethod,
-        isExcludedFromMonthlyBudget: fundingSource !== 'month_budget',
-      });
+
+      if (expenseToEdit) {
+        editExpense(expenseToEdit.id, {
+          description: finalDesc,
+          amount: numAmount,
+          category,
+          date: today,
+          paidBy,
+          splitPartner1Pct: p1Pct,
+          splitPartner2Pct: p2Pct,
+          foodPillar: category === 'comida' ? foodPillar : undefined,
+          fundingSource,
+          fundingGoalId: fundingSource === 'piggy_bank' ? selectedGoalId : undefined,
+          fundingGoalName: fundingSource === 'piggy_bank' ? targetGoal?.name : undefined,
+          paymentMethod,
+          isExcludedFromMonthlyBudget: fundingSource !== 'month_budget',
+        });
+      } else if (shouldBeInstallment) {
+        const count = Math.max(2, installmentsCount);
+        const installmentVal = +(numAmount / count).toFixed(2);
+        addInstallment({
+          title: finalDesc,
+          category,
+          totalAmount: numAmount,
+          installmentsCount: count,
+          installmentAmount: installmentVal,
+          purchaseDate: today,
+          startMonth: today ? today.slice(0, 7) : state.currentMonth,
+          paidBy,
+          splitPartner1Pct: p1Pct,
+          splitPartner2Pct: p2Pct,
+        });
+      } else {
+        addExpense({
+          description: finalDesc,
+          amount: numAmount,
+          category,
+          date: today,
+          paidBy,
+          splitPartner1Pct: p1Pct,
+          splitPartner2Pct: p2Pct,
+          foodPillar: category === 'comida' ? foodPillar : undefined,
+          fundingSource,
+          fundingGoalId: fundingSource === 'piggy_bank' ? selectedGoalId : undefined,
+          fundingGoalName: fundingSource === 'piggy_bank' ? targetGoal?.name : undefined,
+          paymentMethod,
+          isExcludedFromMonthlyBudget: fundingSource !== 'month_budget',
+        });
+      }
+
+      localStorage.removeItem(userDraftKey);
+      setSuccessCelebration(true);
+      triggerCelebration();
+
+      setTimeout(() => {
+        setSuccessCelebration(false);
+        setStep(1);
+        setAmount('');
+        setDescription('');
+        setIsInstallment(false);
+        setInstallmentsCount(3);
+        setValidationError('');
+        onClose();
+      }, 1200);
+    } catch (err: any) {
+      setValidationError(err.message || 'Erro ao salvar despesa.');
     }
-
-    setSuccessCelebration(true);
-    triggerCelebration();
-
-    setTimeout(() => {
-      setSuccessCelebration(false);
-      setStep(1);
-      setAmount('');
-      setDescription('');
-      setIsInstallment(false);
-      setInstallmentsCount(3);
-      onClose();
-    }, 1200);
   };
 
   const handleClose = () => {
+    localStorage.removeItem(userDraftKey);
     setStep(1);
     setAmount('');
     setDescription('');
     setIsInstallment(false);
+    setValidationError('');
     onClose();
   };
 
@@ -194,11 +272,11 @@ export const ExpenseModal: React.FC<ExpenseModalProps> = ({
         <div className="flex items-center justify-between px-5 sm:px-6 pt-4 sm:pt-5 pb-3 border-b border-slate-100 dark:border-slate-800 shrink-0">
           <div className="flex items-center gap-2.5 min-w-0">
             <span className="w-9 h-9 rounded-2xl btn-primary-accent text-white flex items-center justify-center text-sm font-bold shadow-xs shrink-0">
-              ➕
+              {expenseToEdit ? '✏️' : '➕'}
             </span>
             <div className="min-w-0">
               <h3 className="font-extrabold text-slate-900 dark:text-white text-sm sm:text-base font-display truncate">
-                Registrar Gasto
+                {expenseToEdit ? 'Editar Gasto' : 'Registrar Gasto'}
               </h3>
               <p className="text-[11px] text-slate-500 dark:text-slate-400">
                 Passo {step} de {isInstallment && step >= 5 ? '6' : '5'}

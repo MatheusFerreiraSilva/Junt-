@@ -1,4 +1,4 @@
-import { installmentInMonth, remainingInstallmentValue } from '../utils/installmentMoney';
+import { installmentInMonth, remainingInstallmentValue, buildInstallmentSchedule } from '../utils/installmentMoney';
 import React, { useState } from 'react';
 import {
   CreditCard,
@@ -20,6 +20,9 @@ import {
   DollarSign,
   Wallet,
   Zap,
+  ChevronDown,
+  ChevronUp,
+  RotateCcw,
 } from 'lucide-react';
 import { useFinance, CATEGORIES_BASE } from '../context/FinanceContext';
 import { InstallmentPurchase } from '../types/finance';
@@ -49,6 +52,8 @@ export const InstallmentsScreen: React.FC<InstallmentsScreenProps> = ({
     installmentLimitPercentage,
     isInstallmentCommitmentHigh,
     toggleInitialHomePhase,
+    recordInstallmentPayment,
+    reverseInstallmentPayment,
     markInstallmentPaidStep,
     deleteInstallment,
     getExpenseSplit,
@@ -56,6 +61,7 @@ export const InstallmentsScreen: React.FC<InstallmentsScreenProps> = ({
 
   const [isAdvanceModalOpen, setIsAdvanceModalOpen] = useState(false);
   const [selectedAdvanceInst, setSelectedAdvanceInst] = useState<InstallmentPurchase | null>(null);
+  const [expandedScheduleId, setExpandedScheduleId] = useState<string | null>(null);
 
   const nextMonthKey = getNextMonth(state.currentMonth);
   const completedInstallments = state.installments.filter(i => !i.active);
@@ -584,6 +590,16 @@ export const InstallmentsScreen: React.FC<InstallmentsScreenProps> = ({
 
                     <div className="flex items-center gap-2 flex-wrap">
                       <button
+                        onClick={() => setExpandedScheduleId(expandedScheduleId === item.id ? null : item.id)}
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 text-xs font-bold transition-all"
+                        title="Ver parcelas individuais com centavos exatos e histórico"
+                      >
+                        <Calendar className="w-3.5 h-3.5 text-slate-500" />
+                        <span>Cronograma ({item.paidInstallmentsCount}/{item.installmentsCount})</span>
+                        {expandedScheduleId === item.id ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                      </button>
+
+                      <button
                         onClick={() => {
                           setSelectedAdvanceInst(item);
                           setIsAdvanceModalOpen(true);
@@ -596,7 +612,7 @@ export const InstallmentsScreen: React.FC<InstallmentsScreenProps> = ({
                       </button>
 
                       <button
-                        onClick={() => markInstallmentPaidStep(item.id)}
+                        onClick={() => recordInstallmentPayment(item.id)}
                         className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-xs transition-colors active:scale-95"
                       >
                         <Check className="w-3.5 h-3.5" />
@@ -604,6 +620,99 @@ export const InstallmentsScreen: React.FC<InstallmentsScreenProps> = ({
                       </button>
                     </div>
                   </div>
+
+                  {/* Expanded Occurrence Schedule */}
+                  {expandedScheduleId === item.id && (() => {
+                    const occurrences = buildInstallmentSchedule(item, state.currentMonth);
+                    return (
+                      <div className="pt-3 border-t border-slate-200/60 dark:border-slate-700/60 space-y-2">
+                        <div className="flex items-center justify-between text-xs font-bold text-slate-500 dark:text-slate-400">
+                          <span>Cronograma Oficial por Competência (Valores Exatos ao Centavo):</span>
+                          <span>Total: {formatCurrency(item.totalAmount)}</span>
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                          {occurrences.map(occ => {
+                            const isPaid = occ.status === 'pago';
+                            const isAdvanced = occ.status === 'antecipado';
+                            const isSettled = isPaid || isAdvanced;
+
+                            return (
+                              <div
+                                key={occ.occurrenceId}
+                                className={`p-2.5 rounded-2xl border text-xs flex flex-col justify-between transition-colors ${
+                                  isAdvanced
+                                    ? 'bg-sky-50/80 dark:bg-sky-950/40 border-sky-300 dark:border-sky-800'
+                                    : isPaid
+                                    ? 'bg-emerald-50/80 dark:bg-emerald-950/40 border-emerald-300 dark:border-emerald-800'
+                                    : occ.status === 'vencido'
+                                    ? 'bg-rose-50/80 dark:bg-rose-950/40 border-rose-300 dark:border-rose-800'
+                                    : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800'
+                                }`}
+                              >
+                                <div className="flex items-center justify-between font-bold mb-1">
+                                  <span className="text-slate-900 dark:text-white">
+                                    Parcela {occ.installmentNumber}/{item.installmentsCount}
+                                  </span>
+                                  <span
+                                    className={`px-1.5 py-0.5 rounded text-[10px] font-black uppercase ${
+                                      isAdvanced
+                                        ? 'bg-sky-200 dark:bg-sky-900 text-sky-800 dark:text-sky-200'
+                                        : isPaid
+                                        ? 'bg-emerald-200 dark:bg-emerald-900 text-emerald-800 dark:text-emerald-200'
+                                        : occ.status === 'vencido'
+                                        ? 'bg-rose-200 dark:bg-rose-900 text-rose-800 dark:text-rose-200'
+                                        : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400'
+                                    }`}
+                                  >
+                                    {occ.status}
+                                  </span>
+                                </div>
+
+                                <div className="flex items-center justify-between text-[11px] text-slate-500 dark:text-slate-400">
+                                  <span>Comp: {occ.competenceMonth}</span>
+                                  <span className="font-extrabold text-slate-900 dark:text-white tabular-nums">
+                                    {formatCurrency(occ.amountR$)}
+                                  </span>
+                                </div>
+
+                                {occ.discountCents && occ.discountCents > 0 ? (
+                                  <div className="text-[10px] text-emerald-600 font-semibold mt-0.5">
+                                    Desc: -R$ {(occ.discountCents / 100).toFixed(2)} (Pago: R$ {((occ.effectivePaidCents || 0) / 100).toFixed(2)})
+                                  </div>
+                                ) : null}
+
+                                <div className="mt-2 pt-1.5 border-t border-slate-100 dark:border-slate-800/80 flex items-center justify-between text-[10px]">
+                                  <span className="text-slate-400">Venc: {occ.dueDate.split('-').reverse().join('/')}</span>
+                                  {isSettled ? (
+                                    <button
+                                      type="button"
+                                      onClick={() => reverseInstallmentPayment(item.id, occ.installmentNumber)}
+                                      className="flex items-center gap-1 text-rose-600 dark:text-rose-400 hover:underline font-bold"
+                                      title="Estornar registro e restaurar recursos originais"
+                                    >
+                                      <RotateCcw className="w-3 h-3" />
+                                      <span>Estornar</span>
+                                    </button>
+                                  ) : (
+                                    <button
+                                      type="button"
+                                      onClick={() => recordInstallmentPayment(item.id, occ.installmentNumber)}
+                                      className="flex items-center gap-1 text-emerald-600 dark:text-emerald-400 hover:underline font-bold"
+                                      title="Quitar esta parcela com idempotência"
+                                    >
+                                      <Check className="w-3 h-3" />
+                                      <span>Quitar</span>
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  })()}
                 </div>
               );
             })}

@@ -150,6 +150,30 @@ export interface IncomeItem {
   isForecast?: boolean;
 }
 
+export type InstallmentOccurrenceStatus =
+  | 'previsto'
+  | 'pago'
+  | 'antecipado'
+  | 'vencido'
+  | 'estornado';
+
+export interface InstallmentOccurrenceRecord {
+  occurrenceId: string; // purchaseId:installmentNumber:competenceMonth e.g. "inst-1:1:2026-12"
+  purchaseId: string;
+  installmentNumber: number; // 1 to count
+  competenceMonth: string; // YYYY-MM
+  dueDate: string; // YYYY-MM-DD
+  amountCents: number; // Centavos inteiros exatos
+  amountR$: number; // amountCents / 100
+  status: InstallmentOccurrenceStatus;
+  paidAt?: string; // ISO date/timestamp
+  paymentOperationId?: string; // ID da transação/operação de baixa (idempotência)
+  discountCents?: number; // Desconto em centavos concedido na antecipação
+  effectivePaidCents?: number; // Valor efetivamente desembolsado
+  fundingSource?: AdvanceInstallmentFundingSource;
+  notes?: string;
+}
+
 export interface InstallmentPurchase {
   id: string;
   title: string;
@@ -174,6 +198,12 @@ export interface InstallmentPurchase {
   priority?: ExpensePriority;
   policyMacroGroup?: PolicyMacroGroup;
   originalPurpose?: string;
+  // 08 & 17: Ciclo de vida, ocorrências e cadastro único de parcelamento
+  purchaseDate?: string; // Data da compra (YYYY-MM-DD)
+  totalCashAmount?: number; // Total à vista se houver juros informados
+  requestId?: string; // Idempotência da intenção de criação
+  occurrenceRecords?: Record<string, InstallmentOccurrenceRecord>;
+  unattributedLegacyCredits?: number;
 }
 
 export interface AdvanceInstallmentFundingSource {
@@ -191,7 +221,9 @@ export interface AdvanceInstallmentPayload {
   installmentId: string;
   installmentsToAdvance: number;
   totalAdvanceAmount: number;
+  discountAmount?: number; // Desconto institucional negociado/oferecido
   funding: AdvanceInstallmentFundingSource;
+  specificOccurrenceIds?: string[]; // IDs de ocorrências concretas a antecipar
   note?: string;
 }
 
@@ -723,6 +755,15 @@ export interface MedicalShift {
   notes?: string;
   linkedIncomeId?: string; // Vínculo com a transação bancária real do Open Finance
   linkedIncomeDescription?: string;
+  // Agenda planning (10)
+  startTime?: string; // HH:mm
+  endTime?: string; // HH:mm
+  commuteMinutes?: number; // Deslocamento estimado em minutos
+  timePrecision?: 'exact' | 'date_only'; // Precisão temporal
+  // Balanços e conciliação
+  reconciledAmount?: number;
+  pendingAmount?: number;
+  overallocatedAmount?: number;
 }
 
 export interface MedicalShiftPreset {

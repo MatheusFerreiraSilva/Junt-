@@ -1,6 +1,6 @@
 {
-  "summary":  "Plano revisado com o upgrade completo dos avatares: novo cenário de estúdio/pedestal, estrutura aprimorada dos bonecos, opção masculino/feminino, roupas médicas (scrub e jaleco), acessórios (estetoscópio, fone, mochila, bolsa, bola de futebol) e resolução da sessão/edição compartilhada no casal.",
-  "updatedAt":  "2026-10-30T23:57:57.405509950Z",
-  "requestFeedback":  true,
-  "userFacing":  true
+  "summary": "Plano e entrega de implementação do Prompt # 10 — Plantões, saldos e disponibilidade.\nContratos estendidos de saldo único (ShiftIncomeAllocation), conciliação multi-plantão/pagamento parcial, preservação de netAmount zero, planejamento de escala com virada de noite e detecção de sobreposição, e recomendações de pacing condicionadas a estágio de carreira.",
+  "updatedAt": "2026-11-06T01:06:43.902101950Z",
+  "requestFeedback": true,
+  "userFacing": true
 }

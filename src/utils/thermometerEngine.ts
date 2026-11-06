@@ -431,12 +431,13 @@ export function calculateThermometerEngine(
   let confirmedMedicalReceivables = 0;
 
   (state.medicalShifts || []).forEach(shift => {
-    // Exclude cancelled shifts
-    if (shift.executionStatus === 'cancelled') return;
+    // Exclude cancelled and replaced shifts
+    if (shift.executionStatus === 'cancelled' || shift.executionStatus === 'replaced') return;
     if (scope === 'partner1' && shift.partner === 'partner2') return;
     if (scope === 'partner2' && shift.partner === 'partner1') return;
 
-    const totalCents = Math.round((shift.netAmount ?? shift.grossAmount ?? 0) * 100);
+    const totalExpected = shift.netAmount !== undefined ? shift.netAmount : (shift.grossAmount ?? 0);
+    const totalCents = Math.round(totalExpected * 100);
     const allocatedCents = (state.shiftIncomeAllocations || []).reduce(
       (sum, ledger) => sum + (ledger.allocations[shift.id] || 0),
       0

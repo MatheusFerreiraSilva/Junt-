@@ -55,6 +55,7 @@ export const AdvanceInstallmentModal: React.FC<AdvanceInstallmentModalProps> = (
 
   const [installmentsToAdvance, setInstallmentsToAdvance] = useState<number>(1);
   const [fundingMode, setFundingMode] = useState<'reserve' | 'goal' | 'surplus' | 'custom'>('reserve');
+  const [discountInput, setDiscountInput] = useState<string>('');
 
   // Funding inputs for custom split
   const [selectedGoalId, setSelectedGoalId] = useState<string>(
@@ -64,11 +65,20 @@ export const AdvanceInstallmentModal: React.FC<AdvanceInstallmentModalProps> = (
   const [goalInput, setGoalInput] = useState<string>('');
   const [surplusInput, setSurplusInput] = useState<string>('');
 
-  // Total required
-  const totalAdvanceAmount = useMemo(() => {
+  const discountAmount = useMemo(() => {
+    const parsed = parseFloat(discountInput.replace(',', '.'));
+    return !isNaN(parsed) && parsed > 0 ? parsed : 0;
+  }, [discountInput]);
+
+  const grossAdvanceAmount = useMemo(() => {
     if (!currentInst) return 0;
     return remainingInstallmentValue(currentInst, installmentsToAdvance);
   }, [currentInst, installmentsToAdvance]);
+
+  // Total required after discount
+  const totalAdvanceAmount = useMemo(() => {
+    return Math.max(0, Math.round((grossAdvanceAmount - discountAmount) * 100) / 100);
+  }, [grossAdvanceAmount, discountAmount]);
 
   // Available amounts from each source
   const availableReserveExcess = emergencyReserveExcessAmount;
@@ -169,13 +179,16 @@ export const AdvanceInstallmentModal: React.FC<AdvanceInstallmentModalProps> = (
       installmentId: currentInst.id,
       installmentsToAdvance,
       totalAdvanceAmount,
+      discountAmount: discountAmount > 0 ? discountAmount : undefined,
       funding: {
         fromProtectionExcess: allocatedAmounts.fromReserve,
         fromGoalId: allocatedAmounts.fromGoal > 0 ? selectedGoalId : undefined,
         fromGoalAmount: allocatedAmounts.fromGoal,
         fromMonthSurplus: allocatedAmounts.fromSurplus,
       },
-      note: `Adiantamento de ${installmentsToAdvance}x parcela(s) com fontes customizadas`,
+      note: discountAmount > 0
+        ? `Adiantamento de ${installmentsToAdvance}x parcela(s) com R$ ${discountAmount.toFixed(2)} de desconto`
+        : `Adiantamento de ${installmentsToAdvance}x parcela(s) com fontes customizadas`,
     });
 
     onClose();
@@ -291,6 +304,33 @@ export const AdvanceInstallmentModal: React.FC<AdvanceInstallmentModalProps> = (
                   {remainingInstallmentsCount}x ({formatCurrency(remainingInstallmentValue(currentInst))})
                 </span>
               </button>
+            </div>
+          </div>
+
+          {/* STEP 1.5: Desconto Concedido na Antecipação (Opcional) */}
+          <div className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/80 space-y-2">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
+                <DollarSign className="w-3.5 h-3.5 text-emerald-600" />
+                <span>Desconto concedido pelo cartão / credor (opcional):</span>
+              </label>
+              {discountAmount > 0 && (
+                <span className="text-[11px] font-black text-emerald-600 dark:text-emerald-400">
+                  Economia de {formatCurrency(discountAmount)}!
+                </span>
+              )}
+            </div>
+            <div className="relative max-w-xs">
+              <span className="absolute left-3 top-2 text-xs font-bold text-slate-400">R$</span>
+              <input
+                type="number"
+                step="0.01"
+                min="0"
+                placeholder="0,00"
+                value={discountInput}
+                onChange={e => setDiscountInput(e.target.value)}
+                className="w-full pl-8 pr-3 py-1.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs font-bold"
+              />
             </div>
           </div>
 

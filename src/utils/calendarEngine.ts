@@ -7,8 +7,9 @@ import {
   PaidBy,
   AppState,
 } from '../types/finance';
-import { installmentInMonth } from './installmentMoney';
+import { installmentInMonth, buildInstallmentSchedule } from './installmentMoney';
 import { roundMoney } from './thermometerEngine';
+import { getShiftBalance } from './shiftsEngine';
 
 export type ObligationType = 'fixed_bill' | 'subscription' | 'installment' | 'medical_receivable';
 export type ObligationStatus = 'previsto' | 'vencido' | 'parcial' | 'pago' | 'cancelado';
@@ -291,8 +292,13 @@ export function calculateCalendarEngine(
     if (viewMode === 'partner1' && inst.paidBy === 'partner2') return;
     if (viewMode === 'partner2' && inst.paidBy === 'partner1') return;
 
-    const [instY, instM] = inst.startMonth.split('-').map(Number);
-    const currentNumber = (year - instY) * 12 + (month - instM) + 1;
+    const schedule = buildInstallmentSchedule(inst, todayStr);
+    const occurrence = schedule.find(o => o.competenceMonth === activeMonth);
+    const currentNumber = occurrence
+      ? occurrence.installmentNumber
+      : (year - parseInt(inst.startMonth.slice(0, 4), 10)) * 12 + (month - parseInt(inst.startMonth.slice(5, 7), 10)) + 1;
+
+    const exactAmount = occurrence ? occurrence.amountR$ : activeMonthAmount;
 
     const originalDueDay = clampDayToMonth(year, month, inst.dueDay || 10);
     const standardDueDate = `${activeMonth}-${String(originalDueDay).padStart(2, '0')}`;
@@ -300,20 +306,20 @@ export function calculateCalendarEngine(
     const isPostponed = Boolean(options?.postponedObligations?.[`inst-${inst.id}`]);
 
     const apportionedAmt = getApportionedAmount(
-      activeMonthAmount,
+      exactAmount,
       viewMode,
       inst.paidBy,
       inst.splitPartner1Pct ?? 50,
       inst.splitPartner2Pct ?? 50
     );
 
-    // Check if already in expenses
+    // Check if already in expenses or already paid/advanced in occurrence schedule
     const paidExpense = (state.expenses || []).find(e =>
       e.installmentId === inst.id &&
       (e.date.startsWith(activeMonth) || e.installmentIndex === currentNumber)
     );
 
-    const isPaid = Boolean(paidExpense);
+    const isPaid = (occurrence && (occurrence.status === 'pago' || occurrence.status === 'antecipado')) || Boolean(paidExpense);
 
     let status: ObligationStatus = 'previsto';
     if (isPaid) {
@@ -347,23 +353,27 @@ export function calculateCalendarEngine(
 
   // D) Medical Shift Receivables for activeMonth
   (state.medicalShifts || []).forEach(shift => {
-    if (shift.executionStatus === 'cancelled') return;
+    if (shift.executionStatus === 'cancelled' || shift.executionStatus === 'replaced') return;
     if (viewMode === 'partner1' && shift.partner === 'partner2') return;
     if (viewMode === 'partner2' && shift.partner === 'partner1') return;
 
     const payDate = shift.actualPayDate || shift.estimatedPayDate || shift.dateWorked;
     if (!payDate.startsWith(activeMonth)) return;
 
-    const totalVal = shift.netAmount ?? shift.grossAmount ?? 0;
+    const balance = getShiftBalance(shift, state.shiftIncomeAllocations || []);
     const dueDay = clampDayToMonth(year, month, parseInt(payDate.slice(8, 10), 10) || 15);
     const dueDate = `${activeMonth}-${String(dueDay).padStart(2, '0')}`;
 
     let status: ObligationStatus = 'previsto';
-    if (shift.status === 'received') {
+    if (balance.isFullyPaid) {
       status = 'pago';
+    } else if (balance.isPartiallyPaid) {
+      status = 'parcial';
     } else if (shift.status === 'overdue' || dueDate < todayStr) {
       status = 'vencido';
     }
+
+    const displayAmount = balance.pendingAmount > 0 ? balance.pendingAmount : balance.expectedAmount;
 
     allObligations.push({
       id: `shift-rec-${shift.id}`,
@@ -371,8 +381,8 @@ export function calculateCalendarEngine(
       type: 'medical_receivable',
       title: `Recebível: ${shift.title}`,
       category: 'profissional',
-      amount: roundMoney(totalVal),
-      originalAmount: roundMoney(totalVal),
+      amount: roundMoney(displayAmount),
+      originalAmount: roundMoney(balance.expectedAmount),
       dueDate,
       dueDay,
       status,
