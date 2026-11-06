@@ -5,8 +5,10 @@ describe('Prompt 16 — Registrar e editar gasto com orçamento unificado', () =
   const baseGoal: SavingsPiggyBank = {
     id: 'goal-viagem',
     name: 'Viagem de Férias',
+    purpose: 'Viagem de Férias',
     targetAmount: 5000,
     currentAmount: 200, // Only R$ 200 available
+    monthlyDeposit: 100,
     emoji: '✈️',
     category: 'lazer',
     completed: false,

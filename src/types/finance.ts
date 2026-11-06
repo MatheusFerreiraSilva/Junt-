@@ -967,6 +967,14 @@ export interface CoupleGoal {
   linkedBankAccountId?: string; // Vínculo de conta/CDB para evitar contagem duplicada
 }
 
+export type PiggyBankUpdatePayload = Partial<Omit<SavingsPiggyBank, 'category'>> &
+  Partial<Omit<CoupleGoal, 'category'>> & {
+    category?: CategoryKey | CoupleGoal['category'];
+    title?: string;
+    name?: string;
+    monthlyPlannedDeposit?: number;
+  };
+
 export interface CoupleWishlistItem {
   id: string;
   title: string;

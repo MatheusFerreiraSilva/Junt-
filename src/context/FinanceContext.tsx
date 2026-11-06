@@ -46,6 +46,7 @@ import {
   InstallmentPurchase,
   InstallmentOccurrenceRecord,
   SavingsPiggyBank,
+  PiggyBankUpdatePayload,
   CoupleProfile,
   PaidBy,
   LinkedBankAccount,
@@ -438,7 +439,7 @@ export interface FinanceContextType {
   deleteInstallment: (id: string) => void;
   dismissCompletedInstallmentNotification: (id: string) => void;
   addPiggyBank: (piggy: (Omit<SavingsPiggyBank, 'id'> & { id?: string }) | SavingsPiggyBank) => SavingsPiggyBank;
-  updatePiggyBank: (id: string, updates: Partial<SavingsPiggyBank> & Partial<import('../types/finance').CoupleGoal>) => void;
+  updatePiggyBank: (id: string, updates: PiggyBankUpdatePayload) => void;
   archivePiggyBank: (id: string, archive?: boolean) => void;
   deletePiggyBank: (id: string, force?: boolean) => void;
   removePiggyBank: (id: string, force?: boolean) => void;
@@ -3218,7 +3219,7 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
     return newPiggy;
   };
 
-  const updatePiggyBank = (id: string, updates: Partial<SavingsPiggyBank> & Partial<import('../types/finance').CoupleGoal>) => {
+  const updatePiggyBank = (id: string, updates: PiggyBankUpdatePayload) => {
     setState(prev => {
       const updatedPiggy = prev.piggyBanks.map(p => {
         if (p.id === id) {
