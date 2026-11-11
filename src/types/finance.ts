@@ -71,7 +71,7 @@ export interface TransactionSplit {
   percentage?: number; // e.g. 50
   targetDate?: string; // YYYY-MM-DD or YYYY-MM for planned/postponable
   isPostponable?: boolean;
-  assignedTo?: 'couple' | 'partner1' | 'partner2';
+  assignedTo?: 'couple' | 'partner1' | 'partner2' | 'casal' | string;
 }
 
 export interface ExpenseItem {
@@ -80,6 +80,7 @@ export interface ExpenseItem {
   description: string;
   store?: string; // Nome do estabelecimento comercial (ex: "Supermercado Pão de Açúcar", "Drogaria São Paulo")
   amount: number;
+  amountCents?: number;
   category: CategoryKey;
   subcategory?: string; // e.g. "delivery", "eletrodomesticos", "supermercado", "restaurante", "aluguel", etc.
   date: string; // YYYY-MM-DD
@@ -113,7 +114,7 @@ export interface ExpenseItem {
   triageDone?: boolean;
   reconciledWithIntent?: boolean;
   paymentMethod?: 'pix' | 'debit' | 'credit' | 'cash';
-  assignedTo?: 'couple' | 'partner1' | 'partner2';
+  assignedTo?: 'couple' | 'partner1' | 'partner2' | 'casal';
   linkedBillId?: string;
   billCompetenceMonth?: string; // YYYY-MM
 }
@@ -201,13 +202,13 @@ export interface InstallmentOccurrenceRecord {
 
 export interface InstallmentPurchase {
   id: string;
-  title: string;
+  title?: string;
   category: CategoryKey;
   type?: 'card_consumption' | 'financing'; // Financiamento Estrutural (PF) vs Parcelas de Consumo (Cartão)
   totalAmount: number;
-  installmentsCount: number;
-  installmentAmount: number;
-  startMonth: string; // YYYY-MM
+  installmentsCount?: number;
+  installmentAmount?: number;
+  startMonth?: string; // YYYY-MM
   paidInstallmentsCount: number;
   active: boolean;
   paidBy: PaidBy;
@@ -233,6 +234,8 @@ export interface InstallmentPurchase {
   occurrences?: any[];
   installmentValue?: number;
   totalInstallments?: number;
+  currentInstallment?: number;
+  firstPaymentDate?: string;
 }
 
 export interface AdvanceInstallmentFundingSource {
@@ -809,21 +812,21 @@ export interface FinancialOperationRecord {
   id: string; // operationId estável
   type: FinancialOperationType;
   amountCents: number; // Centavos inteiros preservados
-  amountR$: number; // Valor equivalente em Reais
+  amountR$?: number; // Valor equivalente em Reais
   authorizedBy: string; // uid ou role 'partner1' | 'partner2' | 'both'
-  sourceRef: {
+  sourceRef?: {
     type: 'account' | 'piggy_bank' | 'income' | 'reserve' | 'external';
     id: string;
     name?: string;
   };
-  targetRef: {
+  targetRef?: {
     type: 'category' | 'piggy_bank' | 'expense' | 'external';
     id: string;
     name?: string;
   };
-  competence: string; // YYYY-MM
+  competence?: string; // YYYY-MM
   date: string; // YYYY-MM-DD
-  revision: number;
+  revision?: number;
   state: FinancialOperationState;
   reconciliationRef?: string;
   reversalOf?: string;
@@ -831,9 +834,10 @@ export interface FinancialOperationRecord {
     path: 'budget_reinforcement' | 'direct_goal_purchase';
     allocatedCents: number;
   };
-  createdAt: string;
+  createdAt?: string;
   notes?: string;
   currency?: string;
+  scope?: DomainScope | string;
 }
 
 export type ShiftSector =

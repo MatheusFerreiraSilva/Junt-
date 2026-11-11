@@ -49,7 +49,7 @@ export const TransactionTriageBottomSheet: React.FC<TransactionTriageBottomSheet
   useEffect(() => {
     if (expense) {
       if (expense.assignedTo) {
-        setAssignedTo(expense.assignedTo);
+        setAssignedTo(expense.assignedTo === 'casal' ? 'couple' : expense.assignedTo);
       } else if (expense.paidBy === 'partner1') {
         setAssignedTo('partner1');
       } else if (expense.paidBy === 'partner2') {

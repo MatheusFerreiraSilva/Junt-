@@ -33,7 +33,7 @@ import {
   Edit3,
 } from 'lucide-react';
 import { useFinance, CATEGORIES_BASE } from '../context/FinanceContext';
-import { CategoryKey, PendingIncomeConfirmation } from '../types/finance';
+import { CategoryKey, PendingIncomeConfirmation, ExpenseItem } from '../types/finance';
 import {
   formatCurrency,
   getMonthProgress,

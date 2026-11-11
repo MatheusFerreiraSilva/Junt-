@@ -10,6 +10,7 @@ import {
   BankImportedTransaction,
   SurplusTransferRecord,
   CategoryKey,
+  PaidBy,
   BudgetPlanContract,
   MacroGroupKey,
   MacroGroupAllocation,
@@ -73,11 +74,11 @@ export function roundMoney(amount: number): number {
   * Checks if an entity belongs to the requested scope.
   */
 export function isEntityInScope(
-  owner: 'partner1' | 'partner2' | 'both' | 'custom' | undefined,
+  owner: PaidBy | string | undefined,
   scope: DomainScope
 ): boolean {
   if (scope === 'casal') return true;
-  if (!owner || owner === 'both') return true;
+  if (!owner || owner === 'both' || owner === 'casal' || owner === 'couple' || owner === 'custom') return true;
   return owner === scope;
 }
 
@@ -1962,7 +1963,7 @@ export function selectReconciledBudgetMatrix(
 
   const bills = state.fixedBillAlerts || [];
   for (const b of bills) {
-    if (b.status === 'pago' || b.status === 'estornado' || b.status === 'paid') continue;
+    if ((b.status as string) === 'pago' || (b.status as string) === 'estornado' || b.status === 'paid') continue;
     if (currentMonthKey && b.dueDate && !b.dueDate.startsWith(currentMonthKey)) continue;
     if (!isEntityInScope(b.assignedTo || 'both', scope)) continue;
 

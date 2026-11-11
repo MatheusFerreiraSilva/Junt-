@@ -157,7 +157,7 @@ export const ExpenseModal: React.FC<ExpenseModalProps> = ({
       setStore(expenseToEdit.store || '');
       setFoodPillar(expenseToEdit.foodPillar || 'estrutural');
       setPaidBy(expenseToEdit.paidBy || 'both');
-      setAssignedTo(expenseToEdit.assignedTo || 'couple');
+      setAssignedTo(expenseToEdit.assignedTo === 'casal' ? 'couple' : (expenseToEdit.assignedTo || 'couple'));
       setSplitPartner1Pct(expenseToEdit.splitPartner1Pct ?? 50);
       setFundingSource(expenseToEdit.fundingSource || 'month_budget');
       setSelectedGoalId(expenseToEdit.fundingGoalId || state.piggyBanks[0]?.id || '');
