@@ -4,7 +4,7 @@ import { lazy, Suspense, useEffect, useState } from 'react';
 import { FinanceProvider, useFinance } from './context/FinanceContext';
 import { Navigation, ScreenId } from './components/Navigation';
 import { LandingScreen } from './screens/LandingScreen';
-import { CategoryKey } from './types/finance';
+import { CategoryKey, ExpenseItem } from './types/finance';
 import { buildWeeklyPulseData } from './utils/notificationEngine';
 
 // Route-level code splitting: each screen becomes its own chunk and is only

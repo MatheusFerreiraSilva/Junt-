@@ -5623,7 +5623,7 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
   };
 
   const reconciledBudgetMatrix = useMemo(() => {
-    return selectReconciledBudgetMatrix(state, state.appMode || 'casal', state.currentMonth);
+    return selectReconciledBudgetMatrix(state, 'casal', state.currentMonth);
   }, [state]);
 
   return (

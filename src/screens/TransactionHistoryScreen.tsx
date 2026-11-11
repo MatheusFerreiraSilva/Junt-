@@ -233,7 +233,7 @@ export const TransactionHistoryScreen: React.FC<TransactionHistoryScreenProps> =
         </div>
 
         <button
-          onClick={onOpenExpenseModal}
+          onClick={() => onOpenExpenseModal()}
           className="btn-primary-accent flex items-center gap-2 px-4 py-2.5 rounded-2xl text-white text-xs font-bold shadow-xs transition-all shrink-0 self-start sm:self-auto"
         >
           <Plus className="w-4 h-4" />

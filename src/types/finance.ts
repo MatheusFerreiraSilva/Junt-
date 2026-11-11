@@ -1,6 +1,20 @@
-export type CategoryKey = 'moradia' | 'comida' | 'lazer' | 'protecao' | 'profissional' | 'transporte';
+export type CategoryKey =
+  | 'moradia'
+  | 'comida'
+  | 'lazer'
+  | 'protecao'
+  | 'profissional'
+  | 'transporte'
+  | 'limpeza'
+  | 'farmacia'
+  | 'saude'
+  | 'casa'
+  | 'vestuario'
+  | string;
 
-export type PaidBy = 'partner1' | 'partner2' | 'both' | 'custom';
+export type PaidBy = 'partner1' | 'partner2' | 'both' | 'custom' | 'casal' | 'couple';
+
+export type DomainScope = 'casal' | 'partner1' | 'partner2';
 
 export type AccentTheme = 'emerald' | 'sapphire' | 'violet' | 'rose' | 'amber' | 'slate';
 
@@ -30,8 +44,8 @@ export interface CategoryInfo {
   isLegacy?: boolean;
 }
 
-export type ExpenseNature = 'fixa' | 'variavel' | 'eventual';
-export type ExpensePriority = 'essencial' | 'importante' | 'dispensavel';
+export type ExpenseNature = 'fixa' | 'fixo' | 'variavel' | 'eventual';
+export type ExpensePriority = 'essencial' | 'necessario' | 'importante' | 'dispensavel' | 'desejo';
 export type PolicyMacroGroup = 'fixos' | 'variaveis' | 'investimentos' | 'pendente';
 export type ClassificationOrigin = 'manual_confirmed' | 'authorized_rule' | 'origin_link' | 'auto_suggestion';
 export type TemporalScope = 'this_occurrence' | 'future_occurrences' | 'selected_history';
@@ -44,18 +58,20 @@ export interface TransactionSplit {
   amountCents: number; // integer cents (Math.round(amount * 100))
   category: CategoryKey;
   subcategory?: string;
-  nature: ExpenseNature;
-  priority: ExpensePriority;
-  policyMacroGroup: PolicyMacroGroup;
-  classificationOrigin: ClassificationOrigin;
+  nature?: ExpenseNature;
+  priority?: ExpensePriority;
+  policyMacroGroup?: PolicyMacroGroup;
+  classificationOrigin?: ClassificationOrigin;
   notes?: string;
   fundingSource?: FundingSourceType;
   fundingGoalId?: string;
   label?: string; // e.g. "Higiene", "Saúde", "Limpeza", "Frete", "Desconto"
+  description?: string;
   lineType?: SplitLineType;
   percentage?: number; // e.g. 50
   targetDate?: string; // YYYY-MM-DD or YYYY-MM for planned/postponable
   isPostponable?: boolean;
+  assignedTo?: 'couple' | 'partner1' | 'partner2';
 }
 
 export interface ExpenseItem {
@@ -146,7 +162,7 @@ export interface IncomeItem {
   amount: number;
   date: string; // YYYY-MM-DD
   recipient: PaidBy;
-  type: 'salario' | 'bonus' | 'extra' | 'restituicao' | 'outro';
+  type: 'salario' | 'bonus' | 'extra' | 'restituicao' | 'outro' | 'fixed';
   status?: 'received' | 'pending' | 'projected' | 'internal_transfer';
   classification?: IncomeSourceClassification;
   taxRatePercent?: number;
@@ -213,6 +229,10 @@ export interface InstallmentPurchase {
   requestId?: string; // Idempotência da intenção de criação
   occurrenceRecords?: Record<string, InstallmentOccurrenceRecord>;
   unattributedLegacyCredits?: number;
+  description?: string;
+  occurrences?: any[];
+  installmentValue?: number;
+  totalInstallments?: number;
 }
 
 export interface AdvanceInstallmentFundingSource {
@@ -758,6 +778,7 @@ export interface AppState {
   coupleGoals?: CoupleGoal[];
   coupleWishlist?: CoupleWishlistItem[];
   coupleFixedBills?: FixedBillAlert[];
+  fixedBillAlerts?: FixedBillAlert[];
   dreamSimulations?: DreamSimulation[];
   // 26A: Registro durável de operações financeiras (comandos atômicos com idempotência e conciliação)
   financialOperations?: FinancialOperationRecord[];
@@ -777,7 +798,12 @@ export type FinancialOperationState =
   | 'processing'
   | 'occurred_manual'
   | 'reconciled'
-  | 'reverted';
+  | 'reverted'
+  | 'effective'
+  | 'efetivado'
+  | 'pendente'
+  | 'estornado'
+  | 'realizado';
 
 export interface FinancialOperationRecord {
   id: string; // operationId estável
@@ -807,6 +833,7 @@ export interface FinancialOperationRecord {
   };
   createdAt: string;
   notes?: string;
+  currency?: string;
 }
 
 export type ShiftSector =
@@ -973,7 +1000,7 @@ export interface FoodPacingMetrics {
   pillars: Record<FoodPillarType, FoodPillarSummary>;
 }
 
-export type AISuggestionCategory = 'comida_delivery' | 'lazer' | 'moradia' | 'transporte' | 'profissional' | 'geral';
+export type AISuggestionCategory = 'comida_delivery' | 'lazer' | 'moradia' | 'transporte' | 'profissional' | 'geral' | CategoryKey | string;
 
 export interface AISuggestionOption {
   label: string;
@@ -1109,6 +1136,10 @@ export interface FixedBillAlert {
   active?: boolean; // true = ativo; false = desativado/pausado
   history?: Record<string, FixedBillAlertOccurrenceRecord>; // Competência (YYYY-MM) -> registro
   isDeleted?: boolean;
+  dueDate?: string;
+  assignedTo?: PaidBy;
+  splitPartner1Pct?: number;
+  splitPartner2Pct?: number;
 }
 
 export interface DreamSimulation {

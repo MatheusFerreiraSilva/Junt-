@@ -26,7 +26,7 @@ import { BudgetRebalanceModal } from '../components/modals/BudgetRebalanceModal'
 
 interface CategoryDetailsScreenProps {
   initialCategory?: CategoryKey;
-  onOpenExpenseModal: (category?: CategoryKey, date?: string, toEdit?: ExpenseItem | null) => void;
+  onOpenExpenseModal: (category?: CategoryKey, date?: string, toEdit?: ExpenseItem | null, isDivided?: boolean) => void;
 }
 
 export const CategoryDetailsScreen: React.FC<CategoryDetailsScreenProps> = ({

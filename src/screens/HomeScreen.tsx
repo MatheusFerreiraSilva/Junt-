@@ -60,7 +60,7 @@ import { MonthThermometerGauge } from '../components/MonthThermometerGauge';
 
 interface HomeScreenProps {
   onNavigate: (screen: ScreenId, categoryKey?: CategoryKey) => void;
-  onOpenExpenseModal: (categoryKey?: CategoryKey) => void;
+  onOpenExpenseModal: (categoryKey?: CategoryKey, date?: string, toEdit?: ExpenseItem | null, isDivided?: boolean) => void;
   onOpenIncomeModal: () => void;
   onOpenInstallmentModal: () => void;
   onOpenDepositModal: (bankId: string) => void;
