@@ -36,6 +36,7 @@ jobs:
         run: npm run typecheck
 
       - name: Unit tests
+        timeout-minutes: 3
         run: npm run test
 
       - name: Setup Java for Firestore rules tests
