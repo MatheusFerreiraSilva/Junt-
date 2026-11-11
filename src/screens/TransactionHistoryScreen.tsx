@@ -42,7 +42,7 @@ import {
 } from '../utils/unifiedLedger';
 
 interface TransactionHistoryScreenProps {
-  onOpenExpenseModal: () => void;
+  onOpenExpenseModal: (category?: CategoryKey, date?: string, toEdit?: ExpenseItem | null) => void;
   onOpenTriageModal?: (expense: ExpenseItem) => void;
 }
 
@@ -103,26 +103,56 @@ export const TransactionHistoryScreen: React.FC<TransactionHistoryScreenProps> =
       }
 
       // 5. Category Filter
-      if (selectedCategory !== 'all' && item.category !== selectedCategory) {
-        return false;
+      if (selectedCategory !== 'all') {
+        const matchesParent = item.category === selectedCategory;
+        const matchesSplit = item.rawExpense?.splits?.some((s) => s.category === selectedCategory);
+        if (!matchesParent && !matchesSplit) {
+          return false;
+        }
       }
 
       // 6. Search Term (Text or Brazilian Comma Amount e.g. "800,00")
       if (termText) {
         const titleMatch = item.title.toLowerCase().includes(termText);
+        const storeMatch = (item.rawExpense?.store || '').toLowerCase().includes(termText);
         const catMatch = item.categoryName.toLowerCase().includes(termText);
         const bankMatch = (item.bankName || '').toLowerCase().includes(termText);
         const fitidMatch = (item.fitid || '').toLowerCase().includes(termText);
         const notesMatch = (item.notes || '').toLowerCase().includes(termText);
+        const splitsMatch = Boolean(
+          item.rawExpense?.splits?.some(
+            (s) =>
+              (s.label || '').toLowerCase().includes(termText) ||
+              (s.description || '').toLowerCase().includes(termText) ||
+              (s.subcategory || '').toLowerCase().includes(termText) ||
+              (s.category || '').toLowerCase().includes(termText)
+          )
+        );
 
         let amountMatch = false;
         if (termNumVal !== undefined) {
-          amountMatch = Math.abs(item.amount - termNumVal) < 0.01 || item.amount.toString().includes(termText);
+          amountMatch =
+            Math.abs(item.amount - termNumVal) < 0.01 ||
+            item.amount.toString().includes(termText) ||
+            Boolean(
+              item.rawExpense?.splits?.some(
+                (s) => Math.abs((s.amountCents ? s.amountCents / 100 : s.amount) - termNumVal) < 0.01
+              )
+            );
         } else {
           amountMatch = item.amount.toString().includes(termText);
         }
 
-        if (!titleMatch && !catMatch && !bankMatch && !fitidMatch && !notesMatch && !amountMatch) {
+        if (
+          !titleMatch &&
+          !storeMatch &&
+          !catMatch &&
+          !bankMatch &&
+          !fitidMatch &&
+          !notesMatch &&
+          !amountMatch &&
+          !splitsMatch
+        ) {
           return false;
         }
       }
@@ -175,6 +205,10 @@ export const TransactionHistoryScreen: React.FC<TransactionHistoryScreenProps> =
 
   const handleEditItem = (item: StatementItem) => {
     if (item.entityType === 'expense' && item.rawExpense) {
+      if (item.rawExpense.splits && item.rawExpense.splits.length > 0) {
+        onOpenExpenseModal(undefined, undefined, item.rawExpense);
+        return;
+      }
       if (onOpenTriageModal) {
         onOpenTriageModal(item.rawExpense);
       } else {
@@ -485,10 +519,22 @@ export const TransactionHistoryScreen: React.FC<TransactionHistoryScreenProps> =
                     </span>
 
                     <div className="min-w-0">
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 flex-wrap">
                         <span className="font-bold text-slate-900 dark:text-white text-sm truncate">
                           {item.title}
                         </span>
+
+                        {item.rawExpense?.store && (
+                          <span className="text-[11px] text-slate-500 dark:text-slate-400 font-normal">
+                            ({item.rawExpense.store})
+                          </span>
+                        )}
+
+                        {item.rawExpense?.splits && item.rawExpense.splits.length > 0 && (
+                          <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-purple-50 dark:bg-purple-950 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800 shrink-0">
+                            ✂️ Dividida ({item.rawExpense.splits.length} grupos)
+                          </span>
+                        )}
 
                         {/* Origin Badges */}
                         {item.origin === 'pluggy_import' && (

@@ -36,6 +36,8 @@ export type PolicyMacroGroup = 'fixos' | 'variaveis' | 'investimentos' | 'penden
 export type ClassificationOrigin = 'manual_confirmed' | 'authorized_rule' | 'origin_link' | 'auto_suggestion';
 export type TemporalScope = 'this_occurrence' | 'future_occurrences' | 'selected_history';
 
+export type SplitLineType = 'item' | 'freight' | 'discount' | 'fee';
+
 export interface TransactionSplit {
   id: string; // unique split ID
   amount: number; // in R$
@@ -49,12 +51,18 @@ export interface TransactionSplit {
   notes?: string;
   fundingSource?: FundingSourceType;
   fundingGoalId?: string;
+  label?: string; // e.g. "Higiene", "Saúde", "Limpeza", "Frete", "Desconto"
+  lineType?: SplitLineType;
+  percentage?: number; // e.g. 50
+  targetDate?: string; // YYYY-MM-DD or YYYY-MM for planned/postponable
+  isPostponable?: boolean;
 }
 
 export interface ExpenseItem {
   foodPillar?: FoodPillarType;
   id: string;
   description: string;
+  store?: string; // Nome do estabelecimento comercial (ex: "Supermercado Pão de Açúcar", "Drogaria São Paulo")
   amount: number;
   category: CategoryKey;
   subcategory?: string; // e.g. "delivery", "eletrodomesticos", "supermercado", "restaurante", "aluguel", etc.
@@ -585,6 +593,12 @@ export interface BudgetPlanPolicyMeta {
   policyExplanation?: string;
 }
 
+export interface CategoryMatrixEntryCents {
+  fixedCents: number;
+  variableCents: number;
+  totalCents: number;
+}
+
 export interface BudgetPlanContract {
   id?: string;
   competence: string; // YYYY-MM
@@ -597,6 +611,11 @@ export interface BudgetPlanContract {
   categoryGroupMapping?: Record<CategoryKey, 'fixos' | 'variaveis'>;
   categoryPercentages: Record<DestinationKey, number>;
   categoryAmountsR$: Record<DestinationKey, number>;
+  // 28C: Matriz Categoria x Fixos/Variáveis em centavos inteiros e margem não atribuída
+  categoryMatrixCents?: Record<CategoryKey, CategoryMatrixEntryCents>;
+  additionalDestinationsCents?: Record<string, { label: string; amountCents: number }>;
+  unassignedVariableMarginCents?: number;
+  unassignedVariableMarginR$?: number;
   categoryLocks: Record<DestinationKey, boolean>;
   categoryFloorsR$: Record<DestinationKey, number>;
   categoryPriorities: Record<DestinationKey, 'P1' | 'P2' | 'P3'>;
@@ -610,6 +629,80 @@ export interface BudgetPlanContract {
   approvedAt?: string;
   approvedBy?: string;
   applyToFutureMonths?: boolean;
+}
+
+// 28C: Tipos para as Duas Visões Reconciliadas do Orçamento (Categorias vs Estrutura)
+export interface ReconciledStructureBlock {
+  key: 'fixos' | 'variaveis';
+  title: string;
+  plannedBudget: number; // R$
+  realizedLiquid: number; // R$ (fatias pagas)
+  pendingCommitments: number; // R$ (obrigações/parcelas pendentes)
+  projectedTotal: number; // realized + pending
+  signedMargin: number; // plannedBudget - projectedTotal
+  unallocatedVariableMargin?: number; // R$ (apenas em variáveis)
+  isOverCeiling: boolean;
+  overAmount: number; // R$
+  percentageUsed: number;
+}
+
+export interface ReconciledInvestmentBlock {
+  targetAmount: number; // R$ (ex: 10% da renda elegível alocada)
+  actualDeposited: number; // R$ (aportes realizados no mês)
+  remainingTarget: number; // R$ (diferença pendente de aporte)
+  isGoalMet: boolean;
+  percentageMet: number;
+}
+
+export interface ReconciledCategoryRow {
+  key: CategoryKey;
+  name: string;
+  emoji: string;
+  plannedBudget: number; // R$
+  fixedSpent: number; // R$ (fatias de natureza fixa)
+  variableSpent: number; // R$ (fatias de natureza variável)
+  realizedLiquid: number; // R$ (fixedSpent + variableSpent)
+  pendingCommitments: number; // R$ (obrigações pendentes da categoria)
+  projectedTotal: number; // R$ (realized + pending)
+  signedMargin: number; // R$ (plannedBudget - projectedTotal)
+  isOverCeiling: boolean;
+  overAmount: number; // R$
+  percentageUsed: number;
+}
+
+export interface ReconciledBudgetMatrixResult {
+  competence: string;
+  scope: DomainScope;
+  plannedNetIncome: number; // R$ (base alocada no plano)
+  receivedEligibleNetIncome: number; // R$ (renda alocada recebida no caixa)
+  policyRatios: { fixedPct: number; varPct: number; investPct: number };
+  
+  // Visão por Estrutura (Fixos vs Variáveis vs Aportes)
+  structureBlocks: {
+    fixos: ReconciledStructureBlock;
+    variaveis: ReconciledStructureBlock;
+    investimentos: ReconciledInvestmentBlock;
+  };
+
+  // Visão por Categorias
+  categories: ReconciledCategoryRow[];
+
+  // Totais Reconciliados Globais
+  totalPlannedBudget: number; // R$
+  totalRealizedLiquid: number; // R$
+  totalPendingCommitments: number; // R$
+  totalProjectedConsumption: number; // R$
+  totalSignedMargin: number; // R$
+  
+  // Consumo Extraordinário de Caixinha/Reserva (Path B - C43)
+  goalDirectConsumption: number; // R$
+  
+  // Saída Efetiva de Caixa (Pix / Débito / Dinheiro à vista)
+  cashOutflowSpent: number; // R$
+
+  // Matriz em centavos para o contrato v2.0
+  categoryMatrixCents: Record<CategoryKey, CategoryMatrixEntryCents>;
+  unassignedVariableMarginCents: number;
 }
 
 export interface AppState {

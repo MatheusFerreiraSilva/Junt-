@@ -53,9 +53,10 @@ import { CoupleSettlementCard } from '../components/CoupleSettlementCard';
 import { LIFE_TIERS } from '../utils/incomeTiersEngine';
 import { FoodPacingWeeklyCard } from '../components/FoodPacingWeeklyCard';
 import { WeeklySurplusHub } from '../components/WeeklySurplusHub';
-import { MonthThermometerGauge } from '../components/MonthThermometerGauge';
 import { ThermometerRaioXModal } from '../components/ThermometerRaioXModal';
 import { calculateThermometerEngine, ThermometerScope } from '../utils/thermometerEngine';
+import { FixedBillsPanelModal } from '../components/modals/FixedBillsPanelModal';
+import { MonthThermometerGauge } from '../components/MonthThermometerGauge';
 
 interface HomeScreenProps {
   onNavigate: (screen: ScreenId, categoryKey?: CategoryKey) => void;
@@ -133,7 +134,11 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
     executeMonthlyDeposit,
     predictiveBurnAlerts,
     aiPredictiveInsights,
+    reconciledBudgetMatrix,
   } = useFinance();
+
+  const [budgetViewMode, setBudgetViewMode] = useState<'categories' | 'structure'>('categories');
+  const [isFixedPanelOpen, setIsFixedPanelOpen] = useState(false);
 
   const thermometerEngineResult = useMemo(() => {
     const scope: ThermometerScope = viewMode === 'partner1' ? 'partner1' : viewMode === 'partner2' ? 'partner2' : 'couple';
@@ -765,98 +770,345 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
       </div>
 
       {/* ========================================================================= */}
-      {/* PRIORIDADE 4: AS 5 ÁREAS DA VIDA (CARDS INTERATIVOS CLICÁVEIS)            */}
+      {/* PRIORIDADE 4: AS 6 ÁREAS DA VIDA & VISÃO ESTRUTURAL RECONCILIADA (28C)    */}
       {/* ========================================================================= */}
-      <div className="clay-card p-6 sm:p-7 space-y-4">
-        <div className="flex items-center justify-between">
+      <div className="clay-card p-6 sm:p-7 space-y-5">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div>
-            <h3 className="text-base sm:text-lg font-black text-slate-950 dark:text-white font-display">
-              As 6 Áreas da Vida do Casal
-            </h3>
-            <p className="text-xs text-slate-700 dark:text-slate-300 font-medium">
-              Ordenadas por maior gasto. Toque em qualquer categoria para abrir o raio-x e despesas.
+            <div className="flex items-center gap-2">
+              <h3 className="text-base sm:text-lg font-black text-slate-950 dark:text-white font-display">
+                Orçamento Reconciliado 28C
+              </h3>
+              <span className="px-2 py-0.5 text-[10px] font-extrabold rounded-full bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-700">
+                Fixos ({reconciledBudgetMatrix.policyRatios.fixedPct}%) • Variáveis ({reconciledBudgetMatrix.policyRatios.varPct}%) • Aportes ({reconciledBudgetMatrix.policyRatios.investPct}%)
+              </span>
+            </div>
+            <p className="text-xs text-slate-700 dark:text-slate-300 font-medium mt-0.5">
+              Alternar entre visão por áreas e visão por estrutura financeira reconciliada
             </p>
           </div>
-          <button
-            onClick={() => onNavigate('categories')}
-            className="text-xs font-black text-accent-themed hover:underline flex items-center gap-1 transition-colors cursor-pointer"
-          >
-            Ver tela completa
-            <ChevronRight className="w-4 h-4" />
-          </button>
+
+          <div className="flex items-center gap-2 self-start sm:self-auto">
+            <div className="inline-flex p-1 bg-slate-200 dark:bg-slate-800 rounded-xl border border-slate-300 dark:border-slate-700">
+              <button
+                onClick={() => setBudgetViewMode('categories')}
+                className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-all cursor-pointer ${
+                  budgetViewMode === 'categories'
+                    ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-xs'
+                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                }`}
+              >
+                📊 Visão por Categorias
+              </button>
+              <button
+                onClick={() => setBudgetViewMode('structure')}
+                className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-all cursor-pointer ${
+                  budgetViewMode === 'structure'
+                    ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-xs'
+                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                }`}
+              >
+                🧱 Visão por Estrutura
+              </button>
+            </div>
+
+            <button
+              onClick={() => onNavigate('categories')}
+              className="text-xs font-black text-accent-themed hover:underline flex items-center gap-1 transition-colors cursor-pointer"
+            >
+              Tela completa
+              <ChevronRight className="w-4 h-4" />
+            </button>
+          </div>
         </div>
 
-        <div className="space-y-3">
-          {sortedCategories.map(catKey => {
-            const cat = CATEGORIES_BASE[catKey];
-            const spend = categoriesSpending[catKey];
-            const percent = Math.min(100, spend.percentageUsed);
+        {budgetViewMode === 'categories' ? (
+          <div className="space-y-3">
+            {reconciledBudgetMatrix.categories.map(row => {
+              const catKey = row.key;
+              const cat = CATEGORIES_BASE[catKey] || {
+                emoji: row.emoji,
+                name: row.name,
+                description: '',
+              };
+              const percent = Math.min(100, row.percentageUsed);
 
-            let barFill = 'bg-accent-primary';
-            let statusBadge = (
-              <span className="text-xs font-black text-accent-themed">
-                Resta {formatCurrency(spend.remaining)}
-              </span>
-            );
-
-            if (spend.isOver) {
-              barFill = 'bg-rose-500';
-              statusBadge = (
-                <span className="text-xs font-black text-rose-600 dark:text-rose-400 flex items-center gap-1">
-                  ⚠️ Passou {formatCurrency(Math.abs(spend.remaining))} do combinado
+              let barFill = 'bg-accent-primary';
+              let statusBadge = (
+                <span className="text-xs font-black text-accent-themed">
+                  Resta {formatCurrency(row.signedMargin)}
                 </span>
               );
-            } else if (spend.percentageUsed >= 85) {
-              barFill = 'bg-amber-500';
-              statusBadge = (
-                <span className="text-xs font-black text-amber-700 dark:text-amber-400">
-                  Atenção amiga: resta {formatCurrency(spend.remaining)}
-                </span>
-              );
-            }
 
-            return (
-              <div
-                key={catKey}
-                onClick={() => openCategoryModal(catKey)}
-                role="button"
-                tabIndex={0}
-                onKeyDown={e => e.key === 'Enter' && openCategoryModal(catKey)}
-                className="group p-4 rounded-2xl border-2 border-slate-200 dark:border-slate-700 bg-slate-50/80 dark:bg-slate-800/60 hover:border-slate-400 dark:hover:border-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 transition-all cursor-pointer shadow-xs focus:outline-none focus:ring-2 focus:ring-accent-primary"
-              >
-                <div className="flex items-center justify-between mb-2">
-                  <div className="flex items-center gap-2.5">
-                    <span className="text-2xl shrink-0 group-hover:scale-110 transition-transform">{cat.emoji}</span>
-                    <div>
-                      <span className="font-black text-slate-950 dark:text-white text-sm">{cat.name}</span>
-                      <span className="text-xs text-slate-600 dark:text-slate-300 font-semibold ml-2 hidden sm:inline">
-                        {cat.description}
-                      </span>
+              if (row.isOverCeiling) {
+                barFill = 'bg-rose-500';
+                statusBadge = (
+                  <span className="text-xs font-black text-rose-600 dark:text-rose-400 flex items-center gap-1">
+                    ⚠️ Estourou {formatCurrency(row.overAmount)} do teto de {row.name}
+                  </span>
+                );
+              } else if (row.percentageUsed >= 85) {
+                barFill = 'bg-amber-500';
+                statusBadge = (
+                  <span className="text-xs font-black text-amber-700 dark:text-amber-400">
+                    Atenção: resta {formatCurrency(row.signedMargin)}
+                  </span>
+                );
+              }
+
+              return (
+                <div
+                  key={catKey}
+                  onClick={() => openCategoryModal(catKey)}
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={e => e.key === 'Enter' && openCategoryModal(catKey)}
+                  className="group p-4 rounded-2xl border-2 border-slate-200 dark:border-slate-700 bg-slate-50/80 dark:bg-slate-800/60 hover:border-slate-400 dark:hover:border-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 transition-all cursor-pointer shadow-xs focus:outline-none focus:ring-2 focus:ring-accent-primary space-y-2"
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2.5">
+                      <span className="text-2xl shrink-0 group-hover:scale-110 transition-transform">{cat.emoji}</span>
+                      <div>
+                        <span className="font-black text-slate-950 dark:text-white text-sm">{row.name}</span>
+                        <div className="flex items-center gap-2 text-[11px] font-semibold text-slate-600 dark:text-slate-400 mt-0.5">
+                          <span className="text-indigo-600 dark:text-indigo-400 font-bold">Fixo: {formatCurrency(row.fixedSpent)}</span>
+                          <span>•</span>
+                          <span className="text-sky-600 dark:text-sky-400 font-bold">Variável: {formatCurrency(row.variableSpent)}</span>
+                          {row.pendingCommitments > 0 && (
+                            <>
+                              <span>•</span>
+                              <span className="text-amber-600 dark:text-amber-400 font-bold">Pendente: {formatCurrency(row.pendingCommitments)}</span>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="text-right">
+                      <div className="text-sm font-black text-slate-950 dark:text-white tabular-nums">
+                        {formatCurrency(row.realizedLiquid)}{' '}
+                        <span className="text-xs font-bold text-slate-600 dark:text-slate-300">
+                          / {formatCurrency(row.plannedBudget)}
+                        </span>
+                      </div>
+                      {statusBadge}
                     </div>
                   </div>
 
-                  <div className="text-right">
-                    <div className="text-sm font-black text-slate-950 dark:text-white tabular-nums">
-                      {formatCurrency(spend.spent)}{' '}
-                      <span className="text-xs font-bold text-slate-600 dark:text-slate-300">
-                        / {formatCurrency(spend.budget)}
-                      </span>
-                    </div>
-                    {statusBadge}
+                  {/* Glass Bar */}
+                  <div className="relative h-3.5 w-full bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden p-0.5 border border-slate-300 dark:border-slate-600">
+                    <div
+                      className={`h-full rounded-full transition-all duration-700 ${barFill}`}
+                      style={{ width: `${percent}%` }}
+                    />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="space-y-4">
+            {/* Bloco 1: Fixos do Mês */}
+            <div className="p-4 sm:p-5 rounded-2xl border-2 border-indigo-200 dark:border-indigo-900/60 bg-indigo-50/40 dark:bg-indigo-950/20 space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <span className="text-xl">📌</span>
+                  <div>
+                    <h4 className="text-sm sm:text-base font-black text-slate-900 dark:text-white flex items-center gap-2">
+                      Bloco 1: Custos Fixos do Mês
+                      <button
+                        onClick={() => setIsFixedPanelOpen(true)}
+                        className="text-xs font-extrabold text-indigo-600 dark:text-indigo-400 hover:underline cursor-pointer"
+                      >
+                        Painel completo →
+                      </button>
+                    </h4>
+                    <p className="text-xs text-slate-600 dark:text-slate-400 font-medium">
+                      Teto aprovado: {formatCurrency(reconciledBudgetMatrix.structureBlocks.fixos.plannedBudget)} ({reconciledBudgetMatrix.policyRatios.fixedPct}% da renda planejada)
+                    </p>
                   </div>
                 </div>
 
-                {/* Copo d'água / Glass Bar */}
-                <div className="relative h-3.5 w-full bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden p-0.5 border border-slate-300 dark:border-slate-600">
-                  <div
-                    className={`h-full rounded-full transition-all duration-700 ${barFill}`}
-                    style={{ width: `${percent}%` }}
-                  />
+                <div className="text-right">
+                  <span className="text-xs font-extrabold text-indigo-700 dark:text-indigo-300 bg-indigo-100 dark:bg-indigo-900/60 px-2.5 py-1 rounded-full border border-indigo-200 dark:border-indigo-800">
+                    Margem: {formatCurrency(reconciledBudgetMatrix.structureBlocks.fixos.signedMargin)}
+                  </span>
                 </div>
               </div>
-            );
-          })}
-        </div>
+
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 pt-1">
+                <div className="p-2.5 rounded-xl bg-white dark:bg-slate-800 border border-indigo-100 dark:border-slate-700">
+                  <div className="text-[10px] font-bold uppercase tracking-wider text-slate-600 dark:text-slate-400">Realizado Líquido</div>
+                  <div className="text-sm font-black text-slate-900 dark:text-white tabular-nums mt-0.5">
+                    {formatCurrency(reconciledBudgetMatrix.structureBlocks.fixos.realizedLiquid)}
+                  </div>
+                </div>
+                <div className="p-2.5 rounded-xl bg-white dark:bg-slate-800 border border-indigo-100 dark:border-slate-700">
+                  <div className="text-[10px] font-bold uppercase tracking-wider text-slate-600 dark:text-slate-400">Pendentes (Não baixados)</div>
+                  <div className="text-sm font-black text-amber-700 dark:text-amber-400 tabular-nums mt-0.5">
+                    {formatCurrency(reconciledBudgetMatrix.structureBlocks.fixos.pendingCommitments)}
+                  </div>
+                </div>
+                <div className="p-2.5 rounded-xl bg-white dark:bg-slate-800 border border-indigo-100 dark:border-slate-700">
+                  <div className="text-[10px] font-bold uppercase tracking-wider text-slate-600 dark:text-slate-400">Comprometido Projetado</div>
+                  <div className="text-sm font-black text-indigo-700 dark:text-indigo-300 tabular-nums mt-0.5">
+                    {formatCurrency(reconciledBudgetMatrix.structureBlocks.fixos.projectedTotal)}
+                  </div>
+                </div>
+                <div className="p-2.5 rounded-xl bg-white dark:bg-slate-800 border border-indigo-100 dark:border-slate-700">
+                  <div className="text-[10px] font-bold uppercase tracking-wider text-slate-600 dark:text-slate-400">Margem Fixos</div>
+                  <div className={`text-sm font-black tabular-nums mt-0.5 ${reconciledBudgetMatrix.structureBlocks.fixos.signedMargin >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
+                    {formatCurrency(reconciledBudgetMatrix.structureBlocks.fixos.signedMargin)}
+                  </div>
+                </div>
+              </div>
+
+              {/* Progress bar */}
+              <div className="relative h-3 w-full bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden p-0.5 border border-slate-300 dark:border-slate-600">
+                <div
+                  className={`h-full rounded-full transition-all duration-500 ${
+                    reconciledBudgetMatrix.structureBlocks.fixos.signedMargin < 0
+                      ? 'bg-rose-500'
+                      : 'bg-indigo-600'
+                  }`}
+                  style={{ width: `${Math.min(100, reconciledBudgetMatrix.structureBlocks.fixos.percentageUsed)}%` }}
+                />
+              </div>
+            </div>
+
+            {/* Bloco 2: Custos Variáveis */}
+            <div className="p-4 sm:p-5 rounded-2xl border-2 border-sky-200 dark:border-sky-900/60 bg-sky-50/40 dark:bg-sky-950/20 space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <span className="text-xl">🌊</span>
+                  <div>
+                    <h4 className="text-sm sm:text-base font-black text-slate-900 dark:text-white">
+                      Bloco 2: Custos Variáveis do Mês
+                    </h4>
+                    <p className="text-xs text-slate-600 dark:text-slate-400 font-medium">
+                      Teto aprovado: {formatCurrency(reconciledBudgetMatrix.structureBlocks.variaveis.plannedBudget)} ({reconciledBudgetMatrix.policyRatios.varPct}% da renda planejada)
+                    </p>
+                  </div>
+                </div>
+
+                <div className="text-right">
+                  <span className="text-xs font-extrabold text-sky-700 dark:text-sky-300 bg-sky-100 dark:bg-sky-900/60 px-2.5 py-1 rounded-full border border-sky-200 dark:border-sky-800">
+                    Margem livre: {formatCurrency(reconciledBudgetMatrix.structureBlocks.variaveis.signedMargin)}
+                  </span>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 pt-1">
+                <div className="p-2.5 rounded-xl bg-white dark:bg-slate-800 border border-sky-100 dark:border-slate-700">
+                  <div className="text-[10px] font-bold uppercase tracking-wider text-slate-600 dark:text-slate-400">Realizado Líquido</div>
+                  <div className="text-sm font-black text-slate-900 dark:text-white tabular-nums mt-0.5">
+                    {formatCurrency(reconciledBudgetMatrix.structureBlocks.variaveis.realizedLiquid)}
+                  </div>
+                </div>
+                <div className="p-2.5 rounded-xl bg-white dark:bg-slate-800 border border-sky-100 dark:border-slate-700">
+                  <div className="text-[10px] font-bold uppercase tracking-wider text-slate-600 dark:text-slate-400">Pendentes Variáveis</div>
+                  <div className="text-sm font-black text-amber-700 dark:text-amber-400 tabular-nums mt-0.5">
+                    {formatCurrency(reconciledBudgetMatrix.structureBlocks.variaveis.pendingCommitments)}
+                  </div>
+                </div>
+                <div className="p-2.5 rounded-xl bg-white dark:bg-slate-800 border border-sky-100 dark:border-slate-700">
+                  <div className="text-[10px] font-bold uppercase tracking-wider text-slate-600 dark:text-slate-400">Margem Não Atribuída</div>
+                  <div className="text-sm font-black text-sky-700 dark:text-sky-300 tabular-nums mt-0.5">
+                    {formatCurrency(reconciledBudgetMatrix.structureBlocks.variaveis.unallocatedVariableMargin || 0)}
+                  </div>
+                </div>
+                <div className="p-2.5 rounded-xl bg-white dark:bg-slate-800 border border-sky-100 dark:border-slate-700">
+                  <div className="text-[10px] font-bold uppercase tracking-wider text-slate-600 dark:text-slate-400">Margem Projetada</div>
+                  <div className={`text-sm font-black tabular-nums mt-0.5 ${reconciledBudgetMatrix.structureBlocks.variaveis.signedMargin >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
+                    {formatCurrency(reconciledBudgetMatrix.structureBlocks.variaveis.signedMargin)}
+                  </div>
+                </div>
+              </div>
+
+              {/* Progress bar */}
+              <div className="relative h-3 w-full bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden p-0.5 border border-slate-300 dark:border-slate-600">
+                <div
+                  className={`h-full rounded-full transition-all duration-500 ${
+                    reconciledBudgetMatrix.structureBlocks.variaveis.signedMargin < 0
+                      ? 'bg-rose-500'
+                      : 'bg-sky-500'
+                  }`}
+                  style={{ width: `${Math.min(100, reconciledBudgetMatrix.structureBlocks.variaveis.percentageUsed)}%` }}
+                />
+              </div>
+            </div>
+
+            {/* Bloco 3: Aportes / Investimentos (10%) */}
+            <div className="p-4 sm:p-5 rounded-2xl border-2 border-emerald-200 dark:border-emerald-900/60 bg-emerald-50/40 dark:bg-emerald-950/20 space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <span className="text-xl">📈</span>
+                  <div>
+                    <h4 className="text-sm sm:text-base font-black text-slate-900 dark:text-white">
+                      Bloco 3: Aportes & Investimentos ({reconciledBudgetMatrix.policyRatios.investPct}%)
+                    </h4>
+                    <p className="text-xs text-slate-600 dark:text-slate-400 font-medium">
+                      Premissa de aporte: {formatCurrency(reconciledBudgetMatrix.structureBlocks.investimentos.targetAmount)} (Fora das despesas e do consumo)
+                    </p>
+                  </div>
+                </div>
+
+                <div className="text-right">
+                  <span className="text-xs font-extrabold text-emerald-700 dark:text-emerald-300 bg-emerald-100 dark:bg-emerald-900/60 px-2.5 py-1 rounded-full border border-emerald-200 dark:border-emerald-800">
+                    Aportado: {reconciledBudgetMatrix.structureBlocks.investimentos.percentageMet.toFixed(0)}% da meta
+                  </span>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-3 gap-2.5 pt-1">
+                <div className="p-2.5 rounded-xl bg-white dark:bg-slate-800 border border-emerald-100 dark:border-slate-700">
+                  <div className="text-[10px] font-bold uppercase tracking-wider text-slate-600 dark:text-slate-400">Meta de Aporte</div>
+                  <div className="text-sm font-black text-slate-900 dark:text-white tabular-nums mt-0.5">
+                    {formatCurrency(reconciledBudgetMatrix.structureBlocks.investimentos.targetAmount)}
+                  </div>
+                </div>
+                <div className="p-2.5 rounded-xl bg-white dark:bg-slate-800 border border-emerald-100 dark:border-slate-700">
+                  <div className="text-[10px] font-bold uppercase tracking-wider text-slate-600 dark:text-slate-400">Realizado Efetivo</div>
+                  <div className="text-sm font-black text-emerald-600 dark:text-emerald-400 tabular-nums mt-0.5">
+                    {formatCurrency(reconciledBudgetMatrix.structureBlocks.investimentos.actualDeposited)}
+                  </div>
+                </div>
+                <div className="p-2.5 rounded-xl bg-white dark:bg-slate-800 border border-emerald-100 dark:border-slate-700">
+                  <div className="text-[10px] font-bold uppercase tracking-wider text-slate-600 dark:text-slate-400">Restante Planejado</div>
+                  <div className="text-sm font-black text-indigo-600 dark:text-indigo-400 tabular-nums mt-0.5">
+                    {formatCurrency(reconciledBudgetMatrix.structureBlocks.investimentos.remainingTarget)}
+                  </div>
+                </div>
+              </div>
+
+              <p className="text-[11px] font-semibold text-slate-600 dark:text-slate-400 italic">
+                💡 Aportes não realizados não viram despesa nem aumentam o consumo de despesas.
+              </p>
+            </div>
+
+            {/* Bloco Extraordinários (Path B - Caixinhas) */}
+            {reconciledBudgetMatrix.goalDirectConsumption > 0 && (
+              <div className="p-4 rounded-2xl border-2 border-purple-200 dark:border-purple-900/60 bg-purple-50/40 dark:bg-purple-950/20 space-y-2">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xl">🎯</span>
+                    <div>
+                      <h4 className="text-sm font-black text-slate-900 dark:text-white">
+                        Consumo Extraordinário / Caixinhas (Path B)
+                      </h4>
+                      <p className="text-xs text-slate-600 dark:text-slate-400 font-medium">
+                        Gastos diretos financiados por Cofrinhos: {formatCurrency(reconciledBudgetMatrix.goalDirectConsumption)}
+                      </p>
+                    </div>
+                  </div>
+                  <span className="text-[11px] font-extrabold text-purple-700 dark:text-purple-300 bg-purple-100 dark:bg-purple-900/60 px-2.5 py-1 rounded-full border border-purple-200 dark:border-purple-800">
+                    Blindado dos tetos mensais
+                  </span>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* ========================================================================= */}
@@ -2012,9 +2264,9 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                 {/* Se for Comida & Conveniência, exibir inteligência de abastecimento e pacing semanal */}
                 {selectedCategoryModalKey === 'comida' && (
                   <FoodPacingWeeklyCard
-                    onOpenExpenseModal={() => {
+                    onOpenExpenseModal={(cat, date, toEdit, isDivided) => {
                       setActiveModal(null);
-                      onOpenExpenseModal('comida');
+                      onOpenExpenseModal(cat || 'comida', date, toEdit, isDivided);
                     }}
                   />
                 )}
@@ -2153,6 +2405,14 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
       <MonthlyDepositGuideModal
         isOpen={isGuideModalOpen}
         onClose={() => setIsGuideModalOpen(false)}
+      />
+
+      {/* Painel de Fixos do Mês (Prompt 28I) */}
+      <FixedBillsPanelModal
+        isOpen={isFixedPanelOpen}
+        onClose={() => setIsFixedPanelOpen(false)}
+        initialMonth={state.currentMonth}
+        onNavigateToCategory={(cat) => onNavigate('categories', cat)}
       />
     </div>
   );

@@ -25,6 +25,13 @@ import {
   FinancialOperationRecord,
   FinancialOperationType,
   FinancialOperationState,
+  FundingSourceType,
+  SplitLineType,
+  ReconciledBudgetMatrixResult,
+  ReconciledStructureBlock,
+  ReconciledInvestmentBlock,
+  ReconciledCategoryRow,
+  CategoryMatrixEntryCents,
 } from '../types/finance';
 
 export type DomainScope = 'casal' | 'partner1' | 'partner2';
@@ -665,6 +672,45 @@ export function upgradeBudgetPlanContract(plan: Partial<BudgetPlanContract>): Bu
     incomeSourceMode: 'planned_net',
   };
 
+  // 28C: Construção da Matriz Categoria x Natureza em Centavos
+  const categoryMatrixCents: Record<CategoryKey, CategoryMatrixEntryCents> = plan.categoryMatrixCents || {
+    moradia: {
+      fixedCents: Math.round((categoryAmountsR$.moradia || 0) * 80),
+      variableCents: Math.round((categoryAmountsR$.moradia || 0) * 20),
+      totalCents: Math.round((categoryAmountsR$.moradia || 0) * 100),
+    },
+    protecao: {
+      fixedCents: Math.round((categoryAmountsR$.protecao || 0) * 80),
+      variableCents: Math.round((categoryAmountsR$.protecao || 0) * 20),
+      totalCents: Math.round((categoryAmountsR$.protecao || 0) * 100),
+    },
+    transporte: {
+      fixedCents: Math.round((categoryAmountsR$.transporte || 0) * 50),
+      variableCents: Math.round((categoryAmountsR$.transporte || 0) * 50),
+      totalCents: Math.round((categoryAmountsR$.transporte || 0) * 100),
+    },
+    comida: {
+      fixedCents: 0,
+      variableCents: Math.round((categoryAmountsR$.comida || 0) * 100),
+      totalCents: Math.round((categoryAmountsR$.comida || 0) * 100),
+    },
+    lazer: {
+      fixedCents: 0,
+      variableCents: Math.round((categoryAmountsR$.lazer || 0) * 100),
+      totalCents: Math.round((categoryAmountsR$.lazer || 0) * 100),
+    },
+    profissional: {
+      fixedCents: Math.round((categoryAmountsR$.profissional || 0) * 50),
+      variableCents: Math.round((categoryAmountsR$.profissional || 0) * 50),
+      totalCents: Math.round((categoryAmountsR$.profissional || 0) * 100),
+    },
+  };
+
+  const totalVarCategoryBudgetR$ = (categoryAmountsR$.comida || 0) + (categoryAmountsR$.lazer || 0) + (categoryAmountsR$.transporte || 0) + (categoryAmountsR$.profissional || 0);
+  const totalVarBudgetR$ = macroGroups.variaveis.amountR$;
+  const unassignedVariableMarginR$ = Math.max(0, roundMoney(totalVarBudgetR$ - totalVarCategoryBudgetR$));
+  const unassignedVariableMarginCents = Math.round(unassignedVariableMarginR$ * 100);
+
   return {
     id: plan.id || competence,
     competence,
@@ -677,6 +723,9 @@ export function upgradeBudgetPlanContract(plan: Partial<BudgetPlanContract>): Bu
     categoryGroupMapping: groupMapping,
     categoryPercentages,
     categoryAmountsR$: plan.categoryAmountsR$ || categoryAmountsR$,
+    categoryMatrixCents,
+    unassignedVariableMarginCents,
+    unassignedVariableMarginR$,
     categoryLocks: plan.categoryLocks || {
       moradia: false,
       transporte: false,
@@ -934,7 +983,9 @@ export function validateTransactionSplits(
   isValid: boolean;
   totalCents: number;
   splitSumCents: number;
+  totalSplitsAmount: number;
   discrepancyCents: number;
+  diffCents: number;
   error?: string;
 } {
   const totalCents = Math.round(totalAmount * 100);
@@ -943,7 +994,9 @@ export function validateTransactionSplits(
       isValid: false,
       totalCents,
       splitSumCents: 0,
+      totalSplitsAmount: 0,
       discrepancyCents: totalCents,
+      diffCents: totalCents,
       error: 'A divisão deve conter pelo menos 2 partes.',
     };
   }
@@ -959,7 +1012,9 @@ export function validateTransactionSplits(
       isValid: false,
       totalCents,
       splitSumCents,
+      totalSplitsAmount: splitSumCents / 100,
       discrepancyCents,
+      diffCents: discrepancyCents,
       error: `A soma das partes (R$ ${(splitSumCents / 100).toFixed(2)}) difere do total original (R$ ${(totalCents / 100).toFixed(2)}) em ${Math.abs(discrepancyCents)} centavos.`,
     };
   }
@@ -968,8 +1023,348 @@ export function validateTransactionSplits(
     isValid: true,
     totalCents,
     splitSumCents,
+    totalSplitsAmount: splitSumCents / 100,
     discrepancyCents: 0,
+    diffCents: 0,
   };
+}
+
+/**
+ * 28B: Representação projetada de uma fatia de despesa para consumo analítico.
+ * Cada fatia carrega sua finalidade (categoria), natureza, prioridade e fonte de custeio,
+ * sem duplicar transações financeiras na conta bancária.
+ */
+export interface ProjectedExpenseSlice {
+  splitId: string;
+  expenseId: string;
+  parentExpenseId: string;
+  parentExpense: ExpenseItem;
+  amount: number; // in R$
+  amountCents: number; // integer cents
+  category: CategoryKey;
+  subcategory?: string;
+  nature: ExpenseNature;
+  priority: ExpensePriority;
+  policyMacroGroup: PolicyMacroGroup;
+  classificationOrigin: ClassificationOrigin;
+  notes?: string;
+  fundingSource?: FundingSourceType;
+  fundingGoalId?: string;
+  fundingGoalName?: string;
+  isExcludedFromMonthlyBudget?: boolean;
+  exclusionReason?: 'manual' | 'asset_funding' | 'goal_direct';
+  date: string;
+  paidBy: PaidBy;
+  assignedTo?: 'couple' | 'partner1' | 'partner2' | 'casal';
+  paymentMethod?: 'pix' | 'debit' | 'credit' | 'cash';
+  bankName?: string;
+  store?: string;
+  lineType?: SplitLineType;
+  targetDate?: string;
+  isPostponable?: boolean;
+  isVirtualSingleSplit: boolean;
+}
+
+/**
+ * 28B: Projeta as fatias de uma despesa.
+ * Se a compra já possui grupos embutidos (splits), projeta cada fatia individualmente com seus centavos inteiros.
+ * Se for uma compra simples, projeta uma fatia virtual com a totalidade sem reescrever histórico.
+ */
+export function projectExpenseSplits(exp: ExpenseItem): ProjectedExpenseSlice[] {
+  if (exp.splits && exp.splits.length > 0) {
+    return exp.splits.map((s, idx) => {
+      const cents =
+        s.amountCents !== undefined && Number.isFinite(s.amountCents)
+          ? Math.round(s.amountCents)
+          : Math.round((s.amount || 0) * 100);
+      const nature: ExpenseNature = s.nature || exp.nature || 'variavel';
+      const priority: ExpensePriority = s.priority || exp.priority || 'essencial';
+      const policyMacroGroup: PolicyMacroGroup =
+        s.policyMacroGroup || (exp.policyMacroGroup ?? (nature === 'fixa' ? 'fixos' : 'variaveis'));
+      const classificationOrigin: ClassificationOrigin =
+        s.classificationOrigin || exp.classificationOrigin || 'manual_confirmed';
+      const fundingSource: FundingSourceType =
+        s.fundingSource || exp.fundingSource || 'month_budget';
+      const isExcluded =
+        exp.isExcludedFromMonthlyBudget || (fundingSource !== 'month_budget');
+
+      return {
+        splitId: s.id || `${exp.id}-split-${idx}`,
+        expenseId: exp.id,
+        parentExpenseId: exp.id,
+        parentExpense: exp,
+        amount: cents / 100,
+        amountCents: cents,
+        category: s.category || exp.category,
+        subcategory: s.subcategory || exp.subcategory,
+        nature,
+        priority,
+        policyMacroGroup,
+        classificationOrigin,
+        notes: s.notes || exp.notes,
+        fundingSource,
+        fundingGoalId: s.fundingGoalId || exp.fundingGoalId,
+        fundingGoalName: exp.fundingGoalName,
+        isExcludedFromMonthlyBudget: isExcluded,
+        exclusionReason: exp.exclusionReason,
+        date: exp.date,
+        paidBy: (s as any).paidBy || exp.paidBy,
+        assignedTo: (s as any).assignedTo || exp.assignedTo,
+        paymentMethod: exp.paymentMethod,
+        bankName: exp.bankName,
+        store: exp.store,
+        lineType: s.lineType || 'item',
+        targetDate: s.targetDate,
+        isPostponable: s.isPostponable,
+        isVirtualSingleSplit: false,
+      };
+    });
+  }
+
+  // Compra simples projeta uma fatia virtual única
+  const cents = Math.round((exp.amount || 0) * 100);
+  const nature: ExpenseNature = exp.nature || 'variavel';
+  const priority: ExpensePriority = exp.priority || 'essencial';
+  const policyMacroGroup: PolicyMacroGroup =
+    exp.policyMacroGroup || (nature === 'fixa' ? 'fixos' : 'variaveis');
+  const classificationOrigin: ClassificationOrigin =
+    exp.classificationOrigin || 'manual_confirmed';
+  const fundingSource: FundingSourceType = exp.fundingSource || 'month_budget';
+  const isExcluded =
+    exp.isExcludedFromMonthlyBudget || (fundingSource !== 'month_budget');
+
+  return [
+    {
+      splitId: `${exp.id}-virtual-split-0`,
+      expenseId: exp.id,
+      parentExpenseId: exp.id,
+      parentExpense: exp,
+      amount: exp.amount,
+      amountCents: cents,
+      category: exp.category,
+      subcategory: exp.subcategory,
+      nature,
+      priority,
+      policyMacroGroup,
+      classificationOrigin,
+      notes: exp.notes,
+      fundingSource,
+      fundingGoalId: exp.fundingGoalId,
+      fundingGoalName: exp.fundingGoalName,
+      isExcludedFromMonthlyBudget: isExcluded,
+      exclusionReason: exp.exclusionReason,
+      date: exp.date,
+      paidBy: exp.paidBy,
+      assignedTo: exp.assignedTo,
+      paymentMethod: exp.paymentMethod,
+      bankName: exp.bankName,
+      store: exp.store,
+      lineType: 'item',
+      isVirtualSingleSplit: true,
+    },
+  ];
+}
+
+/**
+ * 28B: Alocação determinística de centavos por percentual usando o método dos maiores restos (Hare-Niemeyer).
+ * Garante que a soma das parcelas em centavos inteiros seja estritamente igual ao total em centavos,
+ * com desempate determinístico e estável por índice. (C05)
+ */
+export function apportionSplitsByPercentage<T extends { percentage: number }>(
+  totalAmount: number,
+  items: T[]
+): Array<T & { amount: number; amountCents: number }> {
+  const totalCents = Math.round(totalAmount * 100);
+  if (!items || items.length === 0) return [];
+  if (items.length === 1) {
+    return [
+      {
+        ...items[0],
+        amountCents: totalCents,
+        amount: totalCents / 100,
+      },
+    ];
+  }
+
+  const sumPct = items.reduce((acc, it) => acc + (it.percentage || 0), 0);
+  const effectiveSumPct = sumPct > 0 ? sumPct : items.length;
+
+  let totalBaseCents = 0;
+  const quotas = items.map((it, idx) => {
+    const pct = sumPct > 0 ? it.percentage : 1;
+    const exactQuota = (totalCents * pct) / effectiveSumPct;
+    const baseCents = Math.floor(exactQuota);
+    const remainder = exactQuota - baseCents;
+    totalBaseCents += baseCents;
+    return {
+      index: idx,
+      baseCents,
+      remainder,
+      item: it,
+    };
+  });
+
+  const remainderCents = totalCents - totalBaseCents;
+
+  const sortedIndices = quotas
+    .map((q) => q.index)
+    .sort((a, b) => {
+      const diff = quotas[b].remainder - quotas[a].remainder;
+      if (Math.abs(diff) > 1e-9) return diff;
+      return a - b;
+    });
+
+  const bonusCentSet = new Set(sortedIndices.slice(0, remainderCents));
+
+  return quotas.map((q) => {
+    const finalCents = q.baseCents + (bonusCentSet.has(q.index) ? 1 : 0);
+    return {
+      ...q.item,
+      amountCents: finalCents,
+      amount: roundMoney(finalCents / 100),
+    };
+  });
+}
+
+/**
+ * 28B: Rateio explícito de frete ou desconto entre as linhas de itens,
+ * preservando o total líquido com soma exata em centavos. (C06)
+ */
+export function apportionDiscountOrFreight(
+  splits: TransactionSplit[],
+  adjustmentAmount: number,
+  type: 'discount' | 'freight'
+): TransactionSplit[] {
+  const adjustmentCents = Math.round(adjustmentAmount * 100);
+  if (adjustmentCents === 0 || !splits || splits.length === 0) return splits;
+
+  // Filtrar apenas linhas de itens (não fretes ou descontos anteriores)
+  const itemSplits = splits.filter((s) => !s.lineType || s.lineType === 'item');
+  if (itemSplits.length === 0) return splits;
+
+  const totalItemCents = itemSplits.reduce((acc, s) => acc + s.amountCents, 0);
+  if (totalItemCents <= 0) return splits;
+
+  let allocatedCentsSum = 0;
+  const quotas = itemSplits.map((s, idx) => {
+    const exactShare = (adjustmentCents * s.amountCents) / totalItemCents;
+    const baseShare = Math.floor(exactShare);
+    const remainder = exactShare - baseShare;
+    allocatedCentsSum += baseShare;
+    return {
+      id: s.id,
+      index: idx,
+      baseShare,
+      remainder,
+    };
+  });
+
+  const remainderToDistribute = adjustmentCents - allocatedCentsSum;
+  const sorted = quotas
+    .slice()
+    .sort((a, b) => {
+      const diff = b.remainder - a.remainder;
+      if (Math.abs(diff) > 1e-9) return diff;
+      return a.index - b.index;
+    });
+
+  const bonusSet = new Set(sorted.slice(0, remainderToDistribute).map((q) => q.id));
+
+  return splits.map((s) => {
+    if (s.lineType && s.lineType !== 'item') return s;
+    const q = quotas.find((item) => item.id === s.id);
+    if (!q) return s;
+
+    const deltaCents = q.baseShare + (bonusSet.has(s.id) ? 1 : 0);
+    const nextCents = type === 'discount' ? Math.max(0, s.amountCents - deltaCents) : s.amountCents + deltaCents;
+    return {
+      ...s,
+      amountCents: nextCents,
+      amount: roundMoney(nextCents / 100),
+    };
+  });
+}
+
+/**
+ * 28B: Seletor comum de fatias com competência e escopo.
+ * Rastreia as despesas e suas divisões sem duplicar transações pai/filho.
+ */
+export function selectExpenseSlices(
+  expenses: ExpenseItem[],
+  scope: DomainScope = 'casal',
+  monthKey?: string
+): ProjectedExpenseSlice[] {
+  if (!expenses || expenses.length === 0) return [];
+
+  const parentIdsWithSplits = new Set(
+    expenses.filter((e) => e.splits && e.splits.length > 0).map((e) => e.id)
+  );
+
+  const slices: ProjectedExpenseSlice[] = [];
+
+  for (const exp of expenses) {
+    if (exp.splitParentId && parentIdsWithSplits.has(exp.splitParentId)) {
+      continue;
+    }
+
+    if (monthKey && exp.date && !exp.date.startsWith(monthKey)) {
+      continue;
+    }
+
+    if (!isEntityInScope(exp.paidBy, scope)) {
+      continue;
+    }
+
+    const expSlices = projectExpenseSplits(exp);
+    slices.push(...expSlices);
+  }
+
+  return slices;
+}
+
+/**
+ * 28B: Total gasto por categoria a partir das fatias projetadas.
+ * Aloca exatamente a parcela de cada grupo à sua categoria correspondente. (C01, C44)
+ */
+export function selectSplitsCategorySpending(
+  state: AppState,
+  scope: DomainScope = 'casal',
+  monthKey?: string
+): Record<CategoryKey, number> {
+  const res: Record<CategoryKey, number> = {
+    moradia: 0,
+    transporte: 0,
+    comida: 0,
+    lazer: 0,
+    protecao: 0,
+    profissional: 0,
+  };
+
+  const slices = selectExpenseSlices(state.expenses || [], scope, monthKey);
+  for (const slice of slices) {
+    if (slice.isExcludedFromMonthlyBudget || slice.fundingSource !== 'month_budget') {
+      continue;
+    }
+    const cat = slice.category;
+    if ((res as any)[cat] === undefined) {
+      (res as any)[cat] = 0;
+    }
+    let portion = slice.amount;
+    if (scope === 'partner1') {
+      const pct =
+        slice.parentExpense.splitPartner1Pct ??
+        (slice.paidBy === 'partner1' ? 100 : slice.paidBy === 'partner2' ? 0 : 50);
+      portion = (portion * pct) / 100;
+    } else if (scope === 'partner2') {
+      const pct =
+        slice.parentExpense.splitPartner2Pct ??
+        (slice.paidBy === 'partner2' ? 100 : slice.paidBy === 'partner1' ? 0 : 50);
+      portion = (portion * pct) / 100;
+    }
+    (res as any)[cat] = roundMoney((res as any)[cat] + portion);
+  }
+
+  return res;
 }
 
 /**
@@ -1488,5 +1883,288 @@ export function executeFinancialOperation(
     financialOperations: nextOps,
     piggyBanks: nextPiggyBanks,
     coupleGoals: nextCoupleGoals,
+  };
+}
+
+/**
+ * 28C: Seletor unificado para as Duas Visões Reconciliadas do Orçamento (Categorias vs Estrutura).
+ * Reconcilia Plano Aprovado, Compromissos Pendentes (não baixados), Realizado Líquido, Comprometido Projetado,
+ * Margem Assinada, Margem Variável não atribuída e Investimentos (Aporte 10%).
+ */
+export function selectReconciledBudgetMatrix(
+  state: AppState,
+  scope: DomainScope = 'casal',
+  monthKey?: string
+): ReconciledBudgetMatrixResult {
+  const currentMonthKey = monthKey || state.currentMonth || '2026-11';
+  const plannedNetIncome = selectPlannedNetIncome(state, scope, currentMonthKey);
+  const receivedEligibleNetIncome = selectEligibleNetIncomeReceived(state, scope, currentMonthKey);
+
+  // Determina percentuais da política (ex: 40/50/10, 30/60/10, 60/30/10 ou 50/40/10)
+  const plan = state.monthlyBudgetPlans?.[currentMonthKey];
+  let fixedPct = plan?.macroGroups?.fixos?.percentage ?? 60;
+  let varPct = plan?.macroGroups?.variaveis?.percentage ?? 30;
+  let investPct = plan?.macroGroups?.investimentos?.percentage ?? 10;
+
+  if (!plan && state.categoryPercentages) {
+    const p = state.categoryPercentages;
+    const f = (p.moradia || 0) + (p.protecao || 0);
+    const v = (p.comida || 0) + (p.lazer || 0) + (p.transporte || 0) + (p.profissional || 0);
+    const i = p.investimentos ?? 10;
+    if (Math.abs(f + v + i - 100) < 1) {
+      fixedPct = f;
+      varPct = v;
+      investPct = i;
+    }
+  }
+
+  const fixedBudget = roundMoney((plannedNetIncome * fixedPct) / 100);
+  const varBudget = roundMoney((plannedNetIncome * varPct) / 100);
+  const investTarget = roundMoney((plannedNetIncome * investPct) / 100);
+
+  // 1. Slices de despesas para a competência (somente orçamento rotineiro do mês)
+  const allSlices = selectExpenseSlices(state.expenses || [], scope, currentMonthKey);
+  const monthBudgetSlices = allSlices.filter(
+    (s) => !s.isExcludedFromMonthlyBudget && (!s.fundingSource || s.fundingSource === 'month_budget')
+  );
+
+  const catSpentFixed: Record<CategoryKey, number> = {
+    moradia: 0, transporte: 0, comida: 0, lazer: 0, protecao: 0, profissional: 0
+  };
+  const catSpentVar: Record<CategoryKey, number> = {
+    moradia: 0, transporte: 0, comida: 0, lazer: 0, protecao: 0, profissional: 0
+  };
+
+  for (const s of monthBudgetSlices) {
+    const cat = s.category;
+    let amt = s.amount;
+    if (scope === 'partner1') {
+      const pct = s.parentExpense.splitPartner1Pct ?? (s.paidBy === 'partner1' ? 100 : s.paidBy === 'partner2' ? 0 : 50);
+      amt = (amt * pct) / 100;
+    } else if (scope === 'partner2') {
+      const pct = s.parentExpense.splitPartner2Pct ?? (s.paidBy === 'partner2' ? 100 : s.paidBy === 'partner1' ? 0 : 50);
+      amt = (amt * pct) / 100;
+    }
+
+    if (s.nature === 'fixo' || s.nature === 'fixa') {
+      catSpentFixed[cat] = roundMoney((catSpentFixed[cat] || 0) + amt);
+    } else {
+      catSpentVar[cat] = roundMoney((catSpentVar[cat] || 0) + amt);
+    }
+  }
+
+  // 2. Compromissos pendentes não baixados
+  const catPending: Record<CategoryKey, number> = {
+    moradia: 0, transporte: 0, comida: 0, lazer: 0, protecao: 0, profissional: 0
+  };
+  let fixedPendingTotal = 0;
+  let varPendingTotal = 0;
+
+  const bills = state.fixedBillAlerts || [];
+  for (const b of bills) {
+    if (b.status === 'pago' || b.status === 'estornado' || b.status === 'paid') continue;
+    if (currentMonthKey && b.dueDate && !b.dueDate.startsWith(currentMonthKey)) continue;
+    if (!isEntityInScope(b.assignedTo || 'both', scope)) continue;
+
+    let bAmt = b.amount || 0;
+    if (scope === 'partner1') {
+      bAmt = (bAmt * (b.splitPartner1Pct ?? 50)) / 100;
+    } else if (scope === 'partner2') {
+      bAmt = (bAmt * (b.splitPartner2Pct ?? 50)) / 100;
+    }
+    bAmt = roundMoney(bAmt);
+
+    const cat = b.category || 'moradia';
+    catPending[cat] = roundMoney((catPending[cat] || 0) + bAmt);
+    fixedPendingTotal = roundMoney(fixedPendingTotal + bAmt);
+  }
+
+  const installments = state.installments || [];
+  for (const inst of installments) {
+    const occs = inst.occurrences || [];
+    for (const occ of occs) {
+      const matchMonth = occ.competenceMonth === currentMonthKey || (occ.dueDate && occ.dueDate.startsWith(currentMonthKey || ''));
+      if (matchMonth) {
+        if (!isEntityInScope(inst.paidBy || 'both', scope)) continue;
+        let instAmt = occ.amountR$ || (occ.amountCents ? occ.amountCents / 100 : (inst.installmentValue || 0));
+        if (scope === 'partner1') {
+          instAmt = (instAmt * (inst.splitPartner1Pct ?? 50)) / 100;
+        } else if (scope === 'partner2') {
+          instAmt = (instAmt * (inst.splitPartner2Pct ?? 50)) / 100;
+        }
+        instAmt = roundMoney(instAmt);
+
+        const cat = inst.category || 'moradia';
+        const isFixa = inst.nature === 'fixo' || inst.nature === 'fixa';
+
+        if (occ.status === 'paid' || occ.status === 'pago') {
+          if (isFixa) {
+            catSpentFixed[cat] = roundMoney((catSpentFixed[cat] || 0) + instAmt);
+          } else {
+            catSpentVar[cat] = roundMoney((catSpentVar[cat] || 0) + instAmt);
+          }
+        } else if (occ.status === 'pending' || occ.status === 'previsto') {
+          catPending[cat] = roundMoney((catPending[cat] || 0) + instAmt);
+          if (isFixa) {
+            fixedPendingTotal = roundMoney(fixedPendingTotal + instAmt);
+          } else {
+            varPendingTotal = roundMoney(varPendingTotal + instAmt);
+          }
+        }
+      }
+    }
+  }
+
+const CATEGORY_NAMES_MAP: Record<CategoryKey, { name: string; emoji: string }> = {
+  moradia: { name: 'Moradia', emoji: '🏠' },
+  comida: { name: 'Comida & Conveniência', emoji: '🍽️' },
+  lazer: { name: 'Lazer', emoji: '🎮' },
+  protecao: { name: 'Proteção', emoji: '🛡️' },
+  profissional: { name: 'Profissional', emoji: '📚' },
+  transporte: { name: 'Transporte & Mobilidade', emoji: '🚗' },
+};
+
+  // 3. Cálculo das Linhas por Categoria
+  const categoryKeys: CategoryKey[] = ['moradia', 'transporte', 'comida', 'lazer', 'protecao', 'profissional'];
+  const categoryPercentages = plan?.categoryPercentages || state.categoryPercentages || {
+    moradia: 30, transporte: 10, comida: 25, lazer: 15, protecao: 10, profissional: 0
+  };
+
+  let totalAllocatedVarCatBudget = 0;
+  const categories: ReconciledCategoryRow[] = categoryKeys.map((key) => {
+    const catInfo = CATEGORY_NAMES_MAP[key] || { name: key, emoji: '🏷️' };
+    const pct = categoryPercentages[key] || 0;
+    const plannedBudget = roundMoney((plannedNetIncome * pct) / 100);
+
+    const fixedSpent = catSpentFixed[key] || 0;
+    const variableSpent = catSpentVar[key] || 0;
+    const realizedLiquid = roundMoney(fixedSpent + variableSpent);
+    const pendingCommitments = catPending[key] || 0;
+    const projectedTotal = roundMoney(realizedLiquid + pendingCommitments);
+    const signedMargin = roundMoney(plannedBudget - projectedTotal);
+    const isOverCeiling = projectedTotal > plannedBudget && plannedBudget > 0;
+    const overAmount = isOverCeiling ? roundMoney(projectedTotal - plannedBudget) : 0;
+    const percentageUsed = Math.min(100, Math.round((projectedTotal / (plannedBudget || 1)) * 100));
+
+    if (key !== 'moradia' && key !== 'protecao') {
+      totalAllocatedVarCatBudget += plannedBudget;
+    }
+
+    return {
+      key,
+      name: catInfo.name,
+      emoji: catInfo.emoji,
+      plannedBudget,
+      fixedSpent,
+      variableSpent,
+      realizedLiquid,
+      pendingCommitments,
+      projectedTotal,
+      signedMargin,
+      isOverCeiling,
+      overAmount,
+      percentageUsed,
+    };
+  });
+
+  // 4. Blocos de Estrutura
+  const totalFixedSpent = roundMoney(Object.values(catSpentFixed).reduce((s, v) => s + v, 0));
+  const totalVarSpent = roundMoney(Object.values(catSpentVar).reduce((s, v) => s + v, 0));
+
+  const fixosBlock: ReconciledStructureBlock = {
+    key: 'fixos',
+    title: 'Despesas Fixas & Compromissos',
+    plannedBudget: fixedBudget,
+    realizedLiquid: totalFixedSpent,
+    pendingCommitments: fixedPendingTotal,
+    projectedTotal: roundMoney(totalFixedSpent + fixedPendingTotal),
+    signedMargin: roundMoney(fixedBudget - (totalFixedSpent + fixedPendingTotal)),
+    isOverCeiling: (totalFixedSpent + fixedPendingTotal) > fixedBudget && fixedBudget > 0,
+    overAmount: Math.max(0, roundMoney((totalFixedSpent + fixedPendingTotal) - fixedBudget)),
+    percentageUsed: Math.min(100, Math.round(((totalFixedSpent + fixedPendingTotal) / (fixedBudget || 1)) * 100)),
+  };
+
+  const unallocatedVariableMargin = Math.max(0, roundMoney(varBudget - totalAllocatedVarCatBudget));
+
+  const variaveisBlock: ReconciledStructureBlock = {
+    key: 'variaveis',
+    title: 'Gastos Variáveis & Rotina',
+    plannedBudget: varBudget,
+    realizedLiquid: totalVarSpent,
+    pendingCommitments: varPendingTotal,
+    projectedTotal: roundMoney(totalVarSpent + varPendingTotal),
+    signedMargin: roundMoney(varBudget - (totalVarSpent + varPendingTotal)),
+    unallocatedVariableMargin,
+    isOverCeiling: (totalVarSpent + varPendingTotal) > varBudget && varBudget > 0,
+    overAmount: Math.max(0, roundMoney((totalVarSpent + varPendingTotal) - varBudget)),
+    percentageUsed: Math.min(100, Math.round(((totalVarSpent + varPendingTotal) / (varBudget || 1)) * 100)),
+  };
+
+  // 5. Bloco de Investimentos (Aporte de Longo Prazo 10%)
+  const ops = state.financialOperations || [];
+  const depositsInMonth = ops.filter((op) => {
+    if (op.type !== 'GOAL_DEPOSIT') return false;
+    if (currentMonthKey && !op.date.startsWith(currentMonthKey)) return false;
+    if (op.state === 'reverted') return false;
+    return isEntityInScope(op.authorizedBy as any, scope);
+  });
+  const actualDeposited = roundMoney(depositsInMonth.reduce((sum, op) => sum + op.amountCents / 100, 0));
+  const remainingTarget = Math.max(0, roundMoney(investTarget - actualDeposited));
+
+  const investimentosBlock: ReconciledInvestmentBlock = {
+    targetAmount: investTarget,
+    actualDeposited,
+    remainingTarget,
+    isGoalMet: actualDeposited >= investTarget,
+    percentageMet: Math.min(100, Math.round((actualDeposited / (investTarget || 1)) * 100)),
+  };
+
+  // 6. Path B: Consumo Direto de Caixinha / Reserva (C43)
+  const goalDirectConsumption = selectGoalDirectConsumptionExpenses(state, scope, currentMonthKey);
+
+  // 7. Saída Efetiva de Caixa (à vista: pix/débito/dinheiro)
+  const cashOutflowSpent = roundMoney(
+    monthBudgetSlices
+      .filter((s) => s.paymentMethod !== 'credit')
+      .reduce((sum, s) => sum + s.amount, 0)
+  );
+
+  // 8. Matriz em centavos para o contrato v2.0
+  const categoryMatrixCents: Record<CategoryKey, CategoryMatrixEntryCents> = {} as any;
+  for (const catRow of categories) {
+    categoryMatrixCents[catRow.key] = {
+      fixedCents: Math.round(catRow.fixedSpent * 100),
+      variableCents: Math.round(catRow.variableSpent * 100),
+      totalCents: Math.round(catRow.realizedLiquid * 100),
+    };
+  }
+
+  const totalPlannedBudget = roundMoney(fixedBudget + varBudget);
+  const totalRealizedLiquid = roundMoney(totalFixedSpent + totalVarSpent);
+  const totalPendingCommitments = roundMoney(fixedPendingTotal + varPendingTotal);
+  const totalProjectedConsumption = roundMoney(totalRealizedLiquid + totalPendingCommitments);
+  const totalSignedMargin = roundMoney(totalPlannedBudget - totalProjectedConsumption);
+
+  return {
+    competence: currentMonthKey,
+    scope,
+    plannedNetIncome,
+    receivedEligibleNetIncome,
+    policyRatios: { fixedPct, varPct, investPct },
+    structureBlocks: {
+      fixos: fixosBlock,
+      variaveis: variaveisBlock,
+      investimentos: investimentosBlock,
+    },
+    categories,
+    totalPlannedBudget,
+    totalRealizedLiquid,
+    totalPendingCommitments,
+    totalProjectedConsumption,
+    totalSignedMargin,
+    goalDirectConsumption,
+    cashOutflowSpent,
+    categoryMatrixCents,
+    unassignedVariableMarginCents: Math.round(unallocatedVariableMargin * 100),
   };
 }

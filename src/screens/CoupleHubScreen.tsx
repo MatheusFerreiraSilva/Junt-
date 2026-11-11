@@ -38,10 +38,12 @@ import {
   SavingsPiggyBank,
 } from '../types/finance';
 import { formatCurrency } from '../utils/formatters';
+import { FixedBillsPanelModal } from '../components/modals/FixedBillsPanelModal';
 
 type SubTab = 'goals' | 'vacation' | 'wishlist' | 'dreams' | 'bills' | 'profile';
 
 export const CoupleHubScreen: React.FC = () => {
+  const [isFixedPanelOpen, setIsFixedPanelOpen] = useState(false);
   const {
     state,
     addPiggyBank,
@@ -1391,13 +1393,21 @@ export const CoupleHubScreen: React.FC = () => {
               </p>
             </div>
 
-            <button
-              onClick={handleOpenCreateBill}
-              className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-2xl bg-[#111318] text-white text-xs font-black shadow-md hover:bg-slate-800 active:scale-95 transition-all cursor-pointer"
-            >
-              <Plus className="w-4 h-4 stroke-[3]" />
-              <span>+ Nova Conta Fixa</span>
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setIsFixedPanelOpen(true)}
+                className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-2xl bg-indigo-600 text-white text-xs font-black shadow-md hover:bg-indigo-700 active:scale-95 transition-all cursor-pointer"
+              >
+                <span>📌 Painel Fixos do Mês</span>
+              </button>
+              <button
+                onClick={handleOpenCreateBill}
+                className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-2xl bg-[#111318] text-white text-xs font-black shadow-md hover:bg-slate-800 active:scale-95 transition-all cursor-pointer"
+              >
+                <Plus className="w-4 h-4 stroke-[3]" />
+                <span>+ Nova Conta Fixa</span>
+              </button>
+            </div>
           </div>
 
           {fixedBills.length === 0 ? (
@@ -1850,6 +1860,13 @@ export const CoupleHubScreen: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* PAINEL DE FIXOS DO MÊS (PROMPT 28I) */}
+      <FixedBillsPanelModal
+        isOpen={isFixedPanelOpen}
+        onClose={() => setIsFixedPanelOpen(false)}
+        initialMonth={state.currentMonth}
+      />
     </div>
   );
 };

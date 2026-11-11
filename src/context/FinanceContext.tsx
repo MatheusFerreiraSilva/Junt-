@@ -82,6 +82,7 @@ import {
   FixedBillAlert,
   CoupleWishlistItem,
   DreamSimulation,
+  ReconciledBudgetMatrixResult,
 } from '../types/finance';
 import {
   DEFAULT_PUSH_SETTINGS,
@@ -123,7 +124,14 @@ import {
 } from '../utils/coupleReconciliation';
 import { calculateFoodPacingMetrics } from '../utils/foodPacingEngine';
 import { generateAIPredictiveInsights } from '../utils/aiPredictiveInsightsEngine';
-import { upgradeBudgetPlanContract, selectEligibleNetIncome } from '../utils/domainSelectors';
+import {
+  upgradeBudgetPlanContract,
+  selectEligibleNetIncome,
+  validateTransactionSplits,
+  projectExpenseSplits,
+  roundMoney,
+  selectReconciledBudgetMatrix,
+} from '../utils/domainSelectors';
 
 export const CATEGORIES_BASE: Record<CategoryKey, { name: string; emoji: string; description: string; colorHex: string; bgLight: string; borderHex: string }> = {
   moradia: {
@@ -413,6 +421,7 @@ export interface FinanceContextType {
   toggleInitialHomePhase: () => void;
   justFinishedInstallment: InstallmentPurchase | null;
   historicalTrends: MonthTrendRecord[];
+  reconciledBudgetMatrix: ReconciledBudgetMatrixResult;
   
   // Actions
   addExpense: (expense: Omit<ExpenseItem, 'id'>) => void;
@@ -1551,12 +1560,22 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
     });
 
     currentMonthExpenses.forEach(exp => {
-      // REGRA DE BLINDAGEM ORÇAMENTÁRIA (Intenção de Gasto Estratégico & Triagem):
-      // Gastos financiados pelo Excesso da Reserva, Caixinhas de Objetivo ou Mesada Individual
-      // NÃO consomem o orçamento da categoria do mês (Moradia, Lazer, etc. ficam 100% livres para a rotina diária).
-      const isExcluded = exp.isExcludedFromMonthlyBudget || (exp.fundingSource && exp.fundingSource !== 'month_budget');
-      if (res[exp.category] && !isExcluded) {
-        res[exp.category].spent += exp.amount;
+      // 28B: Compra única com divisão por finalidade
+      // Se a compra possui splits, cada grupo debita sua categoria correspondente.
+      // Se for compra simples sem splits, projeta a categoria única.
+      if (exp.splits && exp.splits.length > 0) {
+        exp.splits.forEach(s => {
+          const isExcluded = exp.isExcludedFromMonthlyBudget || (s.fundingSource && s.fundingSource !== 'month_budget');
+          if (res[s.category] && !isExcluded) {
+            const splitVal = s.amountCents !== undefined ? s.amountCents / 100 : s.amount;
+            res[s.category].spent += splitVal;
+          }
+        });
+      } else {
+        const isExcluded = exp.isExcludedFromMonthlyBudget || (exp.fundingSource && exp.fundingSource !== 'month_budget');
+        if (res[exp.category] && !isExcluded) {
+          res[exp.category].spent += exp.amount;
+        }
       }
     });
 
@@ -1571,7 +1590,8 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
 
     (Object.keys(CATEGORIES_BASE) as CategoryKey[]).forEach(catKey => {
       const cat = res[catKey];
-      cat.remaining = cat.budget - cat.spent;
+      cat.spent = roundMoney(cat.spent);
+      cat.remaining = roundMoney(cat.budget - cat.spent);
       cat.percentageUsed = cat.budget > 0 ? Math.round((cat.spent / cat.budget) * 100) : 0;
       cat.isOver = cat.spent > cat.budget;
     });
@@ -2364,16 +2384,32 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
       }
     }
 
+    if (expense.splits && expense.splits.length > 0) {
+      const validation = validateTransactionSplits(numAmount, expense.splits);
+      if (!validation.isValid) {
+        throw new Error(validation.error || 'A soma das divisões deve ser exatamente igual ao total da compra.');
+      }
+    }
+
     const exclusionReason = expense.exclusionReason || (fundingSource !== 'month_budget' ? 'asset_funding' : (expense.isExcludedFromMonthlyBudget ? 'manual' : undefined));
     const isExcluded = fundingSource !== 'month_budget' || !!expense.isExcludedFromMonthlyBudget;
 
     const newExpense: ExpenseItem = {
       ...expense,
       description: desc,
+      store: expense.store?.trim(),
       amount: numAmount,
       date: dateStr,
       category: finalCat,
       subcategory: finalSub,
+      splits: expense.splits && expense.splits.length > 0
+        ? expense.splits.map((s, idx) => ({
+            ...s,
+            id: s.id || `split-${Date.now()}-${idx}`,
+            amountCents: s.amountCents !== undefined ? Math.round(s.amountCents) : Math.round(s.amount * 100),
+            amount: s.amountCents !== undefined ? Math.round(s.amountCents) / 100 : s.amount,
+          }))
+        : undefined,
       fundingSource,
       isExcludedFromMonthlyBudget: isExcluded,
       exclusionReason,
@@ -3980,6 +4016,13 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
       }
     }
 
+    if (incomingFields.splits && incomingFields.splits.length > 0) {
+      const validation = validateTransactionSplits(draftAmount, incomingFields.splits);
+      if (!validation.isValid) {
+        throw new Error(validation.error || 'A soma das divisões deve ser exatamente igual ao total da compra.');
+      }
+    }
+
     setState(prev => {
       const currentOld = prev.expenses.find(e => e.id === targetId);
       if (!currentOld) return prev;
@@ -4028,8 +4071,19 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
         ...currentOld,
         ...incomingFields,
         description: draftDesc,
+        store: incomingFields.store !== undefined ? incomingFields.store?.trim() : currentOld.store,
         amount: draftAmount,
         date: draftDate || currentOld.date,
+        splits: incomingFields.splits !== undefined
+          ? (incomingFields.splits && incomingFields.splits.length > 0
+              ? incomingFields.splits.map((s, idx) => ({
+                  ...s,
+                  id: s.id || `split-${Date.now()}-${idx}`,
+                  amountCents: s.amountCents !== undefined ? Math.round(s.amountCents) : Math.round(s.amount * 100),
+                  amount: s.amountCents !== undefined ? Math.round(s.amountCents) / 100 : s.amount,
+                }))
+              : undefined)
+          : currentOld.splits,
         fundingSource: newSource,
         fundingGoalId: newGoalId,
         isExcludedFromMonthlyBudget: isExcluded,
@@ -5568,6 +5622,10 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
     }));
   };
 
+  const reconciledBudgetMatrix = useMemo(() => {
+    return selectReconciledBudgetMatrix(state, state.appMode || 'casal', state.currentMonth);
+  }, [state]);
+
   return (
     <FinanceContext.Provider
       value={{
@@ -5595,6 +5653,7 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
         toggleInitialHomePhase,
         justFinishedInstallment,
         historicalTrends,
+        reconciledBudgetMatrix,
         addExpense,
         updateExpense,
         editExpense,

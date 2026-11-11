@@ -28,6 +28,8 @@ import {
   getDaysInMonth,
 } from '../utils/calendarEngine';
 
+import { FixedBillsPanelModal } from '../components/modals/FixedBillsPanelModal';
+
 interface FinancialCalendarScreenProps {
   onOpenExpenseModal: (categoryKey?: CategoryKey, date?: string) => void;
   onOpenIncomeModal: (date?: string) => void;
@@ -47,6 +49,8 @@ export const FinancialCalendarScreen: React.FC<FinancialCalendarScreenProps> = (
     unpayFixedBill,
     triggerCelebration,
   } = useFinance();
+
+  const [isFixedPanelOpen, setIsFixedPanelOpen] = useState(false);
 
   // Current today string in YYYY-MM-DD
   const todayStr = useMemo(() => new Date().toISOString().slice(0, 10), []);
@@ -228,6 +232,13 @@ export const FinancialCalendarScreen: React.FC<FinancialCalendarScreenProps> = (
 
         {/* Month Selector Controls */}
         <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+          <button
+            onClick={() => setIsFixedPanelOpen(true)}
+            className="px-3 py-2 rounded-xl text-xs font-black bg-indigo-50 dark:bg-indigo-950/60 hover:bg-indigo-100 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 transition-all cursor-pointer flex items-center gap-1.5 shadow-2xs"
+          >
+            <span>📌 Fixos do Mês</span>
+          </button>
+
           <button
             onClick={handleJumpToToday}
             className="px-3 py-2 rounded-xl text-xs font-bold bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 transition-colors cursor-pointer"
@@ -1164,6 +1175,13 @@ export const FinancialCalendarScreen: React.FC<FinancialCalendarScreenProps> = (
           </div>
         </div>
       )}
+
+      {/* PAINEL DE FIXOS DO MÊS (PROMPT 28I) */}
+      <FixedBillsPanelModal
+        isOpen={isFixedPanelOpen}
+        onClose={() => setIsFixedPanelOpen(false)}
+        initialMonth={activeMonth}
+      />
     </div>
   );
 };

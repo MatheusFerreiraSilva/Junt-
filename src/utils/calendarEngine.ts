@@ -110,12 +110,12 @@ export function clampDayToMonth(year: number, month: number, day: number): numbe
  */
 export function getApportionedAmount(
   amount: number,
-  scope: 'couple' | 'partner1' | 'partner2',
+  scope: 'couple' | 'partner1' | 'partner2' | 'casal',
   payer: PaidBy | undefined,
   splitPartner1Pct: number = 50,
   splitPartner2Pct: number = 50
 ): number {
-  if (scope === 'couple') return roundMoney(amount);
+  if (scope === 'couple' || scope === 'casal') return roundMoney(amount);
   if (payer === 'partner1') return scope === 'partner1' ? roundMoney(amount) : 0;
   if (payer === 'partner2') return scope === 'partner2' ? roundMoney(amount) : 0;
 
@@ -187,9 +187,17 @@ export function calculateCalendarEngine(
   const allObligations: CalendarObligation[] = [];
 
   // A) Fixed Bills
-  (state.coupleFixedBills || []).forEach(bill => {
+  (state.coupleFixedBills || state.fixedBillAlerts || []).forEach(bill => {
+    if (bill.isDeleted) return;
     if (viewMode === 'partner1' && bill.assignedPayer === 'partner2') return;
     if (viewMode === 'partner2' && bill.assignedPayer === 'partner1') return;
+
+    const hist = bill.history?.[activeMonth];
+
+    // Se a conta está desativada e não possui histórico para este mês, não gera ocorrência futura (Proof 3)
+    if (bill.active === false && !hist) {
+      return;
+    }
 
     const originalDueDay = clampDayToMonth(year, month, bill.dueDay || 10);
     const standardDueDate = `${activeMonth}-${String(originalDueDay).padStart(2, '0')}`;
@@ -205,9 +213,9 @@ export function calculateCalendarEngine(
     );
 
     const isPaid =
+      hist?.status === 'paid' ||
       Boolean(paidExpense) ||
-      bill.lastPaidMonth === activeMonth ||
-      (bill.status === 'paid' && bill.lastPaidMonth === activeMonth);
+      (bill.lastPaidMonth === activeMonth && bill.status === 'paid');
 
     let status: ObligationStatus = 'previsto';
     if (isPaid) {

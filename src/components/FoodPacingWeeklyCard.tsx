@@ -15,7 +15,12 @@ import { useFinance } from '../context/FinanceContext';
 import { formatCurrency } from '../utils/formatters';
 
 interface FoodPacingWeeklyCardProps {
-  onOpenExpenseModal?: () => void;
+  onOpenExpenseModal?: (
+    category?: any,
+    date?: string,
+    toEdit?: any,
+    isDivided?: boolean
+  ) => void;
   className?: string;
 }
 
@@ -120,6 +125,19 @@ export const FoodPacingWeeklyCard: React.FC<FoodPacingWeeklyCardProps> = ({
             </>
           )}
         </p>
+
+        {onOpenExpenseModal && (
+          <div className="pt-2 flex items-center justify-end">
+            <button
+              type="button"
+              onClick={() => onOpenExpenseModal('comida', undefined, null, true)}
+              className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-purple-600 hover:bg-purple-700 text-white font-extrabold text-xs transition-colors shadow-xs cursor-pointer active:scale-95"
+            >
+              <span>✂️</span>
+              <span>Lançar Compra de Mercado Dividida</span>
+            </button>
+          </div>
+        )}
       </div>
 
       {/* SELETOR DE PACING SEMANAL EM PÍLULAS (CARROSSEL COM FUNDO PRETO SÓLIDO #111318 NA SEMANA ATIVA) */}

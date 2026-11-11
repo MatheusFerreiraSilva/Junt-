@@ -119,9 +119,34 @@ export function calculateFoodPacingMetrics(
   currentMonthKey: string, // YYYY-MM
   totalFoodBudget: number
 ): FoodPacingMetrics {
-  const currentMonthExpenses = expenses.filter(
-    e => e.category === 'comida' && e.date.startsWith(currentMonthKey)
-  );
+  // 28B: FoodPacing recebe só a parte elegível de Comida (splits ou compra simples)
+  const foodSlices: Array<{ amount: number; date: string; desc: string; foodPillar?: FoodPillarType }> = [];
+
+  expenses.forEach(exp => {
+    if (!exp.date || !exp.date.startsWith(currentMonthKey)) return;
+    if (exp.isExcludedFromMonthlyBudget || (exp.fundingSource && exp.fundingSource !== 'month_budget')) return;
+
+    if (exp.splits && exp.splits.length > 0) {
+      exp.splits.forEach(s => {
+        if (s.category === 'comida' && (!s.fundingSource || s.fundingSource === 'month_budget')) {
+          const sliceAmount = s.amountCents !== undefined ? s.amountCents / 100 : s.amount;
+          foodSlices.push({
+            amount: sliceAmount,
+            date: exp.date,
+            desc: s.label || s.subcategory || s.notes || exp.description,
+            foodPillar: exp.foodPillar,
+          });
+        }
+      });
+    } else if (exp.category === 'comida') {
+      foodSlices.push({
+        amount: exp.amount,
+        date: exp.date,
+        desc: exp.description,
+        foodPillar: exp.foodPillar,
+      });
+    }
+  });
 
   let structuralSpent = 0;
   let routineSpent = 0;
@@ -138,12 +163,12 @@ export function calculateFoodPacingMetrics(
   // Week 4: days 22..end
   const weeklyOperationalSpent = [0, 0, 0, 0];
 
-  currentMonthExpenses.forEach(exp => {
-    const pillar = classifyFoodPillar(exp);
-    const day = parseInt(exp.date.split('-')[2] || '1', 10);
+  foodSlices.forEach(slice => {
+    const pillar = slice.foodPillar || classifyFoodPillar(slice.desc);
+    const day = parseInt(slice.date.split('-')[2] || '1', 10);
 
     if (pillar === 'estrutural') {
-      structuralSpent += exp.amount;
+      structuralSpent += slice.amount;
       structuralCount += 1;
     } else {
       // Gastos operacionais de conveniência e rotina entram no pacing semanal
@@ -153,13 +178,13 @@ export function calculateFoodPacingMetrics(
       else if (day <= 21) wIdx = 2;
       else wIdx = 3;
 
-      weeklyOperationalSpent[wIdx] += exp.amount;
+      weeklyOperationalSpent[wIdx] += slice.amount;
 
       if (pillar === 'rotina') {
-        routineSpent += exp.amount;
+        routineSpent += slice.amount;
         routineCount += 1;
       } else {
-        convenienceSpent += exp.amount;
+        convenienceSpent += slice.amount;
         convenienceCount += 1;
       }
     }

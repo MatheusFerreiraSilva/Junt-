@@ -26,7 +26,7 @@ import { BudgetRebalanceModal } from '../components/modals/BudgetRebalanceModal'
 
 interface CategoryDetailsScreenProps {
   initialCategory?: CategoryKey;
-  onOpenExpenseModal: (category?: CategoryKey) => void;
+  onOpenExpenseModal: (category?: CategoryKey, date?: string, toEdit?: ExpenseItem | null) => void;
 }
 
 export const CategoryDetailsScreen: React.FC<CategoryDetailsScreenProps> = ({
@@ -45,6 +45,7 @@ export const CategoryDetailsScreen: React.FC<CategoryDetailsScreenProps> = ({
     updateCategoryPercentages,
     activeLifeTier,
     totalIncome,
+    reconciledBudgetMatrix,
   } = useFinance();
 
   const [selectedCategory, setSelectedCategory] = useState<string | 'all'>(
@@ -106,7 +107,10 @@ export const CategoryDetailsScreen: React.FC<CategoryDetailsScreenProps> = ({
   // Filtered expenses list
   const filteredExpenses = useMemo(() => {
     return monthExpenses.filter(item => {
-      const matchCat = selectedCategory === 'all' || item.category === selectedCategory;
+      const matchCat =
+        selectedCategory === 'all' ||
+        item.category === selectedCategory ||
+        (item.splits && item.splits.some((s) => s.category === selectedCategory));
       const matchPaid =
         filterPaidBy === 'all'
           ? true
@@ -500,7 +504,11 @@ export const CategoryDetailsScreen: React.FC<CategoryDetailsScreenProps> = ({
 
       {/* Special card for Comida & Conveniência */}
       {selectedCategory === 'comida' && (
-        <FoodPacingWeeklyCard onOpenExpenseModal={() => onOpenExpenseModal('comida')} />
+        <FoodPacingWeeklyCard
+          onOpenExpenseModal={(cat, date, toEdit, isDivided) =>
+            onOpenExpenseModal(cat || 'comida', date, toEdit, isDivided)
+          }
+        />
       )}
 
       {/* Filters bar: Payer and Scope */}
@@ -693,10 +701,30 @@ export const CategoryDetailsScreen: React.FC<CategoryDetailsScreenProps> = ({
                       {cat.emoji}
                     </span>
                     <div className="min-w-0">
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 flex-wrap">
                         <span className="font-bold text-slate-900 dark:text-white text-sm truncate">
                           {item.description}
                         </span>
+                        {item.store && (
+                          <span className="text-[11px] text-slate-500 dark:text-slate-400 font-normal">
+                            ({item.store})
+                          </span>
+                        )}
+                        {item.splits && item.splits.length > 0 && (
+                          <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-purple-50 dark:bg-purple-950 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800 shrink-0">
+                            ✂️ Dividida ({item.splits.length} grupos)
+                          </span>
+                        )}
+                        {selectedCategory !== 'all' && item.splits && item.splits.length > 0 && (() => {
+                          const catSplitSum = item.splits
+                            .filter((s) => s.category === selectedCategory)
+                            .reduce((sum, s) => sum + (s.amountCents ? s.amountCents / 100 : s.amount), 0);
+                          return (
+                            <span className="text-[10px] font-semibold text-purple-600 dark:text-purple-400">
+                              (Nesta categoria: {formatCurrency(catSplitSum)})
+                            </span>
+                          );
+                        })()}
                         {cat.isLegacy && (
                           <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-200">
                             Revisar
@@ -762,7 +790,13 @@ export const CategoryDetailsScreen: React.FC<CategoryDetailsScreenProps> = ({
 
                     <div className="flex items-center gap-1 opacity-80 group-hover:opacity-100 transition-opacity">
                       <button
-                        onClick={() => setEditingExpense(item)}
+                        onClick={() => {
+                          if (item.splits && item.splits.length > 0) {
+                            onOpenExpenseModal(undefined, undefined, item);
+                          } else {
+                            setEditingExpense(item);
+                          }
+                        }}
                         className="w-8 h-8 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 flex items-center justify-center transition-colors"
                         title="Editar gasto ou divisão"
                       >

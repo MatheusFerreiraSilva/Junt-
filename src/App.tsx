@@ -166,6 +166,8 @@ function MainApp() {
   const [expenseDefaultDate, setExpenseDefaultDate] = useState<
     string | undefined
   >(undefined);
+  const [expenseToEdit, setExpenseToEdit] = useState<ExpenseItem | null>(null);
+  const [expenseDefaultDivided, setExpenseDefaultDivided] = useState<boolean>(false);
   const [isIncomeModalOpen, setIsIncomeModalOpen] = useState(false);
   const [incomeDefaultDate, setIncomeDefaultDate] = useState<
     string | undefined
@@ -238,9 +240,16 @@ function MainApp() {
     }
   };
 
-  const handleOpenExpenseModal = (categoryKey?: CategoryKey, date?: string) => {
+  const handleOpenExpenseModal = (
+    categoryKey?: CategoryKey,
+    date?: string,
+    toEdit?: ExpenseItem | null,
+    defaultDivided?: boolean
+  ) => {
     setExpenseDefaultCat(categoryKey);
     setExpenseDefaultDate(date);
+    setExpenseToEdit(toEdit || null);
+    setExpenseDefaultDivided(Boolean(defaultDivided));
     setIsExpenseModalOpen(true);
   };
 
@@ -379,9 +388,13 @@ function MainApp() {
             onClose={() => {
               setIsExpenseModalOpen(false);
               setExpenseDefaultDate(undefined);
+              setExpenseToEdit(null);
+              setExpenseDefaultDivided(false);
             }}
             defaultCategory={expenseDefaultCat}
             defaultDate={expenseDefaultDate}
+            expenseToEdit={expenseToEdit}
+            defaultDivided={expenseDefaultDivided}
           />
         </Suspense>
       )}
