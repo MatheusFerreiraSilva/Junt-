@@ -34,6 +34,33 @@ import {
   ReconciledCategoryRow,
   CategoryMatrixEntryCents,
 } from '../types/finance';
+import {
+  readOperationAmountCents,
+} from './financialCommands';
+
+export {
+  roundMoneyCentsCompatible,
+  normalizeMonetaryBoundary,
+  readOperationAmountCents,
+  normalizeCommandScope,
+  computeOperationFingerprint,
+  runFinancialCommand,
+  executeFinancialOperation,
+  reverseFinancialCommand,
+  executeExpenseCreateCommand,
+  executeExpenseEditCommand,
+  executeExpenseDeleteCommand,
+  executeReconcileIntentCommand,
+  executeExpenseTriageCommand,
+  executeGoalAdjustmentCommand,
+  executeIntentConversionCommand,
+  type MonetaryNormalizationInput,
+  type MonetaryNormalizationResult,
+  type RunFinancialCommandOptions,
+  type ExpenseCommandContextOptions,
+  type GoalAdjustmentCommandParams,
+  type IntentConversionCommandParams,
+} from './financialCommands';
 
 export type DomainScope = 'casal' | 'partner1' | 'partner2';
 export type AccountingBasis = 'caixa' | 'competencia' | 'plano';
@@ -1651,11 +1678,15 @@ export function selectTotalCashDisbursements(
   const ops = state.financialOperations || [];
   const deposits = ops.filter((op) => {
     if (op.type !== 'GOAL_DEPOSIT') return false;
-    if (monthKey && !op.date.startsWith(monthKey)) return false;
-    if (op.state === 'reverted') return false;
-    return isEntityInScope(op.authorizedBy as any, scope);
+    if (monthKey && op.date && !op.date.startsWith(monthKey)) return false;
+    if (op.state === 'reverted' || op.state === 'estornado') return false;
+    const opScope =
+      op.scope && op.scope !== 'couple' && op.scope !== 'casal'
+        ? op.scope
+        : (op.authorizedBy as any) || op.scope;
+    return isEntityInScope(opScope, scope);
   });
-  const depositsTotal = deposits.reduce((sum, op) => sum + op.amountCents / 100, 0);
+  const depositsTotal = deposits.reduce((sum, op) => sum + readOperationAmountCents(op) / 100, 0);
   return roundMoney(economicConsumption + depositsTotal);
 }
 
@@ -1682,20 +1713,32 @@ export function selectGoalBalanceBreakdown(
   const targetAmountCents = Math.round((goal.targetAmount || 0) * 100);
 
   const goalOps = operations.filter(
-    (op) => (op.sourceRef.id === goal.id || op.targetRef.id === goal.id) && op.state !== 'reverted'
+    (op) =>
+      (op.sourceRef?.id === goal.id || op.targetRef?.id === goal.id) &&
+      op.state !== 'reverted' &&
+      op.state !== 'estornado'
   );
 
-  const accumulatedCents = goal.accumulatedCents ?? currentAmountCents;
-  let committedCents = goal.committedCents ?? 0;
-  let utilizedCents = goal.utilizedCents ?? 0;
+  let opsCommittedCents = 0;
+  let opsUtilizedCents = 0;
 
   for (const op of goalOps) {
-    if (op.sourceRef.id === goal.id && op.type === 'GOAL_DIRECT_PURCHASE') {
-      utilizedCents += op.amountCents;
-    } else if (op.sourceRef.id === goal.id && op.type === 'CATEGORY_REINFORCEMENT') {
-      committedCents += op.amountCents;
+    const opCents = readOperationAmountCents(op);
+    if (op.sourceRef?.id === goal.id && op.type === 'GOAL_DIRECT_PURCHASE') {
+      opsUtilizedCents += opCents;
+    } else if (op.sourceRef?.id === goal.id && op.type === 'CATEGORY_REINFORCEMENT') {
+      opsCommittedCents += opCents;
     }
   }
+
+  const committedCents = Math.max(goal.committedCents ?? 0, opsCommittedCents);
+  const utilizedCents = Math.max(goal.utilizedCents ?? 0, opsUtilizedCents);
+  const accumulatedCents =
+    typeof goal.accumulatedCents === 'number' && Number.isFinite(goal.accumulatedCents)
+      ? goal.accumulatedCents
+      : typeof goal.availableCents === 'number' && Number.isFinite(goal.availableCents)
+      ? goal.availableCents + (goal.committedCents ?? 0) + (goal.utilizedCents ?? 0)
+      : currentAmountCents;
 
   const availableCents = accumulatedCents - committedCents - utilizedCents;
   const isOvercommitted = availableCents < 0;
@@ -1780,111 +1823,6 @@ export function selectConsolidatedAssetTotal(
 
   const { totalProtected } = selectTotalProtectedAssets(state, scope);
   return roundMoney(unlinkedAccountBalances + totalProtected);
-}
-
-/**
- * 26A: Executa comando/operação financeira de forma atômica, idempotente e consistente.
- * Nunca silencia erros de saldo com clamping arbitrário. Mantém espelhos síncronos entre caixinhas e metas.
- */
-export function executeFinancialOperation(
-  state: AppState,
-  operation: FinancialOperationRecord
-): AppState {
-  const existingOps = state.financialOperations || [];
-  // Idempotência
-  if (existingOps.some((op) => op.id === operation.id)) {
-    return state;
-  }
-
-  const nextOps = [...existingOps, { ...operation, state: 'reconciled' as const }];
-  let nextPiggyBanks = [...(state.piggyBanks || [])];
-  let nextCoupleGoals = [...(state.coupleGoals || [])];
-
-  if (operation.type === 'GOAL_DEPOSIT') {
-    const goalId = operation.targetRef.id;
-    const amtR$ = operation.amountR$;
-
-    nextPiggyBanks = nextPiggyBanks.map((p) => {
-      if (p.id !== goalId) return p;
-      const current = roundMoney((p.currentAmount || 0) + amtR$);
-      return { ...p, currentAmount: current, accumulatedCents: Math.round(current * 100) };
-    });
-
-    nextCoupleGoals = nextCoupleGoals.map((g) => {
-      if (g.id !== goalId) return g;
-      const current = roundMoney((g.currentAmount || 0) + amtR$);
-      return { ...g, currentAmount: current, accumulatedCents: Math.round(current * 100) };
-    });
-  } else if (operation.type === 'GOAL_DIRECT_PURCHASE' || operation.type === 'GOAL_WITHDRAWAL') {
-    const goalId = operation.sourceRef.id;
-    const amtR$ = operation.amountR$;
-    const targetGoal =
-      nextPiggyBanks.find((p) => p.id === goalId) || nextCoupleGoals.find((g) => g.id === goalId);
-
-    if (targetGoal) {
-      const current = targetGoal.currentAmount || 0;
-      if (current < amtR$) {
-        throw new Error(
-          `Saldo insuficiente na meta ${targetGoal.id} (R$ ${current.toFixed(2)}) para operação de R$ ${amtR$.toFixed(2)}. Não é permitido clamp silencioso.`
-        );
-      }
-
-      nextPiggyBanks = nextPiggyBanks.map((p) => {
-        if (p.id !== goalId) return p;
-        const newAmt = roundMoney((p.currentAmount || 0) - amtR$);
-        return { ...p, currentAmount: newAmt, accumulatedCents: Math.round(newAmt * 100) };
-      });
-
-      nextCoupleGoals = nextCoupleGoals.map((g) => {
-        if (g.id !== goalId) return g;
-        const newAmt = roundMoney((g.currentAmount || 0) - amtR$);
-        return { ...g, currentAmount: newAmt, accumulatedCents: Math.round(newAmt * 100) };
-      });
-    }
-  } else if (operation.type === 'GOAL_TRANSFER') {
-    const sourceId = operation.sourceRef.id;
-    const targetId = operation.targetRef.id;
-    const amtR$ = operation.amountR$;
-
-    const sourceGoal =
-      nextPiggyBanks.find((p) => p.id === sourceId) || nextCoupleGoals.find((g) => g.id === sourceId);
-    if (!sourceGoal || (sourceGoal.currentAmount || 0) < amtR$) {
-      throw new Error(
-        `Saldo insuficiente na meta de origem ${sourceId} para transferência de R$ ${amtR$.toFixed(2)}.`
-      );
-    }
-
-    nextPiggyBanks = nextPiggyBanks.map((p) => {
-      if (p.id === sourceId) {
-        const newAmt = roundMoney((p.currentAmount || 0) - amtR$);
-        return { ...p, currentAmount: newAmt, accumulatedCents: Math.round(newAmt * 100) };
-      }
-      if (p.id === targetId) {
-        const newAmt = roundMoney((p.currentAmount || 0) + amtR$);
-        return { ...p, currentAmount: newAmt, accumulatedCents: Math.round(newAmt * 100) };
-      }
-      return p;
-    });
-
-    nextCoupleGoals = nextCoupleGoals.map((g) => {
-      if (g.id === sourceId) {
-        const newAmt = roundMoney((g.currentAmount || 0) - amtR$);
-        return { ...g, currentAmount: newAmt, accumulatedCents: Math.round(newAmt * 100) };
-      }
-      if (g.id === targetId) {
-        const newAmt = roundMoney((g.currentAmount || 0) + amtR$);
-        return { ...g, currentAmount: newAmt, accumulatedCents: Math.round(newAmt * 100) };
-      }
-      return g;
-    });
-  }
-
-  return {
-    ...state,
-    financialOperations: nextOps,
-    piggyBanks: nextPiggyBanks,
-    coupleGoals: nextCoupleGoals,
-  };
 }
 
 /**
@@ -2105,11 +2043,15 @@ const CATEGORY_NAMES_MAP: Record<CategoryKey, { name: string; emoji: string }> =
   const ops = state.financialOperations || [];
   const depositsInMonth = ops.filter((op) => {
     if (op.type !== 'GOAL_DEPOSIT') return false;
-    if (currentMonthKey && !op.date.startsWith(currentMonthKey)) return false;
-    if (op.state === 'reverted') return false;
-    return isEntityInScope(op.authorizedBy as any, scope);
+    if (currentMonthKey && op.date && !op.date.startsWith(currentMonthKey)) return false;
+    if (op.state === 'reverted' || op.state === 'estornado') return false;
+    const opScope =
+      op.scope && op.scope !== 'couple' && op.scope !== 'casal'
+        ? op.scope
+        : (op.authorizedBy as any) || op.scope;
+    return isEntityInScope(opScope, scope);
   });
-  const actualDeposited = roundMoney(depositsInMonth.reduce((sum, op) => sum + op.amountCents / 100, 0));
+  const actualDeposited = roundMoney(depositsInMonth.reduce((sum, op) => sum + readOperationAmountCents(op) / 100, 0));
   const remainingTarget = Math.max(0, roundMoney(investTarget - actualDeposited));
 
   const investimentosBlock: ReconciledInvestmentBlock = {

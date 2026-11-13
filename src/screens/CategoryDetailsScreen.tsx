@@ -54,6 +54,7 @@ export const CategoryDetailsScreen: React.FC<CategoryDetailsScreenProps> = ({
   const [filterPaidBy, setFilterPaidBy] = useState<PaidBy | 'all'>('all');
   const [filterScope, setFilterScope] = useState<'all' | 'routine' | 'planned' | 'exceptional'>('all');
   const [editingExpense, setEditingExpense] = useState<ExpenseItem | null>(null);
+  const [editError, setEditError] = useState<string>('');
   const [isSimulatingCeiling, setIsSimulatingCeiling] = useState(false);
 
   // Ceiling simulation state initialized from current percentages
@@ -173,8 +174,18 @@ export const CategoryDetailsScreen: React.FC<CategoryDetailsScreenProps> = ({
   const handleSaveEdit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingExpense) return;
-    editExpense(editingExpense);
-    setEditingExpense(null);
+    try {
+      setEditError('');
+      const syncedAmount = Number(editingExpense.amount) || 0;
+      editExpense({
+        ...editingExpense,
+        amount: syncedAmount,
+        amountCents: Math.round(syncedAmount * 100),
+      });
+      setEditingExpense(null);
+    } catch (err: any) {
+      setEditError(err?.message || 'Não foi possível salvar as alterações deste gasto.');
+    }
   };
 
   const currentCategoryInfo = selectedCategory !== 'all' ? getCategoryInfo(selectedCategory) : null;
@@ -982,6 +993,15 @@ export const CategoryDetailsScreen: React.FC<CategoryDetailsScreenProps> = ({
             </h3>
 
             <form onSubmit={handleSaveEdit} className="space-y-4">
+              {editError && (
+                <p
+                  role="alert"
+                  className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-800 text-xs font-semibold text-rose-800 dark:text-rose-200"
+                >
+                  {editError}
+                </p>
+              )}
+
               <div>
                 <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">
                   Descrição
@@ -1005,12 +1025,15 @@ export const CategoryDetailsScreen: React.FC<CategoryDetailsScreenProps> = ({
                   type="number"
                   step="0.01"
                   value={editingExpense.amount}
-                  onChange={e =>
+                  onChange={e => {
+                    const nextVal = parseFloat(e.target.value) || 0;
                     setEditingExpense({
                       ...editingExpense,
-                      amount: parseFloat(e.target.value) || 0,
-                    })
-                  }
+                      amount: nextVal,
+                      amountCents: Math.round(nextVal * 100),
+                    });
+                    if (editError) setEditError('');
+                  }}
                   className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white text-sm focus:ring-2 focus:ring-accent-primary"
                   required
                 />
@@ -1086,15 +1109,18 @@ export const CategoryDetailsScreen: React.FC<CategoryDetailsScreenProps> = ({
                         fundingGoalId: goalId,
                         fundingGoalName: goal?.name || '',
                       });
+                      if (editError) setEditError('');
                     }}
                     className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-sm bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:ring-2 focus:ring-accent-primary"
                   >
                     <option value="">Selecione uma caixinha...</option>
-                    {state.piggyBanks.map(g => (
-                      <option key={g.id} value={g.id}>
-                        {g.name} (Saldo: {formatCurrency(g.currentAmount)})
-                      </option>
-                    ))}
+                    {state.piggyBanks
+                      .filter(g => (!g.archived && !g.isDeleted) || g.id === editingExpense.fundingGoalId)
+                      .map(g => (
+                        <option key={g.id} value={g.id}>
+                          {g.name} (Saldo: {formatCurrency(g.currentAmount)})
+                        </option>
+                      ))}
                   </select>
                 </div>
               )}
@@ -1227,7 +1253,10 @@ export const CategoryDetailsScreen: React.FC<CategoryDetailsScreenProps> = ({
               <div className="flex items-center justify-end gap-2 pt-3">
                 <button
                   type="button"
-                  onClick={() => setEditingExpense(null)}
+                  onClick={() => {
+                    setEditingExpense(null);
+                    setEditError('');
+                  }}
                   className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"
                 >
                   Cancelar

@@ -105,6 +105,34 @@ describe.skipIf(!enabled)('Firestore couple isolation (emulator only)', () => {
     await assertFails(updateDoc(doc(alice, 'couples/a'), { unapprovedKey: 'invalid' }));
   });
 
+  it('enforces integer cents and non-negative balances for financialOperations and goals (29A)', async () => {
+    const alice = env.authenticatedContext('alice').firestore();
+    await assertSucceeds(setDoc(doc(alice, 'couples/a/entities/financialOperations%3Aop-ok'), {
+      field: 'financialOperations',
+      record: { id: 'op-ok', type: 'GOAL_DEPOSIT', amountCents: 50000, scope: 'couple', date: '2026-11-10', state: 'occurred_manual' },
+      deleted: false,
+      schemaVersion: 1,
+    }));
+    await assertFails(setDoc(doc(alice, 'couples/a/entities/financialOperations%3Aop-zero'), {
+      field: 'financialOperations',
+      record: { id: 'op-zero', type: 'GOAL_DEPOSIT', amountCents: 0, scope: 'couple', date: '2026-11-10', state: 'occurred_manual' },
+      deleted: false,
+      schemaVersion: 1,
+    }));
+    await assertFails(setDoc(doc(alice, 'couples/a/entities/financialOperations%3Aop-bad-scope'), {
+      field: 'financialOperations',
+      record: { id: 'op-bad-scope', type: 'GOAL_DEPOSIT', amountCents: 1000, scope: 'admin', date: '2026-11-10', state: 'occurred_manual' },
+      deleted: false,
+      schemaVersion: 1,
+    }));
+    await assertFails(setDoc(doc(alice, 'couples/a/entities/piggyBanks%3Agoal-neg'), {
+      field: 'piggyBanks',
+      record: { id: 'goal-neg', name: 'Meta', currentAmount: -10, availableCents: -1000 },
+      deleted: false,
+      schemaVersion: 1,
+    }));
+  });
+
   describe('account avatars', () => {
     beforeEach(async () => {
       await env.withSecurityRulesDisabled(async (context) => {

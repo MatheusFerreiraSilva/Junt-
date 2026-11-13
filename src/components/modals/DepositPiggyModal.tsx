@@ -14,29 +14,43 @@ export const DepositPiggyModal: React.FC<DepositPiggyModalProps> = ({ isOpen, on
   const { depositToPiggyBank, withdrawFromPiggyBank } = useFinance();
   const [mode, setMode] = useState<'deposit' | 'withdraw'>('deposit');
   const [amount, setAmount] = useState<string>('');
+  const [errorMsg, setErrorMsg] = useState<string>('');
 
   if (!isOpen || !bank) return null;
 
   const quickVals = [100, 200, 500, 1000, 1500];
 
+  const handleClose = () => {
+    setErrorMsg('');
+    onClose();
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     const val = parseFloat(amount.replace(',', '.'));
-    if (!val || val <= 0) return;
-
-    if (mode === 'deposit') {
-      depositToPiggyBank(bank.id, val);
-    } else {
-      withdrawFromPiggyBank(bank.id, val);
+    if (!Number.isFinite(val) || val <= 0) {
+      setErrorMsg('Informe um valor maior que zero.');
+      return;
     }
-    setAmount('');
-    onClose();
+
+    try {
+      setErrorMsg('');
+      if (mode === 'deposit') {
+        depositToPiggyBank(bank.id, val);
+      } else {
+        withdrawFromPiggyBank(bank.id, val);
+      }
+      setAmount('');
+      onClose();
+    } catch (err: any) {
+      setErrorMsg(err?.message || 'Não foi possível concluir a movimentação no cofrinho.');
+    }
   };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/60 backdrop-blur-sm animate-in fade-in duration-200">
       {/* Click outside backdrop */}
-      <div className="absolute inset-0" onClick={onClose} />
+      <div className="absolute inset-0" onClick={handleClose} />
 
       <div className="relative z-10 w-full max-w-md bg-white dark:bg-slate-900 rounded-3xl shadow-2xl border border-slate-200 dark:border-slate-800 overflow-hidden text-slate-900 dark:text-white transition-colors">
         {/* Header */}
@@ -49,7 +63,7 @@ export const DepositPiggyModal: React.FC<DepositPiggyModalProps> = ({ isOpen, on
             </div>
           </div>
           <button
-            onClick={onClose}
+            onClick={handleClose}
             className="w-10 h-10 rounded-2xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 flex items-center justify-center text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white transition-colors shrink-0"
             aria-label="Fechar"
           >
@@ -59,11 +73,23 @@ export const DepositPiggyModal: React.FC<DepositPiggyModalProps> = ({ isOpen, on
 
         {/* Content */}
         <form onSubmit={handleSubmit} className="p-6 space-y-5">
+          {errorMsg && (
+            <p
+              role="alert"
+              className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-800 text-xs font-semibold text-rose-800 dark:text-rose-200"
+            >
+              {errorMsg}
+            </p>
+          )}
+
           {/* Mode Switcher */}
           <div className="flex items-center p-1 bg-slate-100 dark:bg-slate-800 rounded-2xl">
             <button
               type="button"
-              onClick={() => setMode('deposit')}
+              onClick={() => {
+                setMode('deposit');
+                setErrorMsg('');
+              }}
               className={`flex-1 py-2 rounded-xl text-xs font-bold transition-all ${
                 mode === 'deposit'
                   ? 'bg-accent-surface text-accent-themed border border-accent-themed shadow-xs'
@@ -74,7 +100,10 @@ export const DepositPiggyModal: React.FC<DepositPiggyModalProps> = ({ isOpen, on
             </button>
             <button
               type="button"
-              onClick={() => setMode('withdraw')}
+              onClick={() => {
+                setMode('withdraw');
+                setErrorMsg('');
+              }}
               className={`flex-1 py-2 rounded-xl text-xs font-bold transition-all ${
                 mode === 'withdraw'
                   ? 'bg-rose-50 dark:bg-rose-950/60 text-rose-800 dark:text-rose-300 border border-rose-200 dark:border-rose-800 shadow-xs'
@@ -96,7 +125,10 @@ export const DepositPiggyModal: React.FC<DepositPiggyModalProps> = ({ isOpen, on
                 step="0.01"
                 autoFocus
                 value={amount}
-                onChange={e => setAmount(e.target.value)}
+                onChange={e => {
+                  setAmount(e.target.value);
+                  if (errorMsg) setErrorMsg('');
+                }}
                 placeholder="0,00"
                 className="w-full pl-14 pr-4 py-3.5 text-2xl font-extrabold text-slate-900 dark:text-white bg-slate-50 dark:bg-slate-800 border-2 border-slate-200 dark:border-slate-700 rounded-2xl text-center focus:outline-none focus:border-accent-primary focus:bg-white dark:focus:bg-slate-800/90 transition-all tabular-nums"
               />
@@ -109,7 +141,10 @@ export const DepositPiggyModal: React.FC<DepositPiggyModalProps> = ({ isOpen, on
               <button
                 key={val}
                 type="button"
-                onClick={() => setAmount(val.toString())}
+                onClick={() => {
+                  setAmount(val.toString());
+                  if (errorMsg) setErrorMsg('');
+                }}
                 className="px-3 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-accent-surface hover:text-accent-themed text-xs font-semibold text-slate-700 dark:text-slate-300 transition-colors"
               >
                 +{val}
@@ -146,7 +181,7 @@ export const DepositPiggyModal: React.FC<DepositPiggyModalProps> = ({ isOpen, on
           <div className="flex items-center justify-between pt-2">
             <button
               type="button"
-              onClick={onClose}
+              onClick={handleClose}
               className="px-4 py-2.5 rounded-xl text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 text-xs font-semibold"
             >
               Cancelar

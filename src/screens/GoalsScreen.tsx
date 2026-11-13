@@ -58,6 +58,7 @@ export const GoalsScreen: React.FC<GoalsScreenProps> = () => {
     depositToProtection,
     toggleGoalComplete,
     depositToGoal,
+    withdrawFromGoal,
     depositToFreedom,
     addPiggyBank,
     updatePiggyBank,
@@ -134,6 +135,7 @@ export const GoalsScreen: React.FC<GoalsScreenProps> = () => {
   const [goalDepositAmount, setGoalDepositAmount] = useState('');
   const [goalDepositPayer, setGoalDepositPayer] = useState<'partner1' | 'partner2' | 'both'>('both');
   const [goalDepositAction, setGoalDepositAction] = useState<'deposit' | 'withdraw'>('deposit');
+  const [goalDepositError, setGoalDepositError] = useState<string>('');
 
   // ==========================================
   // BANK BALANCE & YIELD UPDATE MODALS (AUTORIZAÇÃO DO BANCO)
@@ -249,10 +251,16 @@ export const GoalsScreen: React.FC<GoalsScreenProps> = () => {
   const handleDepositGoal = (e: React.FormEvent) => {
     e.preventDefault();
     const val = parseFloat(goalDepositAmount.replace(',', '.')) || 0;
-    if (val > 0 && selectedGoalId) {
-      const targetGoal = state.piggyBanks.find(g => g.id === selectedGoalId);
+    if (!Number.isFinite(val) || val <= 0 || !selectedGoalId) {
+      setGoalDepositError('Informe um valor válido maior que zero.');
+      return;
+    }
+
+    const targetGoal = state.piggyBanks.find(g => g.id === selectedGoalId);
+    try {
+      setGoalDepositError('');
       if (goalDepositAction === 'withdraw') {
-        depositToGoal(selectedGoalId, -Math.abs(val));
+        withdrawFromGoal(selectedGoalId, val);
         showToast(`Resgate de ${formatCurrency(val)} realizado do objetivo "${targetGoal?.name || 'Objetivo'}"! 💸`);
       } else {
         depositToGoal(selectedGoalId, val);
@@ -261,6 +269,8 @@ export const GoalsScreen: React.FC<GoalsScreenProps> = () => {
       setSelectedGoalId(null);
       setGoalDepositAmount('');
       setGoalDepositAction('deposit');
+    } catch (err: any) {
+      setGoalDepositError(err?.message || 'Não foi possível concluir a movimentação no objetivo.');
     }
   };
 
@@ -3106,7 +3116,10 @@ export const GoalsScreen: React.FC<GoalsScreenProps> = () => {
                 <span>{goalDepositAction === 'withdraw' ? '💸 Resgatar do Objetivo' : '🎯 Aportar no Objetivo'}</span>
               </h3>
               <button
-                onClick={() => setSelectedGoalId(null)}
+                onClick={() => {
+                  setSelectedGoalId(null);
+                  setGoalDepositError('');
+                }}
                 className="p-1.5 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400"
               >
                 <X className="w-5 h-5" />
@@ -3114,11 +3127,23 @@ export const GoalsScreen: React.FC<GoalsScreenProps> = () => {
             </div>
 
             <form onSubmit={handleDepositGoal} className="space-y-4 text-xs">
+              {goalDepositError && (
+                <p
+                  role="alert"
+                  className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-800 text-xs font-semibold text-rose-800 dark:text-rose-200"
+                >
+                  {goalDepositError}
+                </p>
+              )}
+
               {/* Toggle Deposit / Withdraw */}
               <div className="flex p-1 bg-slate-100 dark:bg-slate-800 rounded-xl">
                 <button
                   type="button"
-                  onClick={() => setGoalDepositAction('deposit')}
+                  onClick={() => {
+                    setGoalDepositAction('deposit');
+                    setGoalDepositError('');
+                  }}
                   className={`flex-1 py-1.5 rounded-lg font-bold text-xs transition-all ${
                     goalDepositAction === 'deposit'
                       ? 'bg-sky-600 text-white shadow-xs'
@@ -3129,7 +3154,10 @@ export const GoalsScreen: React.FC<GoalsScreenProps> = () => {
                 </button>
                 <button
                   type="button"
-                  onClick={() => setGoalDepositAction('withdraw')}
+                  onClick={() => {
+                    setGoalDepositAction('withdraw');
+                    setGoalDepositError('');
+                  }}
                   className={`flex-1 py-1.5 rounded-lg font-bold text-xs transition-all ${
                     goalDepositAction === 'withdraw'
                       ? 'bg-rose-600 text-white shadow-xs'
@@ -3148,7 +3176,10 @@ export const GoalsScreen: React.FC<GoalsScreenProps> = () => {
                   type="text"
                   placeholder="1000"
                   value={goalDepositAmount}
-                  onChange={e => setGoalDepositAmount(e.target.value)}
+                  onChange={e => {
+                    setGoalDepositAmount(e.target.value);
+                    if (goalDepositError) setGoalDepositError('');
+                  }}
                   className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white font-bold text-base"
                   required
                 />
@@ -3157,7 +3188,10 @@ export const GoalsScreen: React.FC<GoalsScreenProps> = () => {
               <div className="pt-2 flex justify-end gap-2">
                 <button
                   type="button"
-                  onClick={() => setSelectedGoalId(null)}
+                  onClick={() => {
+                    setSelectedGoalId(null);
+                    setGoalDepositError('');
+                  }}
                   className="px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 font-bold"
                 >
                   Cancelar

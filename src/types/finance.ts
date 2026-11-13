@@ -117,6 +117,9 @@ export interface ExpenseItem {
   assignedTo?: 'couple' | 'partner1' | 'partner2' | 'casal';
   linkedBillId?: string;
   billCompetenceMonth?: string; // YYYY-MM
+  // 29A: Vínculo canônico com comando/operação e autoria por UID
+  operationId?: string;
+  authoredByUid?: string;
 }
 
 export type FundingSourceType =
@@ -292,6 +295,9 @@ export interface SavingsPiggyBank {
   utilizedCents?: number;
   availableCents?: number; // accumulated - committed - utilized
   linkedBankAccountId?: string; // Vínculo de custódia real para evitar dupla contagem de patrimônio
+  // 29A: Revisão monotônica e última operação confirmada
+  revision?: number;
+  lastOperationId?: string;
 }
 
 export interface FiscalProfile {
@@ -808,12 +814,37 @@ export type FinancialOperationState =
   | 'estornado'
   | 'realizado';
 
+export type FinancialCommandStatus = 'success' | 'conflict' | 'failure';
+
+export type FinancialCommandReasonCode =
+  | 'EXECUTED'
+  | 'IDEMPOTENT_REPLAY'
+  | 'CONFLICT_PAYLOAD_MISMATCH'
+  | 'CONFLICT_REVISION'
+  | 'CONFLICT_ALREADY_REVERTED'
+  | 'CONFLICT_ALREADY_MATCHED'
+  | 'INVALID_AMOUNT'
+  | 'DIVERGENT_AMOUNTS'
+  | 'INVALID_REFS'
+  | 'INVALID_SCOPE'
+  | 'INVALID_AUTH'
+  | 'INVALID_DATE'
+  | 'INVALID_RECONCILIATION'
+  | 'GOAL_NOT_FOUND'
+  | 'GOAL_ARCHIVED'
+  | 'INSUFFICIENT_FUNDS'
+  | 'OPERATION_NOT_FOUND'
+  | 'REVERSAL_DEPENDENCY_ERROR'
+  | 'EXPENSE_NOT_FOUND'
+  | 'INTENT_NOT_FOUND';
+
 export interface FinancialOperationRecord {
   id: string; // operationId estável
   type: FinancialOperationType;
-  amountCents: number; // Centavos inteiros preservados
-  amountR$?: number; // Valor equivalente em Reais
+  amountCents: number; // Centavos inteiros preservados (unidade autoritativa)
+  amountR$?: number; // Valor equivalente derivado em Reais (apenas apresentação/compatibilidade)
   authorizedBy: string; // uid ou role 'partner1' | 'partner2' | 'both'
+  authoredByUid?: string; // UID autenticado de autoria
   sourceRef?: {
     type: 'account' | 'piggy_bank' | 'income' | 'reserve' | 'external';
     id: string;
@@ -826,10 +857,18 @@ export interface FinancialOperationRecord {
   };
   competence?: string; // YYYY-MM
   date: string; // YYYY-MM-DD
+  occurredAt?: string; // Data/hora real da ocorrência
+  confirmedAt?: string; // Timestamp da confirmação do comando
   revision?: number;
+  expectedRevision?: number;
   state: FinancialOperationState;
   reconciliationRef?: string;
   reversalOf?: string;
+  revertedBy?: string;
+  reversedAt?: string;
+  expenseId?: string;
+  intentId?: string;
+  commandFingerprint?: string;
   fundingSlice?: {
     path: 'budget_reinforcement' | 'direct_goal_purchase';
     allocatedCents: number;
@@ -838,6 +877,30 @@ export interface FinancialOperationRecord {
   notes?: string;
   currency?: string;
   scope?: DomainScope | string;
+}
+
+export interface FinancialCommandTouchedEntities {
+  financialOperations?: string[];
+  piggyBanks?: string[];
+  coupleGoals?: string[];
+  expenses?: string[];
+  strategicIntents?: string[];
+  dreamSimulations?: string[];
+  coupleWishlist?: string[];
+  coupleFixedBills?: string[];
+  protectionUpdated?: boolean;
+}
+
+export interface FinancialCommandResult {
+  status: FinancialCommandStatus;
+  reasonCode: FinancialCommandReasonCode;
+  message: string;
+  state: AppState;
+  operation?: FinancialOperationRecord;
+  operations?: FinancialOperationRecord[];
+  expense?: ExpenseItem;
+  idempotentReplay?: boolean;
+  touchedEntities?: FinancialCommandTouchedEntities;
 }
 
 export type ShiftSector =
@@ -1089,6 +1152,8 @@ export interface CoupleGoal {
   utilizedCents?: number;
   availableCents?: number; // accumulated - committed - utilized
   linkedBankAccountId?: string; // Vínculo de conta/CDB para evitar contagem duplicada
+  revision?: number;
+  lastOperationId?: string;
 }
 
 export type PiggyBankUpdatePayload = Partial<Omit<SavingsPiggyBank, 'category'>> &

@@ -51,6 +51,7 @@ export const CoupleHubScreen: React.FC = () => {
     archivePiggyBank,
     deletePiggyBank,
     depositToPiggyBank,
+    withdrawFromPiggyBank,
     payFixedBill,
     unpayFixedBill,
     addFixedBill,
@@ -78,6 +79,8 @@ export const CoupleHubScreen: React.FC = () => {
   const [isContributionModalOpen, setIsContributionModalOpen] = useState(false);
   const [selectedGoalId, setSelectedGoalId] = useState<string | null>(null);
   const [contributionType, setContributionType] = useState<'deposit' | 'withdrawal'>('deposit');
+  const [contributionError, setContributionError] = useState<string>('');
+  const [hubError, setHubError] = useState<string>('');
 
   const [isWishlistModalOpen, setIsWishlistModalOpen] = useState(false);
   const [editingWishlist, setEditingWishlist] = useState<CoupleWishlistItem | null>(null);
@@ -360,14 +363,25 @@ export const CoupleHubScreen: React.FC = () => {
     if (!selectedGoalId || !contributionForm.amount) return;
 
     const numVal = parseFloat(contributionForm.amount.replace(',', '.'));
-    if (!numVal || numVal <= 0) return;
+    if (!Number.isFinite(numVal) || numVal <= 0) {
+      setContributionError('Informe um valor válido maior que zero.');
+      return;
+    }
 
-    const actualDelta = contributionType === 'deposit' ? numVal : -numVal;
-    depositToPiggyBank(selectedGoalId, actualDelta, contributionForm.contributor, contributionForm.note);
+    try {
+      setContributionError('');
+      if (contributionType === 'deposit') {
+        depositToPiggyBank(selectedGoalId, numVal, contributionForm.contributor, contributionForm.note);
+      } else {
+        withdrawFromPiggyBank(selectedGoalId, numVal);
+      }
 
-    setIsContributionModalOpen(false);
-    setSelectedGoalId(null);
-    setContributionForm({ amount: '', contributor: 'both', note: '' });
+      setIsContributionModalOpen(false);
+      setSelectedGoalId(null);
+      setContributionForm({ amount: '', contributor: 'both', note: '' });
+    } catch (err: any) {
+      setContributionError(err?.message || 'Não foi possível concluir a movimentação na caixinha.');
+    }
   };
 
   // =========================================================================
@@ -442,8 +456,13 @@ export const CoupleHubScreen: React.FC = () => {
   };
 
   const handleConvertWishToGoal = (item: CoupleWishlistItem) => {
-    convertWishlistToGoal(item.id);
-    setActiveTab('goals');
+    try {
+      setHubError('');
+      convertWishlistToGoal(item.id);
+      setActiveTab('goals');
+    } catch (err: any) {
+      setHubError(err?.message || 'Não foi possível converter este desejo em objetivo.');
+    }
   };
 
   // =========================================================================
@@ -633,12 +652,32 @@ export const CoupleHubScreen: React.FC = () => {
   };
 
   const handleConvertDreamToGoal = (dream: DreamSimulation) => {
-    convertDreamToGoal(dream.id);
-    setActiveTab('goals');
+    try {
+      setHubError('');
+      convertDreamToGoal(dream.id);
+      setActiveTab('goals');
+    } catch (err: any) {
+      setHubError(err?.message || 'Não foi possível converter este sonho em meta.');
+    }
   };
 
   return (
     <div className="max-w-7xl mx-auto px-3 sm:px-6 py-4 space-y-6 animate-in fade-in pb-24">
+      {hubError && (
+        <div
+          role="alert"
+          className="p-3.5 rounded-2xl bg-rose-50 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-800 text-xs font-semibold text-rose-800 dark:text-rose-200 flex items-center justify-between gap-3"
+        >
+          <span>{hubError}</span>
+          <button
+            type="button"
+            onClick={() => setHubError('')}
+            className="text-rose-600 dark:text-rose-300 font-bold"
+          >
+            Fechar
+          </button>
+        </div>
+      )}
       {/* ========================================================================= */}
       {/* TOP HUB BANNER & HERO CARD                                                */}
       {/* ========================================================================= */}
@@ -1687,7 +1726,10 @@ export const CoupleHubScreen: React.FC = () => {
               </h3>
               <button
                 type="button"
-                onClick={() => setIsContributionModalOpen(false)}
+                onClick={() => {
+                  setIsContributionModalOpen(false);
+                  setContributionError('');
+                }}
                 className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
               >
                 <X className="w-5 h-5" />
@@ -1695,6 +1737,15 @@ export const CoupleHubScreen: React.FC = () => {
             </div>
 
             <form onSubmit={handleSaveContribution} className="space-y-3.5">
+              {contributionError && (
+                <p
+                  role="alert"
+                  className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-800 text-xs font-semibold text-rose-800 dark:text-rose-200"
+                >
+                  {contributionError}
+                </p>
+              )}
+
               <div>
                 <label className="text-xs font-bold text-slate-600 dark:text-slate-400 block mb-1">
                   Valor (R$)
@@ -1703,7 +1754,10 @@ export const CoupleHubScreen: React.FC = () => {
                   type="text"
                   required
                   value={contributionForm.amount}
-                  onChange={(e) => setContributionForm({ ...contributionForm, amount: e.target.value })}
+                  onChange={(e) => {
+                    setContributionForm({ ...contributionForm, amount: e.target.value });
+                    if (contributionError) setContributionError('');
+                  }}
                   placeholder="500,00"
                   className="w-full px-3.5 py-2.5 text-sm font-black rounded-2xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white"
                 />
@@ -1740,7 +1794,10 @@ export const CoupleHubScreen: React.FC = () => {
               <div className="pt-3 flex gap-2">
                 <button
                   type="button"
-                  onClick={() => setIsContributionModalOpen(false)}
+                  onClick={() => {
+                    setIsContributionModalOpen(false);
+                    setContributionError('');
+                  }}
                   className="flex-1 py-2.5 rounded-2xl border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 text-xs font-bold hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors cursor-pointer"
                 >
                   Cancelar

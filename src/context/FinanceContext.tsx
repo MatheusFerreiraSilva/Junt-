@@ -13,7 +13,7 @@ import { authenticatedApi } from '../lib/authenticatedApi';
 import { createPreferenceSync, DEFAULT_PREFERENCES, type AccountPreferences, type PreferencePatch, type AppearanceSyncStatus } from '../lib/accountPreferences';
 import { firebasePreferenceStore } from '../lib/firebasePreferences';
 import { isAvatarOnlySnapshot } from '../lib/coupleSnapshot';
-import { ENTITY_FIELDS, migrateEntities, subscribeEntities, saveEntities, rebaseEntities, conflictAwareBaseline, type EntityState } from '../lib/entitySync';
+import { ENTITY_FIELDS, migrateEntities, subscribeEntities, saveEntities, rebaseEntities, conflictAwareBaseline, commitFinancialCommandTransaction, type EntityState } from '../lib/entitySync';
 import {
   onAuthStateChanged,
   signInWithEmailAndPassword,
@@ -83,6 +83,7 @@ import {
   CoupleWishlistItem,
   DreamSimulation,
   ReconciledBudgetMatrixResult,
+  FinancialCommandResult,
 } from '../types/finance';
 import {
   DEFAULT_PUSH_SETTINGS,
@@ -127,10 +128,16 @@ import { generateAIPredictiveInsights } from '../utils/aiPredictiveInsightsEngin
 import {
   upgradeBudgetPlanContract,
   selectEligibleNetIncome,
-  validateTransactionSplits,
   projectExpenseSplits,
   roundMoney,
   selectReconciledBudgetMatrix,
+  executeExpenseCreateCommand,
+  executeExpenseEditCommand,
+  executeExpenseDeleteCommand,
+  executeReconcileIntentCommand,
+  executeExpenseTriageCommand,
+  executeGoalAdjustmentCommand,
+  executeIntentConversionCommand,
 } from '../utils/domainSelectors';
 
 export const CATEGORIES_BASE: Record<CategoryKey, { name: string; emoji: string; description: string; colorHex: string; bgLight: string; borderHex: string }> = {
@@ -394,6 +401,7 @@ const INITIAL_STATE: AppState = {
     studentName: 'Estudante',
   },
   strategicIntents: [],
+  financialOperations: [],
 };
 
 export interface FinanceContextType {
@@ -850,6 +858,7 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
   const stateRef = useRef(state);
   stateRef.current = state;
   const entityReady = useRef(false);
+  const inFlightTxCountRef = useRef(0);
   const entityListener = useRef<(() => void) | null>(null);
   const coupleListener = useRef<(() => void) | null>(null);
   const loadCache = (uid?: string, coupleId?: string): AppState => {
@@ -1099,6 +1108,7 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
 
     const timer = setTimeout(async () => {
       if (generation !== sessionGeneration.current || auth.currentUser?.uid !== currentUser.uid) return;
+      if (inFlightTxCountRef.current > 0) return;
       try {
         setIsEntitySaving(true);
         setSyncConflict(null);
@@ -1171,6 +1181,7 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
     state.dreamSimulations,
     state.pluggyAccounts,
     state.monthlyBudgetPlans,
+    state.financialOperations,
   ]);
 
   // Realtime Cloud Persistence: Save shared couple state to Firestore (debounced)
@@ -2328,48 +2339,121 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
   };
 
   // ==========================================
+  // UNIFIED TRANSACTIONAL COMMAND DISPATCHER
+  // ==========================================
+  const getCommandAuthorUid = () => currentUser?.uid || 'local-user';
+  const getCommandScope = (): 'couple' | 'partner1' | 'partner2' =>
+    viewMode === 'partner1' ? 'partner1' : viewMode === 'partner2' ? 'partner2' : 'couple';
+
+  const commitCommandTransition = (
+    builder: (snapshot: AppState) => FinancialCommandResult,
+    onCommitted?: (res: FinancialCommandResult, preSnapshot: AppState) => AppState | void
+  ): FinancialCommandResult => {
+    const preSnapshot = stateRef.current;
+    const res = builder(preSnapshot);
+    if (res.status !== 'success') {
+      throw new Error(res.message);
+    }
+
+    let nextLocalState = res.state;
+    if (res.touchedEntities?.protectionUpdated) {
+      nextLocalState = {
+        ...nextLocalState,
+        isProtectionComplete: nextLocalState.protectionCurrentAmount >= autoCalculatedProtectionTarget,
+      };
+    }
+
+    const decoratedState = onCommitted?.(res, preSnapshot) || nextLocalState;
+    const mergedResult: FinancialCommandResult = { ...res, state: decoratedState };
+
+    stateRef.current = decoratedState;
+    setState(decoratedState);
+
+    const isCloudSession =
+      Boolean(coupleAccount?.id && currentUser && !currentUser.isAnonymous && entityReady.current);
+
+    if (isCloudSession && coupleAccount?.id && mergedResult.touchedEntities) {
+      const generation = sessionGeneration.current;
+      const coupleId = coupleAccount.id;
+      const uid = currentUser!.uid;
+      setIsEntitySaving(true);
+      setIsEntityConfirmed(false);
+      inFlightTxCountRef.current += 1;
+
+      void commitFinancialCommandTransaction(db, coupleId, mergedResult, preSnapshot, {
+        reserveFloorR$: emergencyReserveFloorAmount,
+        isActive: () => generation === sessionGeneration.current && auth.currentUser?.uid === uid,
+      })
+        .then((outcome) => {
+          inFlightTxCountRef.current = Math.max(0, inFlightTxCountRef.current - 1);
+          if (generation !== sessionGeneration.current) return;
+          setIsEntitySaving(false);
+
+          if (outcome.status !== 'success') {
+            // Falha/conflito na transação: reverte estado local e preserva histórico/saldos íntegros
+            const failNotif: AppNotification = {
+              id: `notif-tx-fail-${Date.now()}`,
+              title: 'Operação não confirmada na nuvem',
+              message: outcome.message,
+              timestamp: 'Agora mesmo',
+              type: 'alert',
+              isRead: false,
+            };
+            const revertedState: AppState = {
+              ...preSnapshot,
+              notifications: [failNotif, ...preSnapshot.notifications],
+            };
+            stateRef.current = revertedState;
+            setState(revertedState);
+            setIsEntityConfirmed(false);
+            setSyncConflict(outcome.message);
+            return;
+          }
+
+          // Atualiza baseline com os documentos confirmados pela transação para impedir reenvio/duplo débito no autosave
+          const nextBaseline = { ...entityBaseline.current };
+          for (const item of outcome.writtenEntities) {
+            const list = nextBaseline[item.field] ? [...nextBaseline[item.field]!] : [];
+            const idx = list.findIndex((r) => r.id === item.id);
+            if (item.after) {
+              if (idx >= 0) list[idx] = item.after;
+              else list.push(item.after);
+            } else if (idx >= 0) {
+              list.splice(idx, 1);
+            }
+            nextBaseline[item.field] = list;
+          }
+          entityBaseline.current = nextBaseline;
+
+          if (outcome.committedState.financialOperations !== decoratedState.financialOperations) {
+            setState((curr) => ({
+              ...curr,
+              financialOperations: outcome.committedState.financialOperations,
+            }));
+          }
+          setIsEntityConfirmed(true);
+        })
+        .catch((err) => {
+          inFlightTxCountRef.current = Math.max(0, inFlightTxCountRef.current - 1);
+          if (generation !== sessionGeneration.current) return;
+          stateRef.current = preSnapshot;
+          setState(preSnapshot);
+          setIsEntitySaving(false);
+          setIsEntityConfirmed(false);
+          setSyncConflict(err?.message || 'Falha ao confirmar operação financeira na nuvem.');
+        });
+    }
+
+    return mergedResult;
+  };
+
+  // ==========================================
   // EXPENSES, INCOMES, INSTALLMENTS & PIGGYBANKS
   // ==========================================
   // ACTIONS: EXPENSES (CRIAR E EDITAR)
   // ==========================================
   const addExpense = (expense: Omit<ExpenseItem, 'id'>) => {
-    const numAmount = Math.round(Number(expense.amount) * 100) / 100;
-    if (!Number.isFinite(numAmount) || numAmount <= 0 || numAmount > 10000000) {
-      throw new Error('Informe um valor de despesa válido e maior que zero (até R$ 10.000.000).');
-    }
-
     const desc = (expense.description || '').trim();
-    if (!desc) {
-      throw new Error('Informe a descrição da despesa.');
-    }
-
-    const dateStr = expense.date && /^\d{4}-\d{2}-\d{2}$/.test(expense.date)
-      ? expense.date
-      : new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().split('T')[0];
-
-    const dateObj = new Date(dateStr + 'T12:00:00Z');
-    if (!Number.isFinite(dateObj.getTime()) || dateObj.toISOString().slice(0, 10) !== dateStr) {
-      throw new Error(`Data civil inválida: "${dateStr}".`);
-    }
-
-    const fundingSource: FundingSourceType = expense.fundingSource || 'month_budget';
-
-    // Validação de saldo da fonte patrimonial
-    if (fundingSource === 'piggy_bank' && expense.fundingGoalId) {
-      const goal = state.piggyBanks.find(g => g.id === expense.fundingGoalId);
-      if (goal && goal.currentAmount < numAmount) {
-        throw new Error(
-          `Saldo insuficiente no cofrinho "${goal.name}". Saldo disponível: R$ ${goal.currentAmount.toFixed(2)}.`
-        );
-      }
-    } else if (fundingSource === 'reserve_excess') {
-      if (emergencyReserveExcessAmount < numAmount) {
-        throw new Error(
-          `Saldo insuficiente no excesso da reserva de emergência. Excesso disponível: R$ ${emergencyReserveExcessAmount.toFixed(2)}.`
-        );
-      }
-    }
-
     let finalCat = expense.category;
     let finalSub = expense.subcategory;
     if (desc) {
@@ -2384,123 +2468,68 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
       }
     }
 
-    if (expense.splits && expense.splits.length > 0) {
-      const validation = validateTransactionSplits(numAmount, expense.splits);
-      if (!validation.isValid) {
-        throw new Error(validation.error || 'A soma das divisões deve ser exatamente igual ao total da compra.');
-      }
-    }
-
-    const exclusionReason = expense.exclusionReason || (fundingSource !== 'month_budget' ? 'asset_funding' : (expense.isExcludedFromMonthlyBudget ? 'manual' : undefined));
-    const isExcluded = fundingSource !== 'month_budget' || !!expense.isExcludedFromMonthlyBudget;
-
-    const newExpense: ExpenseItem = {
-      ...expense,
-      description: desc,
-      store: expense.store?.trim(),
-      amount: numAmount,
-      date: dateStr,
-      category: finalCat,
-      subcategory: finalSub,
-      splits: expense.splits && expense.splits.length > 0
-        ? expense.splits.map((s, idx) => ({
-            ...s,
-            id: s.id || `split-${Date.now()}-${idx}`,
-            amountCents: s.amountCents !== undefined ? Math.round(s.amountCents) : Math.round(s.amount * 100),
-            amount: s.amountCents !== undefined ? Math.round(s.amountCents) / 100 : s.amount,
-          }))
-        : undefined,
-      fundingSource,
-      isExcludedFromMonthlyBudget: isExcluded,
-      exclusionReason,
-      triageDone: expense.triageDone ?? (fundingSource !== 'month_budget'),
-      id: `exp-${Date.now()}`,
-    };
-
-    setState(prev => {
-      let nextProtAmount = prev.protectionCurrentAmount;
-      let nextProtInvested = prev.protectionTotalInvested;
-      let nextProtComplete = prev.isProtectionComplete;
-      let nextPiggyBanks = prev.piggyBanks;
-      let nextIntents = prev.strategicIntents || [];
-
-      // 1. Se a fonte for Excesso da Reserva: deduz do saldo da reserva de emergência
-      if (fundingSource === 'reserve_excess') {
-        nextProtAmount = Math.max(0, nextProtAmount - newExpense.amount);
-        nextProtInvested = Math.max(0, nextProtInvested - newExpense.amount);
-        nextProtComplete = nextProtAmount >= autoCalculatedProtectionTarget;
-      }
-
-      // 2. Se a fonte for Caixinha / Cofrinho de Objetivo: deduz do saldo do cofrinho
-      if (fundingSource === 'piggy_bank' && newExpense.fundingGoalId) {
-        nextPiggyBanks = nextPiggyBanks.map(g => {
-          if (g.id === newExpense.fundingGoalId) {
-            const nextCur = Math.max(0, g.currentAmount - newExpense.amount);
-            return {
-              ...g,
-              currentAmount: nextCur,
-              completed: nextCur >= g.targetAmount,
-            };
+    const res = commitCommandTransition(
+      (snap) =>
+        executeExpenseCreateCommand(
+          snap,
+          {
+            ...expense,
+            description: desc,
+            category: finalCat,
+            subcategory: finalSub,
+          },
+          {
+            authoredByUid: getCommandAuthorUid(),
+            scope: getCommandScope(),
+            reserveFloorR$: emergencyReserveFloorAmount,
           }
-          return g;
-        });
+        ),
+      (cmdRes) => {
+        const created = cmdRes.expense;
+        if (!created || cmdRes.idempotentReplay) return cmdRes.state;
+        const nextNotifications = [...cmdRes.state.notifications];
+        const catInfo = getCategoryInfo(created.category);
+        const fundingSource = created.fundingSource || 'month_budget';
+
+        if (created.isExcludedFromMonthlyBudget) {
+          const sourceLabel =
+            fundingSource === 'reserve_excess'
+              ? 'Excesso da Reserva de Proteção'
+              : fundingSource === 'piggy_bank'
+              ? (created.fundingGoalName || 'Caixinha de Objetivo')
+              : 'Mesada Individual';
+
+          nextNotifications.unshift({
+            id: `notif-exp-strat-${Date.now()}`,
+            title: 'Gasto Estratégico Registrado 🎯',
+            message: `"${created.description}" (R$ ${created.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}) saiu de ${sourceLabel}. A margem da categoria ${catInfo.name} continua 100% protegida para o dia a dia!`,
+            timestamp: 'Agora mesmo',
+            type: 'success',
+            isRead: false,
+          });
+        } else if (created.amount >= 1000) {
+          nextNotifications.unshift({
+            id: `notif-exp-${Date.now()}`,
+            title: 'Gasto Relevante Registrado 💳',
+            message: `"${created.description}" no valor de R$ ${created.amount.toLocaleString('pt-BR')} foi adicionado em ${catInfo.name}.`,
+            timestamp: 'Agora mesmo',
+            type: 'info',
+            isRead: false,
+            category: created.category,
+            amount: created.amount,
+          });
+        }
+
+        return {
+          ...cmdRes.state,
+          notifications: nextNotifications,
+        };
       }
+    );
 
-      // 3. Se for vinculada a uma Intenção Estratégica prévia: marca como executada
-      if (newExpense.strategicIntentId) {
-        nextIntents = nextIntents.map(intent =>
-          intent.id === newExpense.strategicIntentId
-            ? { ...intent, status: 'executed' as const, matchedExpenseId: newExpense.id }
-            : intent
-        );
-      }
-
-      const newExpenses = [newExpense, ...prev.expenses];
-      const newNotifications = [...prev.notifications];
-      const catInfo = getCategoryInfo(newExpense.category);
-
-      if (isExcluded) {
-        const sourceLabel =
-          fundingSource === 'reserve_excess'
-            ? 'Excesso da Reserva de Proteção'
-            : fundingSource === 'piggy_bank'
-            ? (newExpense.fundingGoalName || 'Caixinha de Objetivo')
-            : 'Mesada Individual';
-
-        newNotifications.unshift({
-          id: `notif-exp-strat-${Date.now()}`,
-          title: 'Gasto Estratégico Registrado 🎯',
-          message: `"${newExpense.description}" (R$ ${newExpense.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}) saiu de ${sourceLabel}. A margem da categoria ${catInfo.name} continua 100% protegida para o dia a dia!`,
-          timestamp: 'Agora mesmo',
-          type: 'success',
-          isRead: false,
-        });
-      } else if (newExpense.amount >= 1000) {
-        newNotifications.unshift({
-          id: `notif-exp-${Date.now()}`,
-          title: 'Gasto Relevante Registrado 💳',
-          message: `"${newExpense.description}" no valor de R$ ${newExpense.amount.toLocaleString('pt-BR')} foi adicionado em ${catInfo.name}.`,
-          timestamp: 'Agora mesmo',
-          type: 'info',
-          isRead: false,
-          category: newExpense.category,
-          amount: newExpense.amount,
-        });
-      }
-
-      return {
-        ...prev,
-        expenses: newExpenses,
-        protectionCurrentAmount: nextProtAmount,
-        protectionTotalInvested: nextProtInvested,
-        isProtectionComplete: nextProtComplete,
-        piggyBanks: nextPiggyBanks,
-        strategicIntents: nextIntents,
-        notifications: newNotifications,
-      };
-    });
-
-    triggerCelebration();
+    if (!res.idempotentReplay) {
+      triggerCelebration();
+    }
   };
 
   const updateExpense = (id: string, updatedFields: Partial<ExpenseItem>) => {
@@ -2508,54 +2537,14 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
   };
 
   const deleteExpense = (id: string) => {
-    setState(prev => {
-      const target = prev.expenses.find(e => e.id === id);
-      let nextProtAmount = prev.protectionCurrentAmount;
-      let nextProtInvested = prev.protectionTotalInvested;
-      let nextProtComplete = prev.isProtectionComplete;
-      let nextPiggyBanks = prev.piggyBanks;
-      let nextBills = prev.coupleFixedBills || [];
-
-      if (target?.linkedBillId && target?.billCompetenceMonth) {
-        nextBills = nextBills.map(b => {
-          if (b.id === target.linkedBillId) {
-            const history = { ...(b.history || {}) };
-            delete history[target.billCompetenceMonth!];
-            return {
-              ...b,
-              status: 'pending' as const,
-              history,
-            };
-          }
-          return b;
-        });
-      }
-
-      // Reverter dedução se o gasto era de reserva ou caixinha
-      if (target?.fundingSource === 'reserve_excess') {
-        nextProtAmount += target.amount;
-        nextProtInvested += target.amount;
-        nextProtComplete = nextProtAmount >= autoCalculatedProtectionTarget;
-      } else if (target?.fundingSource === 'piggy_bank' && target.fundingGoalId) {
-        nextPiggyBanks = nextPiggyBanks.map(g => {
-          if (g.id === target.fundingGoalId) {
-            const nextCur = g.currentAmount + target.amount;
-            return { ...g, currentAmount: nextCur, completed: nextCur >= g.targetAmount };
-          }
-          return g;
-        });
-      }
-
-      return {
-        ...prev,
-        expenses: prev.expenses.filter(e => e.id !== id),
-        coupleFixedBills: nextBills,
-        protectionCurrentAmount: nextProtAmount,
-        protectionTotalInvested: nextProtInvested,
-        isProtectionComplete: nextProtComplete,
-        piggyBanks: nextPiggyBanks,
-      };
-    });
+    if (!stateRef.current.expenses.some((e) => e.id === id)) return;
+    commitCommandTransition((snap) =>
+      executeExpenseDeleteCommand(snap, id, {
+        authoredByUid: getCommandAuthorUid(),
+        scope: getCommandScope(),
+        reserveFloorR$: emergencyReserveFloorAmount,
+      })
+    );
   };
 
   // ==========================================
@@ -2611,79 +2600,35 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
   };
 
   const reconcileExpenseWithIntent = (expenseId: string, intentId: string) => {
-    setState(prev => {
-      const targetExp = prev.expenses.find(e => e.id === expenseId);
-      const targetIntent = (prev.strategicIntents || []).find(i => i.id === intentId);
-      if (!targetExp || !targetIntent) return prev;
-
-      const fundingSource = targetIntent.targetSource;
-      const isExcluded = fundingSource !== 'month_budget';
-
-      let nextProtAmount = prev.protectionCurrentAmount;
-      let nextProtInvested = prev.protectionTotalInvested;
-      let nextProtComplete = prev.isProtectionComplete;
-      let nextPiggyBanks = prev.piggyBanks;
-
-      if (fundingSource === 'reserve_excess') {
-        nextProtAmount = Math.max(0, nextProtAmount - targetExp.amount);
-        nextProtInvested = Math.max(0, nextProtInvested - targetExp.amount);
-        nextProtComplete = nextProtAmount >= autoCalculatedProtectionTarget;
-      } else if (fundingSource === 'piggy_bank' && targetIntent.targetGoalId) {
-        nextPiggyBanks = nextPiggyBanks.map(g => {
-          if (g.id === targetIntent.targetGoalId) {
-            const nextCur = Math.max(0, g.currentAmount - targetExp.amount);
-            return { ...g, currentAmount: nextCur, completed: nextCur >= g.targetAmount };
-          }
-          return g;
-        });
+    const res = commitCommandTransition(
+      (snap) =>
+        executeReconcileIntentCommand(snap, expenseId, intentId, {
+          authoredByUid: getCommandAuthorUid(),
+          scope: getCommandScope(),
+          reserveFloorR$: emergencyReserveFloorAmount,
+        }),
+      (cmdRes, preSnap) => {
+        if (cmdRes.idempotentReplay || !cmdRes.expense) return cmdRes.state;
+        const targetIntent = (preSnap.strategicIntents || []).find((i) => i.id === intentId);
+        if (!targetIntent) return cmdRes.state;
+        const notif: AppNotification = {
+          id: `notif-reconciled-${Date.now()}`,
+          title: 'Reconciliação Automática Concluída! 🎯✨',
+          message: `A compra "${cmdRes.expense.description}" (R$ ${cmdRes.expense.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}) foi vinculada à intenção "${targetIntent.title}". A margem da categoria ${CATEGORIES_BASE[targetIntent.category]?.name} permanece 100% protegida.`,
+          timestamp: 'Agora mesmo',
+          type: 'success',
+          isRead: false,
+        };
+        return {
+          ...cmdRes.state,
+          notifications: [notif, ...cmdRes.state.notifications],
+        };
       }
+    );
 
-      const updatedExpenses: ExpenseItem[] = prev.expenses.map(e => {
-        if (e.id === expenseId) {
-          return {
-            ...e,
-            category: targetIntent.category,
-            fundingSource,
-            fundingGoalId: targetIntent.targetGoalId,
-            fundingGoalName: targetIntent.targetGoalName,
-            strategicIntentId: intentId,
-            isExcludedFromMonthlyBudget: isExcluded,
-            triageDone: true,
-            reconciledWithIntent: true,
-          };
-        }
-        return e;
-      });
-
-      const updatedIntents = (prev.strategicIntents || []).map(i => {
-        if (i.id === intentId) {
-          return { ...i, status: 'matched' as const, matchedExpenseId: expenseId };
-        }
-        return i;
-      });
-
-      const notif: AppNotification = {
-        id: `notif-reconciled-${Date.now()}`,
-        title: 'Reconciliação Automática Concluída! 🎯✨',
-        message: `A compra "${targetExp.description}" (R$ ${targetExp.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}) foi vinculada à intenção "${targetIntent.title}". A margem da categoria ${CATEGORIES_BASE[targetIntent.category]?.name} permanece 100% protegida.`,
-        timestamp: 'Agora mesmo',
-        type: 'success',
-        isRead: false,
-      };
-
-      return {
-        ...prev,
-        expenses: updatedExpenses,
-        strategicIntents: updatedIntents,
-        protectionCurrentAmount: nextProtAmount,
-        protectionTotalInvested: nextProtInvested,
-        isProtectionComplete: nextProtComplete,
-        piggyBanks: nextPiggyBanks,
-        notifications: [notif, ...prev.notifications],
-      };
-    });
-
-    triggerCelebration();
+    if (!res.idempotentReplay) {
+      triggerCelebration();
+    }
   };
 
   const updateExpenseTriage = (
@@ -2697,96 +2642,41 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
       isExcludedFromMonthlyBudget?: boolean;
     }
   ) => {
-    setState(prev => {
-      const targetExp = prev.expenses.find(e => e.id === expenseId);
-      if (!targetExp) return prev;
+    commitCommandTransition(
+      (snap) =>
+        executeExpenseTriageCommand(snap, expenseId, triageData, {
+          authoredByUid: getCommandAuthorUid(),
+          scope: getCommandScope(),
+          reserveFloorR$: emergencyReserveFloorAmount,
+        }),
+      (cmdRes) => {
+        const updatedExp = cmdRes.expense;
+        if (!updatedExp) return cmdRes.state;
+        const newSource = updatedExp.fundingSource || 'month_budget';
+        const sourceLabel =
+          newSource === 'reserve_excess'
+            ? 'Excesso da Reserva'
+            : newSource === 'piggy_bank'
+            ? (triageData.fundingGoalName || updatedExp.fundingGoalName || 'Caixinha de Objetivo')
+            : newSource === 'personal_allowance'
+            ? 'Mesada Individual'
+            : 'Orçamento do Mês';
 
-      const oldSource = targetExp.fundingSource || 'month_budget';
-      const newSource = triageData.fundingSource || oldSource;
-      const isExcluded = newSource !== 'month_budget';
+        const notif: AppNotification = {
+          id: `notif-triage-${Date.now()}`,
+          title: 'Triagem Concluída! 🏷️⚡',
+          message: `A despesa "${updatedExp.description}" foi alocada em "${sourceLabel}". O orçamento da categoria foi ajustado automaticamente.`,
+          timestamp: 'Agora mesmo',
+          type: 'success',
+          isRead: false,
+        };
 
-      let nextProtAmount = prev.protectionCurrentAmount;
-      let nextProtInvested = prev.protectionTotalInvested;
-      let nextProtComplete = prev.isProtectionComplete;
-      let nextPiggyBanks = prev.piggyBanks;
-
-      // Reverter impacto anterior se mudou de fonte
-      if (oldSource === 'reserve_excess' && newSource !== 'reserve_excess') {
-        nextProtAmount += targetExp.amount;
-        nextProtInvested += targetExp.amount;
-        nextProtComplete = nextProtAmount >= autoCalculatedProtectionTarget;
-      } else if (oldSource === 'piggy_bank' && targetExp.fundingGoalId && newSource !== 'piggy_bank') {
-        nextPiggyBanks = nextPiggyBanks.map(g => {
-          if (g.id === targetExp.fundingGoalId) {
-            const nextCur = g.currentAmount + targetExp.amount;
-            return { ...g, currentAmount: nextCur, completed: nextCur >= g.targetAmount };
-          }
-          return g;
-        });
+        return {
+          ...cmdRes.state,
+          notifications: [notif, ...cmdRes.state.notifications],
+        };
       }
-
-      // Aplicar novo impacto
-      if (newSource === 'reserve_excess' && oldSource !== 'reserve_excess') {
-        nextProtAmount = Math.max(0, nextProtAmount - targetExp.amount);
-        nextProtInvested = Math.max(0, nextProtInvested - targetExp.amount);
-        nextProtComplete = nextProtAmount >= autoCalculatedProtectionTarget;
-      } else if (newSource === 'piggy_bank' && triageData.fundingGoalId && oldSource !== 'piggy_bank') {
-        nextPiggyBanks = nextPiggyBanks.map(g => {
-          if (g.id === triageData.fundingGoalId) {
-            const nextCur = Math.max(0, g.currentAmount - targetExp.amount);
-            return { ...g, currentAmount: nextCur, completed: nextCur >= g.targetAmount };
-          }
-          return g;
-        });
-      }
-
-      const updatedExpenses: ExpenseItem[] = prev.expenses.map(e => {
-        if (e.id === expenseId) {
-          return {
-            ...e,
-            ...triageData,
-            fundingSource: newSource,
-            isExcludedFromMonthlyBudget: isExcluded,
-            triageDone: true,
-            paidBy:
-              triageData.assignedTo === 'partner1'
-                ? 'partner1'
-                : triageData.assignedTo === 'partner2'
-                ? 'partner2'
-                : 'both',
-          };
-        }
-        return e;
-      });
-
-      const sourceLabel =
-        newSource === 'reserve_excess'
-          ? 'Excesso da Reserva'
-          : newSource === 'piggy_bank'
-          ? (triageData.fundingGoalName || 'Caixinha de Objetivo')
-          : newSource === 'personal_allowance'
-          ? 'Mesada Individual'
-          : 'Orçamento do Mês';
-
-      const notif: AppNotification = {
-        id: `notif-triage-${Date.now()}`,
-        title: 'Triagem Concluída! 🏷️⚡',
-        message: `A despesa "${targetExp.description}" foi alocada em "${sourceLabel}". O orçamento da categoria foi ajustado automaticamente.`,
-        timestamp: 'Agora mesmo',
-        type: 'success',
-        isRead: false,
-      };
-
-      return {
-        ...prev,
-        expenses: updatedExpenses,
-        protectionCurrentAmount: nextProtAmount,
-        protectionTotalInvested: nextProtInvested,
-        isProtectionComplete: nextProtComplete,
-        piggyBanks: nextPiggyBanks,
-        notifications: [notif, ...prev.notifications],
-      };
-    });
+    );
 
     triggerCelebration();
   };
@@ -3356,85 +3246,67 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
   const removePiggyBank = deletePiggyBank;
 
   const depositPiggyBank = (id: string, amount: number, contributor?: 'partner1' | 'partner2' | 'both', note?: string) => {
-    setState(prev => {
-      let justCompleted = false;
-      const updatedPiggy = prev.piggyBanks.map(p => {
-        if (p.id === id) {
-          const nextAmount = p.currentAmount + amount;
-          if (nextAmount >= p.targetAmount && p.currentAmount < p.targetAmount) {
-            justCompleted = true;
-          }
-          return {
-            ...p,
-            currentAmount: nextAmount,
-            completed: nextAmount >= p.targetAmount,
-          };
-        }
-        return p;
-      });
+    if (!Number.isFinite(amount) || amount === 0) {
+      throw new Error('Informe um valor monetário válido e diferente de zero.');
+    }
+    const direction = amount > 0 ? 'deposit' : 'withdrawal';
+    const absAmount = Math.abs(amount);
+    let achievedNow = false;
 
-      const p1Name = prev.profile.partner1Name || 'Pessoa 1';
-      const p2Name = prev.profile.partner2Name === 'Aguardando Par...' ? 'Pessoa 2' : prev.profile.partner2Name || 'Pessoa 2';
-      const contrib = contributor || 'both';
-      const contributorName = contrib === 'partner1' ? p1Name : contrib === 'partner2' ? p2Name : `${p1Name} & ${p2Name}`;
-
-      let p1Add = 0;
-      let p2Add = 0;
-      if (contrib === 'partner1') p1Add = amount;
-      else if (contrib === 'partner2') p2Add = amount;
-      else { p1Add = amount / 2; p2Add = amount / 2; }
-
-      const updatedCoupleGoals = (prev.coupleGoals || []).map(cg => {
-        if (cg.id === id) {
-          const nextCur = Math.max(0, cg.currentAmount + amount);
-          const histItem: import('../types/finance').CoupleGoalContribution = {
-            id: `h-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`,
-            contributor: contrib,
-            contributorName,
-            amount: Math.abs(amount),
-            date: new Date().toISOString().split('T')[0],
-            type: amount >= 0 ? 'deposit' : 'withdrawal',
-            note,
+    commitCommandTransition(
+      (snap) =>
+        executeGoalAdjustmentCommand(snap, {
+          goalId: id,
+          direction,
+          amount: absAmount,
+          contributor: contributor || 'both',
+          note,
+          authoredByUid: getCommandAuthorUid(),
+          scope: getCommandScope(),
+        }),
+      (cmdRes, preSnap) => {
+        const preGoal = preSnap.piggyBanks.find((p) => p.id === id);
+        const postGoal = cmdRes.state.piggyBanks.find((p) => p.id === id);
+        if (direction === 'deposit' && postGoal?.completed && !preGoal?.completed) {
+          achievedNow = true;
+          const notif: AppNotification = {
+            id: `notif-goal-${Date.now()}`,
+            title: 'Meta Alcançada com Sucesso! 🏆',
+            message: `Parabéns ao casal! O objetivo "${postGoal.name}" atingiu 100% do valor estipulado!`,
+            timestamp: 'Agora mesmo',
+            type: 'success',
+            isRead: false,
           };
           return {
-            ...cg,
-            currentAmount: nextCur,
-            partner1Contribution: Math.max(0, cg.partner1Contribution + p1Add),
-            partner2Contribution: Math.max(0, cg.partner2Contribution + p2Add),
-            isCompleted: nextCur >= cg.targetAmount,
-            history: [histItem, ...(cg.history || [])],
+            ...cmdRes.state,
+            notifications: [notif, ...cmdRes.state.notifications],
           };
         }
-        return cg;
-      });
-
-      const newNotifs = [...prev.notifications];
-      if (justCompleted) {
-        const goal = updatedPiggy.find(p => p.id === id);
-        newNotifs.unshift({
-          id: `notif-goal-${Date.now()}`,
-          title: 'Meta Alcançada com Sucesso! 🏆',
-          message: `Parabéns ao casal! O objetivo "${goal?.name}" atingiu 100% do valor estipulado!`,
-          timestamp: 'Agora mesmo',
-          type: 'success',
-          isRead: false,
-        });
-        triggerCelebration();
+        return cmdRes.state;
       }
+    );
 
-      return {
-        ...prev,
-        piggyBanks: updatedPiggy,
-        coupleGoals: updatedCoupleGoals,
-        notifications: newNotifs,
-      };
-    });
+    if (achievedNow) {
+      triggerCelebration();
+    }
   };
 
   const depositToPiggyBank = depositPiggyBank;
 
   const withdrawPiggyBank = (id: string, amount: number) => {
-    depositPiggyBank(id, -Math.abs(amount));
+    if (!Number.isFinite(amount) || amount <= 0) {
+      throw new Error('Informe um valor positivo e válido para resgate.');
+    }
+    commitCommandTransition((snap) =>
+      executeGoalAdjustmentCommand(snap, {
+        goalId: id,
+        direction: 'withdrawal',
+        amount,
+        contributor: 'both',
+        authoredByUid: getCommandAuthorUid(),
+        scope: getCommandScope(),
+      })
+    );
   };
 
   const withdrawFromPiggyBank = withdrawPiggyBank;
@@ -3586,37 +3458,17 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
   };
 
   const convertWishlistToGoal = (wishlistId: string) => {
-    const item = (state.coupleWishlist || []).find(w => w.id === wishlistId);
-    if (!item) return;
-
-    if (item.status === 'convertido_meta' && item.convertedGoalId) {
-      return;
+    const res = commitCommandTransition((snap) =>
+      executeIntentConversionCommand(snap, {
+        kind: 'wishlist',
+        sourceId: wishlistId,
+        authoredByUid: getCommandAuthorUid(),
+        scope: getCommandScope(),
+      })
+    );
+    if (!res.idempotentReplay) {
+      triggerCelebration();
     }
-
-    const newGoalId = `goal-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-    const targetPrice = item.estimatedPrice;
-
-    const newPiggy: SavingsPiggyBank = {
-      id: newGoalId,
-      name: item.title,
-      emoji: item.emoji,
-      purpose: `Desejo do Casal convertido: ${item.notes || item.category}`,
-      targetAmount: targetPrice,
-      monthlyDeposit: Math.round(targetPrice / 6),
-      currentAmount: 0,
-      completed: false,
-    };
-
-    addPiggyBank(newPiggy);
-
-    setState(prev => ({
-      ...prev,
-      coupleWishlist: (prev.coupleWishlist || []).map(w =>
-        w.id === wishlistId ? { ...w, status: 'convertido_meta' as const, convertedGoalId: newGoalId } : w
-      ),
-    }));
-
-    triggerCelebration();
   };
 
   const addDreamSimulation = (dream: Omit<DreamSimulation, 'id' | 'createdAt'>): DreamSimulation => {
@@ -3648,30 +3500,19 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
   };
 
   const convertDreamToGoal = (dreamId: string): { goalId: string; piggy: SavingsPiggyBank } => {
-    const dream = (state.dreamSimulations || []).find(d => d.id === dreamId);
-    if (!dream) throw new Error('Sonho não encontrado.');
+    const res = commitCommandTransition((snap) =>
+      executeIntentConversionCommand(snap, {
+        kind: 'dream',
+        sourceId: dreamId,
+        authoredByUid: getCommandAuthorUid(),
+        scope: getCommandScope(),
+      })
+    ) as FinancialCommandResult & { goalId?: string; piggy?: SavingsPiggyBank };
 
-    if (dream.convertedGoalId) {
-      const existingPiggy = state.piggyBanks.find(p => p.id === dream.convertedGoalId);
-      if (existingPiggy) return { goalId: dream.convertedGoalId, piggy: existingPiggy };
+    if (!res.goalId || !res.piggy) {
+      throw new Error('Falha ao converter sonho em objetivo.');
     }
-
-    const goalId = `goal-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-    const newPiggy: SavingsPiggyBank = {
-      id: goalId,
-      name: dream.title,
-      emoji: dream.emoji || '🏠',
-      purpose: `Sonho do Casal convertido (${dream.monthsToAchieve} meses previstos)`,
-      targetAmount: dream.totalCost,
-      monthlyDeposit: dream.monthlySavings,
-      currentAmount: dream.downPayment || 0,
-      completed: (dream.downPayment || 0) >= dream.totalCost,
-    };
-
-    addPiggyBank(newPiggy);
-    updateDreamSimulation(dreamId, { convertedGoalId: goalId });
-
-    return { goalId, piggy: newPiggy };
+    return { goalId: res.goalId, piggy: res.piggy };
   };
 
   const setGoalCoupleAgreement = (goalId: string, agreement: import('../types/finance').CoupleAgreement) => {
@@ -3972,149 +3813,15 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
     const targetId = typeof expenseOrId === 'object' ? expenseOrId.id : expenseOrId;
     const incomingFields = typeof expenseOrId === 'object' ? expenseOrId : (updates || {});
 
-    const oldExp = state.expenses.find(e => e.id === targetId);
-    if (!oldExp) return;
+    if (!stateRef.current.expenses.some((e) => e.id === targetId)) return;
 
-    const draftDesc = (incomingFields.description !== undefined ? incomingFields.description : oldExp.description).trim();
-    if (!draftDesc) {
-      throw new Error('Informe a descrição da despesa.');
-    }
-
-    const draftAmount = Math.round(Number(incomingFields.amount !== undefined ? incomingFields.amount : oldExp.amount) * 100) / 100;
-    if (!Number.isFinite(draftAmount) || draftAmount <= 0 || draftAmount > 10000000) {
-      throw new Error('Informe um valor de despesa válido e maior que zero (até R$ 10.000.000).');
-    }
-
-    const draftDate = incomingFields.date !== undefined ? incomingFields.date : oldExp.date;
-    if (draftDate && (!/^\d{4}-\d{2}-\d{2}$/.test(draftDate) || !Number.isFinite(new Date(draftDate + 'T12:00:00Z').getTime()))) {
-      throw new Error(`Data civil inválida: "${draftDate}".`);
-    }
-
-    const oldSource: FundingSourceType = oldExp.fundingSource || 'month_budget';
-    const newSource: FundingSourceType = incomingFields.fundingSource !== undefined
-      ? incomingFields.fundingSource
-      : oldSource;
-    const newGoalId = incomingFields.fundingGoalId !== undefined ? incomingFields.fundingGoalId : oldExp.fundingGoalId;
-
-    // Validar saldo da nova fonte (considerando o estorno da fonte antiga)
-    if (newSource === 'piggy_bank' && newGoalId) {
-      const targetGoal = state.piggyBanks.find(g => g.id === newGoalId);
-      const restoredGoalAmount = targetGoal
-        ? targetGoal.currentAmount + (oldSource === 'piggy_bank' && oldExp.fundingGoalId === newGoalId ? oldExp.amount : 0)
-        : 0;
-      if (restoredGoalAmount < draftAmount) {
-        throw new Error(
-          `Saldo insuficiente no cofrinho "${targetGoal?.name || 'selecionado'}". Saldo disponível (com estorno): R$ ${restoredGoalAmount.toFixed(2)}.`
-        );
-      }
-    } else if (newSource === 'reserve_excess') {
-      const restoredReserveExcess = emergencyReserveExcessAmount + (oldSource === 'reserve_excess' ? oldExp.amount : 0);
-      if (restoredReserveExcess < draftAmount) {
-        throw new Error(
-          `Saldo insuficiente no excesso da reserva de emergência. Excesso disponível (com estorno): R$ ${restoredReserveExcess.toFixed(2)}.`
-        );
-      }
-    }
-
-    if (incomingFields.splits && incomingFields.splits.length > 0) {
-      const validation = validateTransactionSplits(draftAmount, incomingFields.splits);
-      if (!validation.isValid) {
-        throw new Error(validation.error || 'A soma das divisões deve ser exatamente igual ao total da compra.');
-      }
-    }
-
-    setState(prev => {
-      const currentOld = prev.expenses.find(e => e.id === targetId);
-      if (!currentOld) return prev;
-
-      let nextProtAmount = prev.protectionCurrentAmount;
-      let nextProtInvested = prev.protectionTotalInvested;
-      let nextPiggyBanks = prev.piggyBanks;
-
-      // 1. Reverter dedução anterior da fonte antiga
-      const cOldSource: FundingSourceType = currentOld.fundingSource || 'month_budget';
-      if (cOldSource === 'reserve_excess') {
-        nextProtAmount += currentOld.amount;
-        nextProtInvested += currentOld.amount;
-      } else if (cOldSource === 'piggy_bank' && currentOld.fundingGoalId) {
-        nextPiggyBanks = nextPiggyBanks.map(g => {
-          if (g.id === currentOld.fundingGoalId) {
-            const nextCur = g.currentAmount + currentOld.amount;
-            return { ...g, currentAmount: nextCur, completed: nextCur >= g.targetAmount };
-          }
-          return g;
-        });
-      }
-
-      // 2. Formular objeto atualizado e escopo orçamentário
-      let exclusionReason = incomingFields.exclusionReason;
-      let isExcluded = incomingFields.isExcludedFromMonthlyBudget;
-
-      if (newSource !== 'month_budget') {
-        isExcluded = true;
-        exclusionReason = 'asset_funding';
-      } else if (cOldSource !== 'month_budget') {
-        // Mudando de caixinha/reserva de volta para orçamento mensal
-        if (currentOld.exclusionReason === 'manual' || exclusionReason === 'manual') {
-          isExcluded = true;
-          exclusionReason = 'manual';
-        } else {
-          isExcluded = false;
-          exclusionReason = undefined;
-        }
-      } else if (isExcluded === undefined) {
-        isExcluded = currentOld.isExcludedFromMonthlyBudget;
-        exclusionReason = currentOld.exclusionReason;
-      }
-
-      const newExp: ExpenseItem = {
-        ...currentOld,
-        ...incomingFields,
-        description: draftDesc,
-        store: incomingFields.store !== undefined ? incomingFields.store?.trim() : currentOld.store,
-        amount: draftAmount,
-        date: draftDate || currentOld.date,
-        splits: incomingFields.splits !== undefined
-          ? (incomingFields.splits && incomingFields.splits.length > 0
-              ? incomingFields.splits.map((s, idx) => ({
-                  ...s,
-                  id: s.id || `split-${Date.now()}-${idx}`,
-                  amountCents: s.amountCents !== undefined ? Math.round(s.amountCents) : Math.round(s.amount * 100),
-                  amount: s.amountCents !== undefined ? Math.round(s.amountCents) / 100 : s.amount,
-                }))
-              : undefined)
-          : currentOld.splits,
-        fundingSource: newSource,
-        fundingGoalId: newGoalId,
-        isExcludedFromMonthlyBudget: isExcluded,
-        exclusionReason,
-      };
-
-      // 3. Aplicar nova dedução sobre a nova fonte
-      if (newSource === 'reserve_excess') {
-        nextProtAmount = Math.max(0, nextProtAmount - newExp.amount);
-        nextProtInvested = Math.max(0, nextProtInvested - newExp.amount);
-      } else if (newSource === 'piggy_bank' && newExp.fundingGoalId) {
-        nextPiggyBanks = nextPiggyBanks.map(g => {
-          if (g.id === newExp.fundingGoalId) {
-            const nextCur = Math.max(0, g.currentAmount - newExp.amount);
-            return { ...g, currentAmount: nextCur, completed: nextCur >= g.targetAmount };
-          }
-          return g;
-        });
-      }
-
-      const nextProtComplete = nextProtAmount >= autoCalculatedProtectionTarget;
-
-      return {
-        ...prev,
-        expenses: prev.expenses.map(e => (e.id === targetId ? newExp : e)),
-        protectionCurrentAmount: nextProtAmount,
-        protectionTotalInvested: nextProtInvested,
-        isProtectionComplete: nextProtComplete,
-        piggyBanks: nextPiggyBanks,
-      };
-    });
+    commitCommandTransition((snap) =>
+      executeExpenseEditCommand(snap, targetId, incomingFields, {
+        authoredByUid: getCommandAuthorUid(),
+        scope: getCommandScope(),
+        reserveFloorR$: emergencyReserveFloorAmount,
+      })
+    );
   };
 
   const clearAllNotifications = () => {
@@ -5198,6 +4905,8 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
       incomes: [],
       installments: [],
       piggyBanks: [],
+      coupleGoals: [],
+      financialOperations: [],
       linkedAccounts: [],
       pluggyAccounts: [],
       detectedSubscriptions: [],

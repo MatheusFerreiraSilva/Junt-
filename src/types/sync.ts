@@ -114,6 +114,16 @@ export const CLOUD_PERSISTENCE_MATRIX: readonly PersistenceMatrixEntry[] = [
     rule: 'validEntity (id no formato YYYY-MM, plannedNetIncome >= 0, categoryPercentages)',
     test: 'src/lib/__tests__/entitySync.test.ts',
   },
+  {
+    field: 'financialOperations',
+    owner: 'couple',
+    competency: 'event',
+    source: 'Comandos financeiros atômicos com centavos autoritativos, idempotência e estorno',
+    readPath: 'couples/{coupleId}/entities/financialOperations:{operationId}',
+    writePath: 'couples/{coupleId}/entities/financialOperations:{operationId}',
+    rule: 'validEntity (amountCents int > 0, escopo validado, revisão e transação atômica)',
+    test: 'src/utils/__tests__/monetaryIntegrity29A.test.ts',
+  },
 
   // --- Finanças Compartilhadas do Casal: Cabeçalho Bounded ---
   {

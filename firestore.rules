@@ -16,7 +16,13 @@ service cloud.firestore {
       return record is map && record.id is string && record.id.size() > 0 && record.id.size() <= 1024
         && !record.keys().hasAny(['pluggyCredentials', 'clientSecret', 'apiKey', 'accessToken'])
         && (!(field in ['expenses', 'incomes', 'bankImportedTransactions', 'financialOperations']) ||
-          (!('amount' in record) || (record.amount is number && record.amount >= 0 && record.amount <= 90071992547409)))
+          ((!('amount' in record) || (record.amount is number && record.amount >= 0 && record.amount <= 90071992547409))
+            && (!('amountCents' in record) || (record.amountCents is int && record.amountCents <= 9007199254740991 && ((field == 'financialOperations' && record.amountCents > 0) || (field != 'financialOperations' && record.amountCents >= 0))))
+            && (!('amountR$' in record) || (record['amountR$'] is number && record['amountR$'] >= 0 && record['amountR$'] <= 90071992547409))))
+        && (!(field in ['piggyBanks', 'coupleGoals']) ||
+          ((!('currentAmount' in record) || (record.currentAmount is number && record.currentAmount >= 0 && record.currentAmount <= 90071992547409))
+            && (!('availableCents' in record) || (record.availableCents is int && record.availableCents >= 0 && record.availableCents <= 9007199254740991))))
+        && (!('scope' in record) || record.scope in ['partner1', 'partner2', 'couple', 'casal'])
         && (!('paidBy' in record) || record.paidBy in ['partner1', 'partner2', 'both', 'custom'])
         && (!('recipient' in record) || record.recipient in ['partner1', 'partner2', 'both', 'custom']);
     }

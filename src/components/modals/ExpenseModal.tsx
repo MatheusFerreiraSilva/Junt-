@@ -132,7 +132,17 @@ export const ExpenseModal: React.FC<ExpenseModalProps> = ({
   const [installmentsCount, setInstallmentsCount] = useState<number>(3);
   const [fundingSource, setFundingSource] = useState<FundingSourceType>('month_budget');
   const [paymentMethod, setPaymentMethod] = useState<'pix' | 'debit' | 'credit' | 'cash'>('pix');
-  const [selectedGoalId, setSelectedGoalId] = useState<string>(() => state.piggyBanks[0]?.id || '');
+  const activePiggyBanks = useMemo(
+    () =>
+      state.piggyBanks.filter(
+        (g) => (!g.archived && !g.isDeleted) || g.id === expenseToEdit?.fundingGoalId
+      ),
+    [state.piggyBanks, expenseToEdit?.fundingGoalId]
+  );
+
+  const [selectedGoalId, setSelectedGoalId] = useState<string>(
+    () => state.piggyBanks.find((g) => !g.archived && !g.isDeleted)?.id || ''
+  );
   const [successCelebration, setSuccessCelebration] = useState(false);
   const [validationError, setValidationError] = useState('');
 
@@ -160,7 +170,9 @@ export const ExpenseModal: React.FC<ExpenseModalProps> = ({
       setAssignedTo(expenseToEdit.assignedTo === 'casal' ? 'couple' : (expenseToEdit.assignedTo || 'couple'));
       setSplitPartner1Pct(expenseToEdit.splitPartner1Pct ?? 50);
       setFundingSource(expenseToEdit.fundingSource || 'month_budget');
-      setSelectedGoalId(expenseToEdit.fundingGoalId || state.piggyBanks[0]?.id || '');
+      const firstActiveGoalId =
+        state.piggyBanks.find((g) => (!g.archived && !g.isDeleted) || g.id === expenseToEdit.fundingGoalId)?.id || '';
+      setSelectedGoalId(expenseToEdit.fundingGoalId || firstActiveGoalId);
       setPaymentMethod(expenseToEdit.paymentMethod || 'pix');
       setIsInstallment(false);
       setValidationError('');
@@ -562,13 +574,15 @@ export const ExpenseModal: React.FC<ExpenseModalProps> = ({
       !isDivided && (isInstallment || (paymentMethod === 'credit' && installmentsCount > 1));
 
     try {
-      const targetGoal = state.piggyBanks.find((g) => g.id === selectedGoalId);
+      const targetGoal = activePiggyBanks.find((g) => g.id === selectedGoalId);
+      const amountCents = Math.round(numAmount * 100);
 
       if (expenseToEdit) {
         editExpense(expenseToEdit.id, {
           description: finalDesc,
           store: store.trim() || undefined,
           amount: numAmount,
+          amountCents,
           category: isDivided && validatedSplits && validatedSplits[0] ? validatedSplits[0].category : category,
           splits: validatedSplits,
           date: today,
@@ -578,7 +592,7 @@ export const ExpenseModal: React.FC<ExpenseModalProps> = ({
           splitPartner2Pct: p2Pct,
           foodPillar: !isDivided && category === 'comida' ? foodPillar : undefined,
           fundingSource: isDivided ? 'month_budget' : fundingSource,
-          fundingGoalId: !isDivided && fundingSource === 'piggy_bank' ? selectedGoalId : undefined,
+          fundingGoalId: !isDivided && fundingSource === 'piggy_bank' ? (selectedGoalId || undefined) : undefined,
           fundingGoalName: !isDivided && fundingSource === 'piggy_bank' ? targetGoal?.name : undefined,
           paymentMethod,
           isExcludedFromMonthlyBudget: !isDivided && fundingSource !== 'month_budget',
@@ -603,6 +617,7 @@ export const ExpenseModal: React.FC<ExpenseModalProps> = ({
           description: finalDesc,
           store: store.trim() || undefined,
           amount: numAmount,
+          amountCents,
           category: isDivided && validatedSplits && validatedSplits[0] ? validatedSplits[0].category : category,
           splits: validatedSplits,
           date: today,
@@ -612,7 +627,7 @@ export const ExpenseModal: React.FC<ExpenseModalProps> = ({
           splitPartner2Pct: p2Pct,
           foodPillar: !isDivided && category === 'comida' ? foodPillar : undefined,
           fundingSource: isDivided ? 'month_budget' : fundingSource,
-          fundingGoalId: !isDivided && fundingSource === 'piggy_bank' ? selectedGoalId : undefined,
+          fundingGoalId: !isDivided && fundingSource === 'piggy_bank' ? (selectedGoalId || undefined) : undefined,
           fundingGoalName: !isDivided && fundingSource === 'piggy_bank' ? targetGoal?.name : undefined,
           paymentMethod,
           isExcludedFromMonthlyBudget: !isDivided && fundingSource !== 'month_budget',
@@ -1661,10 +1676,13 @@ export const ExpenseModal: React.FC<ExpenseModalProps> = ({
                           <label className="text-xs font-black uppercase tracking-wider text-slate-700 dark:text-slate-300 block">
                             De onde sai o dinheiro deste gasto?
                           </label>
-                          <div className="grid grid-cols-2 gap-2 text-xs">
+                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
                             <button
                               type="button"
-                              onClick={() => setFundingSource('month_budget')}
+                              onClick={() => {
+                                setFundingSource('month_budget');
+                                setValidationError('');
+                              }}
                               className={`p-3 rounded-2xl border text-left ${
                                 fundingSource === 'month_budget'
                                   ? 'border-[#111318] dark:border-white bg-[#FFF9ED] dark:bg-amber-950/40 font-bold'
@@ -1676,7 +1694,10 @@ export const ExpenseModal: React.FC<ExpenseModalProps> = ({
                             </button>
                             <button
                               type="button"
-                              onClick={() => setFundingSource('reserve_excess')}
+                              onClick={() => {
+                                setFundingSource('reserve_excess');
+                                setValidationError('');
+                              }}
                               className={`p-3 rounded-2xl border text-left ${
                                 fundingSource === 'reserve_excess'
                                   ? 'border-[#111318] dark:border-white bg-[#F0F8FF] dark:bg-sky-950/40 font-bold'
@@ -1688,7 +1709,60 @@ export const ExpenseModal: React.FC<ExpenseModalProps> = ({
                                 {formatCurrency(emergencyReserveExcessAmount)} livres
                               </span>
                             </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setFundingSource('piggy_bank');
+                                if (!selectedGoalId && activePiggyBanks[0]) {
+                                  setSelectedGoalId(activePiggyBanks[0].id);
+                                }
+                                setValidationError('');
+                              }}
+                              className={`p-3 rounded-2xl border text-left ${
+                                fundingSource === 'piggy_bank'
+                                  ? 'border-[#111318] dark:border-white bg-[#FFF0F7] dark:bg-pink-950/40 font-bold'
+                                  : 'border-slate-200 dark:border-slate-800'
+                              }`}
+                            >
+                              <span className="text-sm block">🎯 Caixinha de Objetivo</span>
+                              <span className="text-[10px] text-pink-700 dark:text-pink-300 block">
+                                Cofrinho guardado
+                              </span>
+                            </button>
                           </div>
+
+                          {fundingSource === 'piggy_bank' && (
+                            <div className="p-3 rounded-2xl bg-slate-50 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700 space-y-2">
+                              <label
+                                htmlFor="expense-modal-piggy-select"
+                                className="text-[11px] font-black uppercase tracking-wider text-slate-600 dark:text-slate-300 block"
+                              >
+                                Qual caixinha paga esta compra?
+                              </label>
+                              {activePiggyBanks.length === 0 ? (
+                                <p className="text-xs text-amber-700 dark:text-amber-300">
+                                  Nenhuma caixinha ativa cadastrada ainda.
+                                </p>
+                              ) : (
+                                <select
+                                  id="expense-modal-piggy-select"
+                                  value={selectedGoalId}
+                                  onChange={(e) => {
+                                    setSelectedGoalId(e.target.value);
+                                    if (validationError) setValidationError('');
+                                  }}
+                                  className="w-full px-3 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs font-semibold text-slate-900 dark:text-white"
+                                >
+                                  <option value="">Selecione uma caixinha...</option>
+                                  {activePiggyBanks.map((g) => (
+                                    <option key={g.id} value={g.id}>
+                                      {g.emoji} {g.name} (Saldo: {formatCurrency(g.currentAmount)})
+                                    </option>
+                                  ))}
+                                </select>
+                              )}
+                            </div>
+                          )}
                         </div>
                       )}
                     </div>

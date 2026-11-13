@@ -41,9 +41,14 @@ export const TransactionTriageBottomSheet: React.FC<TransactionTriageBottomSheet
   const [paymentMethod, setPaymentMethod] = useState<'pix' | 'debit' | 'credit' | 'cash'>('pix');
   const [fundingSource, setFundingSource] = useState<FundingSourceType>('month_budget');
   const [selectedGoalId, setSelectedGoalId] = useState<string>('');
+  const [errorMsg, setErrorMsg] = useState<string>('');
 
   const p1Name = state.profile.partner1Name || 'Parceiro 1';
   const p2Name = state.profile.partner2Name || 'Parceiro 2';
+
+  const activePiggyBanks = state.piggyBanks.filter(
+    (g) => (!g.archived && !g.isDeleted) || g.id === expense?.fundingGoalId
+  );
 
   // Initialize from expense data when opened
   useEffect(() => {
@@ -60,27 +65,36 @@ export const TransactionTriageBottomSheet: React.FC<TransactionTriageBottomSheet
 
       setPaymentMethod(expense.paymentMethod || (expense.installmentId ? 'credit' : 'pix'));
       setFundingSource(expense.fundingSource || 'month_budget');
-      setSelectedGoalId(expense.fundingGoalId || (state.piggyBanks[0]?.id ?? ''));
+      const availableGoals = state.piggyBanks.filter(
+        (g) => (!g.archived && !g.isDeleted) || g.id === expense.fundingGoalId
+      );
+      setSelectedGoalId(expense.fundingGoalId || (availableGoals[0]?.id ?? ''));
+      setErrorMsg('');
     }
   }, [expense, state.piggyBanks]);
 
   if (!isOpen || !expense) return null;
 
   const catInfo = CATEGORIES_BASE[expense.category];
-  const selectedGoal = state.piggyBanks.find((g) => g.id === selectedGoalId);
+  const selectedGoal = activePiggyBanks.find((g) => g.id === selectedGoalId);
 
   const handleSave = () => {
     const isExcluded = fundingSource !== 'month_budget';
-    updateExpenseTriage(expense.id, {
-      assignedTo,
-      paymentMethod,
-      fundingSource,
-      fundingGoalId: fundingSource === 'piggy_bank' ? selectedGoalId : undefined,
-      fundingGoalName: fundingSource === 'piggy_bank' ? selectedGoal?.name : undefined,
-      isExcludedFromMonthlyBudget: isExcluded,
-    });
-    triggerCelebration();
-    onClose();
+    try {
+      setErrorMsg('');
+      updateExpenseTriage(expense.id, {
+        assignedTo,
+        paymentMethod,
+        fundingSource,
+        fundingGoalId: fundingSource === 'piggy_bank' ? selectedGoalId : undefined,
+        fundingGoalName: fundingSource === 'piggy_bank' ? selectedGoal?.name : undefined,
+        isExcludedFromMonthlyBudget: isExcluded,
+      });
+      triggerCelebration();
+      onClose();
+    } catch (err: any) {
+      setErrorMsg(err?.message || 'Não foi possível confirmar a triagem desta despesa.');
+    }
   };
 
   return (
@@ -407,17 +421,20 @@ export const TransactionTriageBottomSheet: React.FC<TransactionTriageBottomSheet
               <label className="text-[11px] font-black uppercase tracking-wider text-stone-600 dark:text-stone-400">
                 Escolha a Caixinha Pagadora:
               </label>
-              {state.piggyBanks.length === 0 ? (
+              {activePiggyBanks.length === 0 ? (
                 <p className="text-xs text-amber-600 dark:text-amber-400">
-                  Nenhuma caixinha cadastrada ainda. Crie uma na aba Caixinhas!
+                  Nenhuma caixinha ativa cadastrada ainda. Crie uma na aba Caixinhas!
                 </p>
               ) : (
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                  {state.piggyBanks.map((g) => (
+                  {activePiggyBanks.map((g) => (
                     <button
                       key={g.id}
                       type="button"
-                      onClick={() => setSelectedGoalId(g.id)}
+                      onClick={() => {
+                        setSelectedGoalId(g.id);
+                        if (errorMsg) setErrorMsg('');
+                      }}
                       className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer flex items-center justify-between ${
                         selectedGoalId === g.id
                           ? 'border-[#111318] dark:border-white bg-[#FAF7F2] dark:bg-stone-800 font-bold'
@@ -475,6 +492,15 @@ export const TransactionTriageBottomSheet: React.FC<TransactionTriageBottomSheet
               : `Este gasto consumirá normalmente o saldo mensal de ${catInfo?.name}.`}
           </p>
         </div>
+
+        {errorMsg && (
+          <p
+            role="alert"
+            className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-800 text-xs font-semibold text-rose-800 dark:text-rose-200"
+          >
+            {errorMsg}
+          </p>
+        )}
 
         {/* ========================================================================= */}
         {/* CONFIRMATION ACTION BUTTON                                                */}

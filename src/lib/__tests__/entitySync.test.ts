@@ -16,14 +16,21 @@ vi.mock('firebase/firestore', async (importOriginal) => {
 });
 
 import {
+  doc as firestoreDoc,
+  runTransaction as firestoreRunTransaction,
+} from 'firebase/firestore';
+import {
   entityChanges,
   rebaseEntities,
   conflictAwareBaseline,
   reconcileConcurrentEntity,
   ENTITY_FIELDS,
   saveEntities,
+  commitFinancialCommandTransaction,
   type EntityState,
 } from '../entitySync';
+import { runFinancialCommand } from '../../utils/financialCommands';
+import type { AppState } from '../../types/finance';
 
 describe('entity synchronization', () => {
   it('retains the old baseline when both partners edit the same record', () => {
@@ -214,6 +221,212 @@ describe('entity synchronization', () => {
       expect(progressSnapshots[1].completed).toBe(false);
       expect(progressSnapshots[2].savedCount).toBe(850);
       expect(progressSnapshots[2].completed).toBe(true);
+    });
+  });
+
+  describe('29A concurrency & transaction atomicity (R29-06, R29-07)', () => {
+    it('R29-06: rejects two competing withdrawals of R$ 500 even when both hit final balance 0', async () => {
+      const baseGoal = {
+        id: 'goal-500',
+        name: 'Viagem',
+        currentAmount: 500,
+        availableCents: 50000,
+        accumulatedCents: 50000,
+        revision: 1,
+      };
+      const sessionAResult = { ...baseGoal, currentAmount: 0, availableCents: 0, revision: 2 };
+      const sessionBResult = { ...baseGoal, currentAmount: 0, availableCents: 0, revision: 2 };
+
+      // reconcileConcurrentEntity must return null instead of approving a competing debit
+      expect(reconcileConcurrentEntity(baseGoal, sessionAResult, sessionBResult)).toBeNull();
+
+      // saveEntities runTransaction rejects competing session B when remote doc already spent R$ 500
+      vi.mocked(firestoreRunTransaction).mockImplementationOnce(async (_db, callback) => {
+        const fakeTx = {
+          get: vi.fn(async () => ({
+            exists: () => true,
+            data: () => ({ field: 'piggyBanks', record: sessionAResult, deleted: false }),
+          })),
+          set: vi.fn(),
+        };
+        return callback(fakeTx as any);
+      });
+
+      await expect(
+        saveEntities(
+          {} as any,
+          'couple-29a',
+          { piggyBanks: [baseGoal] },
+          { piggyBanks: [sessionBResult] },
+          { isActive: () => true }
+        )
+      ).rejects.toThrow(/alterado pelo seu par/i);
+    });
+
+    it('R29-06 & R29-07: commitFinancialCommandTransaction blocks stale competing withdrawal, leaves preState untouched on tx error, and replays idempotently after lost ACK', async () => {
+      const baseState: AppState = {
+        profile: {
+          partner1Name: 'Ana',
+          partner2Name: 'Bruno',
+          city: 'SP',
+          partner1Income: 10000,
+          partner2Income: 10000,
+          emergencyReserveMonthsTarget: 6,
+          expectedYieldAnnual: 6.5,
+          streakMonths: 1,
+          themeMode: 'light',
+          accentTheme: 'emerald',
+        },
+        categoryPercentages: {
+          moradia: 30,
+          transporte: 10,
+          comida: 25,
+          lazer: 15,
+          protecao: 10,
+          profissional: 10,
+        },
+        currentMonth: '2026-11',
+        expenses: [],
+        incomes: [],
+        installments: [],
+        piggyBanks: [
+          {
+            id: 'goal-tx',
+            name: 'Notebook',
+            emoji: '💻',
+            purpose: 'Trabalho',
+            currentAmount: 500,
+            targetAmount: 1000,
+            monthlyDeposit: 100,
+            availableCents: 50000,
+            accumulatedCents: 50000,
+            revision: 1,
+          },
+        ],
+        coupleGoals: [
+          {
+            id: 'goal-tx',
+            title: 'Notebook',
+            category: 'outro',
+            emoji: '💻',
+            targetAmount: 1000,
+            currentAmount: 500,
+            availableCents: 50000,
+            accumulatedCents: 50000,
+            partner1Contribution: 250,
+            partner2Contribution: 250,
+            monthlyPlannedDeposit: 100,
+            isCompleted: false,
+            history: [],
+            createdAt: '2026-10-01',
+            revision: 1,
+          },
+        ],
+        linkedAccounts: [],
+        alertRules: [],
+        notifications: [],
+        protectionCurrentAmount: 10000,
+        protectionTotalInvested: 10000,
+        protectionYieldAccumulated: 0,
+        isProtectionComplete: true,
+        freedomTotalInvested: 0,
+        freedomYieldAccumulated: 0,
+        financialOperations: [],
+      };
+
+      const cmdRes = runFinancialCommand(baseState, {
+        id: 'op-tx-withdraw-500',
+        type: 'GOAL_WITHDRAWAL',
+        amountCents: 50000,
+        authorizedBy: 'uid-ana',
+        authoredByUid: 'uid-ana',
+        scope: 'couple',
+        sourceRef: { type: 'piggy_bank', id: 'goal-tx' },
+        targetRef: { type: 'external', id: 'manual-resgate' },
+        competence: '2026-11',
+        date: '2026-11-12',
+        state: 'occurred_manual',
+      });
+      expect(cmdRes.status).toBe('success');
+
+      // Case A: Remote goal already spent by Session 1 -> Session 2 must fail with conflict/insufficient balance
+      vi.mocked(firestoreRunTransaction).mockImplementationOnce(async (_db, callback) => {
+        const fakeTx = {
+          get: vi.fn(async (ref: { path: string }) => {
+            if (ref.path.includes('financialOperations')) {
+              return { exists: () => false, data: () => null };
+            }
+            return {
+              exists: () => true,
+              data: () => ({
+                deleted: false,
+                record: {
+                  ...baseState.piggyBanks[0],
+                  currentAmount: 0,
+                  availableCents: 0,
+                  revision: 2,
+                },
+              }),
+            };
+          }),
+          set: vi.fn(),
+        };
+        return callback(fakeTx as any);
+      });
+
+      const competingOutcome = await commitFinancialCommandTransaction(
+        {} as any,
+        'couple-29a',
+        cmdRes,
+        baseState
+      );
+      expect(competingOutcome.status).toBe('conflict');
+      expect(competingOutcome.writtenEntities).toEqual([]);
+      expect(competingOutcome.committedState).toBe(baseState);
+
+      // Case B: Mid-flight failure -> rolls back cleanly with zero writtenEntities
+      vi.mocked(firestoreRunTransaction).mockRejectedValueOnce(new Error('network unavailable mid-commit'));
+      const failedOutcome = await commitFinancialCommandTransaction(
+        {} as any,
+        'couple-29a',
+        cmdRes,
+        baseState
+      );
+      expect(failedOutcome.status).toBe('failure');
+      expect(failedOutcome.writtenEntities).toEqual([]);
+      expect(failedOutcome.committedState).toBe(baseState);
+
+      // Case C: Lost ACK retry -> op already exists remotely with same fingerprint -> idempotent replay without double debit
+      const setSpy = vi.fn();
+      vi.mocked(firestoreRunTransaction).mockImplementationOnce(async (_db, callback) => {
+        const fakeTx = {
+          get: vi.fn(async (ref: { path: string }) => {
+            if (ref.path.includes('financialOperations') && ref.path.includes('op-tx-withdraw-500')) {
+              return {
+                exists: () => true,
+                data: () => ({
+                  deleted: false,
+                  record: cmdRes.operation,
+                }),
+              };
+            }
+            return { exists: () => true, data: () => ({ deleted: false, record: cmdRes.state.piggyBanks[0] }) };
+          }),
+          set: setSpy,
+        };
+        return callback(fakeTx as any);
+      });
+
+      const replayOutcome = await commitFinancialCommandTransaction(
+        {} as any,
+        'couple-29a',
+        cmdRes,
+        baseState
+      );
+      expect(replayOutcome.status).toBe('success');
+      expect(replayOutcome.idempotentReplay).toBe(true);
+      expect(setSpy).not.toHaveBeenCalled();
+      expect(firestoreDoc).toHaveBeenCalled();
     });
   });
 });
