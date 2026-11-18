@@ -1,19 +1,11 @@
-import { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
-  GraduationCap,
   Check,
   Save,
-  Stethoscope,
-  Sparkles,
-  Calendar,
-  Briefcase,
-  Award,
-  ChevronRight,
-  ShieldCheck,
+  AlertTriangle,
 } from 'lucide-react';
 import { useFinance } from '../context/FinanceContext';
 import { MedicalCareerProfile, MedicalCareerStage } from '../types/finance';
-import { formatCurrency } from '../utils/formatters';
 
 interface StageMeta {
   key: MedicalCareerStage;
@@ -74,7 +66,7 @@ const STAGES: StageMeta[] = [
 ];
 
 function PartnerCareerCard({ partner }: { partner: 'partner1' | 'partner2' }) {
-  const { state, updateProfile, triggerCelebration } = useFinance();
+  const { state, patchCoupleProfile, triggerCelebration } = useFinance();
   const isP1 = partner === 'partner1';
   const field = isP1 ? 'partner1Career' : 'partner2Career';
   const rawName = isP1 ? state.profile.partner1Name : state.profile.partner2Name;
@@ -84,7 +76,15 @@ function PartnerCareerCard({ partner }: { partner: 'partner1' | 'partner2' }) {
   const [career, setCareer] = useState<MedicalCareerProfile>(
     state.profile[field] || { stage: 'graduacao' }
   );
+  const [isDirty, setIsDirty] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+
+  useEffect(() => {
+    if (!isDirty && state.profile[field]) {
+      setCareer(state.profile[field]!);
+    }
+  }, [state.profile, field, isDirty]);
 
   const currentStageIndex = STAGES.findIndex(s => s.key === career.stage);
   const activeStage = STAGES[currentStageIndex] || STAGES[0];
@@ -93,17 +93,29 @@ function PartnerCareerCard({ partner }: { partner: 'partner1' | 'partner2' }) {
   const update = (values: Partial<MedicalCareerProfile>) => {
     setCareer(old => {
       const next = { ...old, ...values };
-      if (next.expectedMonthlyIncome === undefined) delete next.expectedMonthlyIncome;
+      if ('expectedMonthlyIncome' in values && values.expectedMonthlyIncome === undefined) {
+        delete next.expectedMonthlyIncome;
+      }
       return next;
     });
+    setIsDirty(true);
+    setErrorMsg(null);
     setSaved(false);
   };
 
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
-    updateProfile({ [field]: career });
+    setErrorMsg(null);
+    const res = patchCoupleProfile({ [field]: career });
+    if (!res.valid) {
+      setErrorMsg(res.errors.join(' '));
+      return;
+    }
+    setIsDirty(false);
     setSaved(true);
-    triggerCelebration();
+    if (res.changedKeys.length > 0) {
+      triggerCelebration();
+    }
     setTimeout(() => setSaved(false), 3000);
   };
 
@@ -286,6 +298,13 @@ function PartnerCareerCard({ partner }: { partner: 'partner1' | 'partner2' }) {
           Valores previstos alimentam o simulador e o Hub do Casal sem inflar a renda antes da hora.
         </p>
       </div>
+
+      {errorMsg && (
+        <div role="alert" className="p-2.5 rounded-xl bg-rose-50 dark:bg-rose-950/50 border border-rose-300 dark:border-rose-800 text-rose-800 dark:text-rose-200 text-xs font-bold flex items-center gap-1.5">
+          <AlertTriangle className="w-4 h-4 shrink-0" />
+          <span>{errorMsg}</span>
+        </div>
+      )}
 
       <button
         type="submit"

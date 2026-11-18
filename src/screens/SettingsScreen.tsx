@@ -1,5 +1,5 @@
 import { AvatarSettings, MemberAvatar } from '../avatars/AvatarUI';
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { Users, DollarSign, AlertTriangle, CheckCircle2, Sparkles, RefreshCw, Save, Check, X, RotateCcw, Trash2, Palette, Building, Smartphone, Tag, Plus, Bell, Copy, UploadCloud, FileText, Lock, Unlock, Calendar } from 'lucide-react';
 import { useFinance, CATEGORIES_BASE, ACCENT_THEMES } from '../context/FinanceContext';
 import { CategoryKey, DestinationKey, AccentTheme, LifeTierInfo } from '../types/finance';
@@ -26,6 +26,14 @@ import {
   sendTestNotification,
   getBrowserPermissionStatus,
 } from '../utils/pushNotificationEngine';
+import {
+  parseExplicitYieldInput,
+  parseReserveMonthsInput,
+  parseDeclaredIncomeInput,
+  serializeFinancialParametersBackup,
+  parseFinancialParametersBackup,
+  type CoupleHeaderSyncKey,
+} from '../lib/coupleSnapshot';
 
 type SettingsTab = 'avatares' | 'geral' | 'contas' | 'cores' | 'regras' | 'pwa' | 'casal' | 'dados';
 
@@ -34,10 +42,12 @@ export const SettingsScreen: React.FC = () => {
     state,
     totalIncome,
     updateProfile,
-    updateCategoryPercentages,
-    updateCategoryFloors,
+    patchCoupleProfile,
+    headerSaveError,
+    syncConflict,
+    headerConflicts,
+    resolveHeaderConflict,
     categoryLocks,
-    updateCategoryLocks,
     applyBudgetRebalanceProposal,
     toggleProtectionComplete,
     resetToSampleData,
@@ -93,6 +103,18 @@ export const SettingsScreen: React.FC = () => {
   } = useFinance();
 
   const [activeTab, setActiveTab] = useState<SettingsTab>('geral');
+  const dirtyBudget = useRef(new Set<string>());
+  const budgetBaseline = useRef<Record<string, number | boolean>>({});
+  const dirtyProfile = useRef(new Set<string>());
+  const [backupPreview, setBackupPreview] = useState<ReturnType<typeof parseFinancialParametersBackup> | null>(null);
+  const [backupError, setBackupError] = useState<string | null>(null);
+  const backupBaseline = useRef<Record<string, unknown>>({});
+  const draftBaseline = useRef<Record<string, unknown>>({});
+  const markProfileDirty = (key: keyof typeof state.profile) => {
+    if (!dirtyProfile.current.has(key)) draftBaseline.current[key] = state.profile[key];
+    dirtyProfile.current.add(key);
+  };
+  const profileDraftConflicts = (keys: readonly string[]) => keys.filter(key => dirtyProfile.current.has(key) && state.profile[key as keyof typeof state.profile] !== draftBaseline.current[key]);
 
   // ==========================================
   // BLOCO 1: RENDA STATE
@@ -137,14 +159,11 @@ export const SettingsScreen: React.FC = () => {
   }));
 
   // Pisos Mínimos (R$ ou % para investimentos)
-  const defaultFloors = state.categoryFloors || {
-    moradia: 0,
-    transporte: 0,
-    comida: 0,
-    lazer: 0,
-    protecao: 0,
-    profissional: 0,
-    investimentos: 0,
+  const defaultFloors: Record<DestinationKey, number> = {
+    ...liveCompetenceSnapshot.floorsR$,
+    investimentos: liveCompetenceSnapshot.plannedNetIncome > 0
+      ? liveCompetenceSnapshot.floorsR$.investimentos / liveCompetenceSnapshot.plannedNetIncome * 100
+      : (state.categoryFloors?.investimentos ?? 0),
   };
 
   const [pisoMoradia, setPisoMoradia] = useState<number>(defaultFloors.moradia ?? 0);
@@ -163,12 +182,16 @@ export const SettingsScreen: React.FC = () => {
   const [isRebalanceModalOpen, setIsRebalanceModalOpen] = useState(false);
 
   // Investimentos Settings
-  const [reserveMonths, setReserveMonths] = useState<number>(
-    state.profile.emergencyReserveMonthsTarget ?? 10
+  const [reserveMonths, setReserveMonths] = useState<string>(
+    String(state.profile.emergencyReserveMonthsTarget ?? 6)
   );
   const [expectedYield, setExpectedYield] = useState<string>(
-    (state.profile.expectedYieldAnnual ?? 6.0).toString()
+    state.profile.expectedYieldAnnual !== undefined && state.profile.expectedYieldAnnual !== null
+      ? String(state.profile.expectedYieldAnnual)
+      : '6.5'
   );
+  const [profileSectionError, setProfileSectionError] = useState<string | null>(null);
+  const [patrimonialSectionError, setPatrimonialSectionError] = useState<string | null>(null);
 
   // Clear / Reset All Data State
   const [showClearDataModal, setShowClearDataModal] = useState(false);
@@ -215,23 +238,23 @@ export const SettingsScreen: React.FC = () => {
 
   // Synchronization with Competence Snapshot & Context changes
   useEffect(() => {
-    setPctMoradia(liveCompetenceSnapshot.currentPercentages.moradia ?? 30);
-    setPctTransporte(liveCompetenceSnapshot.currentPercentages.transporte ?? 10);
-    setPctComida(liveCompetenceSnapshot.currentPercentages.comida ?? 15);
-    setPctLazer(liveCompetenceSnapshot.currentPercentages.lazer ?? 15);
-    setPctProtecao(liveCompetenceSnapshot.currentPercentages.protecao ?? 10);
-    setPctProfissional(liveCompetenceSnapshot.currentPercentages.profissional ?? 10);
-    setPctInvestimentos(liveCompetenceSnapshot.currentPercentages.investimentos ?? 10);
-    setLocalLocks({ ...liveCompetenceSnapshot.locks });
-    if (state.categoryFloors) {
-      setPisoMoradia(state.categoryFloors.moradia ?? 0);
-      setPisoTransporte(state.categoryFloors.transporte ?? 0);
-      setPisoComida(state.categoryFloors.comida ?? 0);
-      setPisoLazer(state.categoryFloors.lazer ?? 0);
-      setPisoProtecao(state.categoryFloors.protecao ?? 0);
-      setPisoProfissional(state.categoryFloors.profissional ?? 0);
-      setPisoInvestimentosPct(state.categoryFloors.investimentos ?? 0);
-    }
+    if (!dirtyBudget.current.has('pct.moradia')) setPctMoradia(liveCompetenceSnapshot.currentPercentages.moradia ?? 30);
+    if (!dirtyBudget.current.has('pct.transporte')) setPctTransporte(liveCompetenceSnapshot.currentPercentages.transporte ?? 10);
+    if (!dirtyBudget.current.has('pct.comida')) setPctComida(liveCompetenceSnapshot.currentPercentages.comida ?? 15);
+    if (!dirtyBudget.current.has('pct.lazer')) setPctLazer(liveCompetenceSnapshot.currentPercentages.lazer ?? 15);
+    if (!dirtyBudget.current.has('pct.protecao')) setPctProtecao(liveCompetenceSnapshot.currentPercentages.protecao ?? 10);
+    if (!dirtyBudget.current.has('pct.profissional')) setPctProfissional(liveCompetenceSnapshot.currentPercentages.profissional ?? 10);
+    if (!dirtyBudget.current.has('pct.investimentos')) setPctInvestimentos(liveCompetenceSnapshot.currentPercentages.investimentos ?? 10);
+    setLocalLocks(previous => Object.fromEntries(Object.entries(liveCompetenceSnapshot.locks).map(([key, value]) => [key, dirtyBudget.current.has('lock.' + key) ? previous[key as DestinationKey] : value])) as Record<DestinationKey, boolean>);
+    if (!dirtyBudget.current.has('floor.moradia')) setPisoMoradia(liveCompetenceSnapshot.floorsR$.moradia);
+    if (!dirtyBudget.current.has('floor.transporte')) setPisoTransporte(liveCompetenceSnapshot.floorsR$.transporte);
+    if (!dirtyBudget.current.has('floor.comida')) setPisoComida(liveCompetenceSnapshot.floorsR$.comida);
+    if (!dirtyBudget.current.has('floor.lazer')) setPisoLazer(liveCompetenceSnapshot.floorsR$.lazer);
+    if (!dirtyBudget.current.has('floor.protecao')) setPisoProtecao(liveCompetenceSnapshot.floorsR$.protecao);
+    if (!dirtyBudget.current.has('floor.profissional')) setPisoProfissional(liveCompetenceSnapshot.floorsR$.profissional);
+    if (!dirtyBudget.current.has('floor.investimentos')) setPisoInvestimentosPct(liveCompetenceSnapshot.plannedNetIncome > 0
+      ? liveCompetenceSnapshot.floorsR$.investimentos / liveCompetenceSnapshot.plannedNetIncome * 100
+      : (state.categoryFloors?.investimentos ?? 0));
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     selectedCompetence,
@@ -243,15 +266,29 @@ export const SettingsScreen: React.FC = () => {
   ]);
 
   useEffect(() => {
-    setPartner1Income(state.profile.partner1Income.toString());
-    setPartner2Income(state.profile.partner2Income.toString());
-    setPartner1Name(state.profile.partner1Name);
-    setPartner2Name(state.profile.partner2Name);
+    if (!dirtyProfile.current.has('partner1Income')) setPartner1Income(state.profile.partner1Income.toString());
+    if (!dirtyProfile.current.has('partner2Income')) setPartner2Income(state.profile.partner2Income.toString());
+    if (!dirtyProfile.current.has('partner1Name')) setPartner1Name(state.profile.partner1Name);
+    if (!dirtyProfile.current.has('partner2Name')) setPartner2Name(state.profile.partner2Name);
+    if (
+      state.profile.emergencyReserveMonthsTarget !== undefined &&
+      state.profile.emergencyReserveMonthsTarget !== null
+    ) {
+      if (!dirtyProfile.current.has('emergencyReserveMonthsTarget')) setReserveMonths(String(state.profile.emergencyReserveMonthsTarget));
+    }
+    if (
+      state.profile.expectedYieldAnnual !== undefined &&
+      state.profile.expectedYieldAnnual !== null
+    ) {
+      if (!dirtyProfile.current.has('expectedYieldAnnual')) setExpectedYield(String(state.profile.expectedYieldAnnual));
+    }
   }, [
     state.profile.partner1Income,
     state.profile.partner2Income,
     state.profile.partner1Name,
     state.profile.partner2Name,
+    state.profile.emergencyReserveMonthsTarget,
+    state.profile.expectedYieldAnnual,
   ]);
 
   // Calculated Values & Life Tier for Bloco 1 & 2
@@ -416,12 +453,43 @@ export const SettingsScreen: React.FC = () => {
     ]
   );
 
+  const markBudgetDirty = (key: string, baseline: number | boolean) => {
+    if (!dirtyBudget.current.has(key)) budgetBaseline.current[key] = baseline;
+    dirtyBudget.current.add(key);
+  };
+  const budgetConflicts = () => [...dirtyBudget.current].filter(key => {
+    const [kind, destination] = key.split('.');
+    const dest = destination as DestinationKey;
+    const current = kind === 'pct' ? liveCompetenceSnapshot.currentPercentages[dest] : kind === 'lock' ? liveCompetenceSnapshot.locks[dest] : liveCompetenceSnapshot.floorsR$[dest];
+    return current !== budgetBaseline.current[key];
+  });
+  const resolveBudgetConflicts = (keepDraft: boolean) => {
+    for (const key of budgetConflicts()) {
+      const [kind, destination] = key.split('.');
+      const dest = destination as DestinationKey;
+      const current = kind === 'pct' ? liveCompetenceSnapshot.currentPercentages[dest] : kind === 'lock' ? liveCompetenceSnapshot.locks[dest] : liveCompetenceSnapshot.floorsR$[dest];
+      if (keepDraft) {
+        budgetBaseline.current[key] = current;
+      } else {
+        dirtyBudget.current.delete(key);
+        if (kind === 'lock') setLocalLocks(previous => ({ ...previous, [dest]: liveCompetenceSnapshot.locks[dest] }));
+        if (kind === 'pct') {
+          const setters = { moradia: setPctMoradia, transporte: setPctTransporte, comida: setPctComida, lazer: setPctLazer, protecao: setPctProtecao, profissional: setPctProfissional, investimentos: setPctInvestimentos };
+          setters[dest](current as number);
+        }
+        if (kind === 'floor' && dest !== 'investimentos') {
+          const setters = { moradia: setPisoMoradia, transporte: setPisoTransporte, comida: setPisoComida, lazer: setPisoLazer, protecao: setPisoProtecao, profissional: setPisoProfissional };
+          setters[dest](current as number);
+        }
+      }
+    }
+    setRebalanceMessage(keepDraft ? 'Rascunho mantido. Simule novamente com os valores atuais.' : 'Valores atuais adotados. Simule novamente.');
+  };
+
   const handleToggleDestinationLock = (dest: DestinationKey) => {
+    markBudgetDirty('lock.' + dest, liveCompetenceSnapshot.locks[dest]);
     const nextLocked = !localLocks[dest];
     setLocalLocks(prev => ({ ...prev, [dest]: nextLocked }));
-    if (selectedCompetence === state.currentMonth) {
-      updateCategoryLocks({ [dest]: nextLocked });
-    }
     setProposedRebalance(null);
     setPreviewSignature(null);
     setRebalanceMessage(null);
@@ -452,89 +520,122 @@ export const SettingsScreen: React.FC = () => {
     setTimeout(() => setSaveSuccessMsg(false), 4000);
   };
 
+  const handleSaveIdentityProfile = () => {
+    if (profileDraftConflicts(['partner1Name', 'partner2Name']).length) {
+      setProfileSectionError('Um campo em edição foi alterado por outra sessão. Revise antes de salvar.');
+      return;
+    }
+    setProfileSectionError(null);
+    const patch: Record<string, unknown> = {};
+    if (dirtyProfile.current.has('partner1Name')) patch.partner1Name = partner1Name;
+    if (dirtyProfile.current.has('partner2Name')) patch.partner2Name = partner2Name;
+    const res = patchCoupleProfile(patch);
+    if (!res.valid) {
+      setProfileSectionError(res.errors.join(' '));
+      return;
+    }
+    dirtyProfile.current.delete('partner1Name');
+    dirtyProfile.current.delete('partner2Name');
+    setSaveSuccessMsg(true);
+    if (res.changedKeys.length > 0) {
+      triggerCelebration();
+    }
+    setTimeout(() => setSaveSuccessMsg(false), 4000);
+  };
+
+  const handleSavePatrimonialParams = () => {
+    if (profileDraftConflicts(['expectedYieldAnnual', 'emergencyReserveMonthsTarget']).length) {
+      setProfileSectionError('Um campo em edição foi alterado por outra sessão. Revise antes de salvar.');
+      return;
+    }
+    setPatrimonialSectionError(null);
+    const parsedYield = parseExplicitYieldInput(expectedYield);
+    if (parsedYield.status !== 'valid') {
+      setPatrimonialSectionError(
+        parsedYield.status === 'invalid'
+          ? parsedYield.message
+          : 'Informe a taxa real esperada (use 0 para rendimento zero).'
+      );
+      return;
+    }
+    const parsedMonths = parseReserveMonthsInput(reserveMonths);
+    if (parsedMonths.status !== 'valid') {
+      setPatrimonialSectionError(
+        parsedMonths.status === 'invalid'
+          ? parsedMonths.message
+          : 'Informe a meta de meses da reserva de emergência (1 a 120).'
+      );
+      return;
+    }
+
+    const patch: Record<string, unknown> = {};
+    if (dirtyProfile.current.has('emergencyReserveMonthsTarget')) patch.emergencyReserveMonthsTarget = parsedMonths.value;
+    if (dirtyProfile.current.has('expectedYieldAnnual')) patch.expectedYieldAnnual = parsedYield.value;
+    const res = patchCoupleProfile(patch);
+    if (!res.valid) {
+      setPatrimonialSectionError(res.errors.join(' '));
+      return;
+    }
+    dirtyProfile.current.delete('emergencyReserveMonthsTarget');
+    dirtyProfile.current.delete('expectedYieldAnnual');
+    setSaveSuccessMsg(true);
+    if (res.changedKeys.length > 0) {
+      triggerCelebration();
+    }
+    setTimeout(() => setSaveSuccessMsg(false), 4000);
+  };
+
   const handleSaveBasicProfile = () => {
-    const parsedYield = parseFloat(expectedYield.replace(',', '.'));
-    const safeYield = Number.isFinite(parsedYield)
-      ? parsedYield
-      : state.profile.expectedYieldAnnual ?? 6.0;
+    if (profileDraftConflicts([...dirtyProfile.current]).length) {
+      setProfileSectionError('Um campo em edição foi alterado por outra sessão. Revise antes de salvar.');
+      return;
+    }
+    setProfileSectionError(null);
+    setPatrimonialSectionError(null);
 
-    updateProfile({
-      partner1Name,
-      partner2Name,
-      partner1Income: numP1,
-      partner2Income: numP2,
-      emergencyReserveMonthsTarget: reserveMonths,
-      expectedYieldAnnual: safeYield,
-      ...(selectedCompetence === state.currentMonth ? { investmentsPercentage: pctInvestimentos } : {}),
-    });
-
-    if (selectedCompetence === state.currentMonth) {
-      updateCategoryPercentages({
-        moradia: pctMoradia,
-        transporte: pctTransporte,
-        comida: pctComida,
-        lazer: pctLazer,
-        protecao: pctProtecao,
-        profissional: pctProfissional,
-      });
-
-      updateCategoryFloors({
-        moradia: pisoMoradia,
-        transporte: pisoTransporte,
-        comida: pisoComida,
-        lazer: pisoLazer,
-        protecao: pisoProtecao,
-        profissional: pisoProfissional,
-        investimentos: pisoInvestimentosPct,
-      });
-
-      updateCategoryLocks(localLocks);
+    const parsedYield = parseExplicitYieldInput(expectedYield);
+    if (parsedYield.status === 'invalid') {
+      setPatrimonialSectionError(parsedYield.message);
+      return;
+    }
+    const parsedMonths = parseReserveMonthsInput(reserveMonths);
+    if (parsedMonths.status === 'invalid') {
+      setPatrimonialSectionError(parsedMonths.message);
+      return;
+    }
+    const parsedP1 = parseDeclaredIncomeInput(partner1Income);
+    const parsedP2 = parseDeclaredIncomeInput(partner2Income);
+    if (parsedP1.status === 'invalid' || parsedP2.status === 'invalid') {
+      setProfileSectionError(
+        (parsedP1.status === 'invalid' ? parsedP1.message : '') ||
+          (parsedP2.status === 'invalid' ? parsedP2.message : '')
+      );
+      return;
     }
 
-    const effectiveIncomeForSave = currentIncome > 0 ? currentIncome : liveCompetenceSnapshot.plannedNetIncome;
-    if (effectiveIncomeForSave > 0 && Math.abs(totalPercentagesSum - 100) < 0.01) {
-      const floorsR$: Record<DestinationKey, number> = {
-        moradia: pisoMoradia,
-        transporte: pisoTransporte,
-        comida: pisoComida,
-        lazer: pisoLazer,
-        protecao: pisoProtecao,
-        profissional: pisoProfissional,
-        investimentos: (effectiveIncomeForSave * pisoInvestimentosPct) / 100,
-      };
-      const allLockedForDirectSave: Record<DestinationKey, boolean> = {
-        moradia: true,
-        transporte: true,
-        comida: true,
-        lazer: true,
-        protecao: true,
-        profissional: true,
-        investimentos: true,
-      };
-      const directRes = rebalanceBudget({
-        plannedNetIncome: effectiveIncomeForSave,
-        currentPercentages: currentEditablePercentages,
-        locks: allLockedForDirectSave,
-        floorsR$,
-        commitmentsR$: liveCompetenceSnapshot.pendingCommitmentsR$,
-        actualSpentR$: liveCompetenceSnapshot.actualSpentR$,
-        actualSpentByNatureR$: liveCompetenceSnapshot.actualSpentByNatureR$,
-        pendingByNatureR$: liveCompetenceSnapshot.pendingByNatureR$,
-        competence: selectedCompetence,
-        applyToFutureMonths,
-        baseSnapshotSignature: liveCompetenceSnapshot.signature,
-      });
-      if (directRes.status === 'feasible') {
-        applyBudgetRebalanceProposal(
-          { ...directRes, locks: localLocks },
-          {
-            expectedSignature: liveCompetenceSnapshot.signature,
-            expectedPlanRevision: liveCompetenceSnapshot.planRevision,
-            overwriteExistingFutureApprovedPlans: overwriteApprovedFutureMonths,
-          }
-        );
-      }
+    const profilePatch: Record<string, unknown> = {};
+    if (dirtyProfile.current.has('partner1Name')) profilePatch.partner1Name = partner1Name;
+    if (dirtyProfile.current.has('partner2Name')) profilePatch.partner2Name = partner2Name;
+    if (dirtyProfile.current.has('partner1Income') && parsedP1.status === 'valid') profilePatch.partner1Income = parsedP1.value;
+    if (dirtyProfile.current.has('partner2Income') && parsedP2.status === 'valid') profilePatch.partner2Income = parsedP2.value;
+    if (dirtyProfile.current.has('emergencyReserveMonthsTarget') && parsedMonths.status === 'valid') profilePatch.emergencyReserveMonthsTarget = parsedMonths.value;
+    if (dirtyProfile.current.has('expectedYieldAnnual') && parsedYield.status === 'valid') profilePatch.expectedYieldAnnual = parsedYield.value;
+
+    const floors = { moradia: pisoMoradia, transporte: pisoTransporte, comida: pisoComida, lazer: pisoLazer, protecao: pisoProtecao, profissional: pisoProfissional, investimentos: liveCompetenceSnapshot.plannedNetIncome * pisoInvestimentosPct / 100 };
+    const budgetChanged = Object.entries(currentEditablePercentages).some(([key, value]) => value !== liveCompetenceSnapshot.currentPercentages[key as DestinationKey]) ||
+      Object.entries(localLocks).some(([key, value]) => value !== liveCompetenceSnapshot.locks[key as DestinationKey]) ||
+      Object.entries(floors).some(([key, value]) => Math.abs(value - liveCompetenceSnapshot.floorsR$[key as DestinationKey]) > 0.005);
+
+    if (budgetChanged) {
+      setProfileSectionError('Revise a proposta de orçamento e confirme em Equilibrar antes de salvar os demais campos.');
+      return;
     }
+    const patchRes = patchCoupleProfile(profilePatch);
+    if (!patchRes.valid) {
+      setProfileSectionError(patchRes.errors.join(' '));
+      return;
+    }
+    Object.keys(profilePatch).forEach(key => dirtyProfile.current.delete(key));
 
     setSaveSuccessMsg(true);
     triggerCelebration();
@@ -596,6 +697,7 @@ export const SettingsScreen: React.FC = () => {
       return;
     }
 
+    dirtyBudget.current.clear();
     setPctMoradia(rebalanceProposal.proposedPercentages.moradia ?? 0);
     setPctTransporte(rebalanceProposal.proposedPercentages.transporte ?? 0);
     setPctComida(rebalanceProposal.proposedPercentages.comida ?? 0);
@@ -804,8 +906,108 @@ export const SettingsScreen: React.FC = () => {
       {saveSuccessMsg && (
         <div className="p-4 rounded-2xl bg-emerald-600 text-white text-xs sm:text-sm font-bold flex items-center gap-2 shadow-lg animate-in fade-in">
           <Check className="w-5 h-5 stroke-[3]" />
-          <span>Configurações e conexões salvas com sucesso!</span>
+          <span>
+            Alterações salvas localmente neste aparelho. A confirmação na nuvem depende da sincronização.
+          </span>
         </div>
+      )}
+
+      {(headerSaveError || syncConflict) && (
+        <div
+          role="alert"
+          className="p-4 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border-2 border-amber-300 dark:border-amber-700 text-amber-950 dark:text-amber-100 text-xs sm:text-sm font-bold flex items-start gap-2 shadow-sm"
+        >
+          <AlertTriangle className="w-5 h-5 shrink-0" />
+          <span className="flex-1">{syncConflict || headerSaveError}</span>
+        </div>
+      )}
+      {Object.entries(headerConflicts || {}).map(([key, conflict]) => conflict && (
+        <div key={key} role="alert" className="p-4 rounded-2xl bg-amber-50 border border-amber-300 text-amber-950 space-y-2">
+          <p>Alterações concorrentes em {key}. Escolha qual valor manter:</p>
+          <p>Seu valor: {JSON.stringify(conflict.local)} · Valor atual: {JSON.stringify(conflict.remote)}</p>
+          <div className="flex gap-2">
+            <button type="button" onClick={() => void resolveHeaderConflict(key as CoupleHeaderSyncKey, 'local')} className="underline">Manter meu valor</button>
+            <button type="button" onClick={() => void resolveHeaderConflict(key as CoupleHeaderSyncKey, 'remote')} className="underline">Usar valor atual</button>
+          </div>
+        </div>
+      ))}
+      {budgetConflicts().length > 0 && (
+        <div role="alert" className="p-4 rounded-2xl bg-amber-50 border border-amber-300 text-amber-950">
+          <p>O orçamento mudou nos campos em edição: {budgetConflicts().join(', ')}.</p>
+          <button type="button" className="underline" onClick={() => resolveBudgetConflicts(true)}>Manter rascunho</button>
+          <button type="button" className="underline ml-4" onClick={() => resolveBudgetConflicts(false)}>Usar valores atuais</button>
+        </div>
+      )}
+      {profileDraftConflicts([...dirtyProfile.current]).length > 0 && (
+        <div role="alert" className="p-4 rounded-2xl bg-amber-50 border border-amber-300 text-amber-950">
+          <p>Campos do perfil mudaram durante a edição: {profileDraftConflicts([...dirtyProfile.current]).join(', ')}.</p>
+          <button type="button" className="underline" onClick={() => {
+            for (const key of profileDraftConflicts([...dirtyProfile.current])) draftBaseline.current[key] = state.profile[key as keyof typeof state.profile];
+            setProfileSectionError('Rascunho mantido. Revise e salve novamente.');
+          }}>Manter meu rascunho</button>
+          <button type="button" className="underline ml-4" onClick={() => {
+            const setters: Record<string, (value: string) => void> = { partner1Name: setPartner1Name, partner2Name: setPartner2Name, partner1Income: setPartner1Income, partner2Income: setPartner2Income, expectedYieldAnnual: setExpectedYield, emergencyReserveMonthsTarget: setReserveMonths };
+            for (const key of profileDraftConflicts([...dirtyProfile.current])) {
+              dirtyProfile.current.delete(key);
+              setters[key]?.(String(state.profile[key as keyof typeof state.profile] ?? ''));
+            }
+            setProfileSectionError(null);
+          }}>Usar valores atuais do perfil</button>
+        </div>
+      )}
+      {activeTab === 'geral' && (
+        <section className="p-4 rounded-2xl border border-slate-300 space-y-3">
+          <h3 className="font-bold">Backup dos parâmetros patrimoniais</h3>
+          <p>Exporte ou restaure apenas a taxa esperada e a meta de meses da reserva.</p>
+          <button type="button" className="underline" onClick={() => {
+            const blob = new Blob([serializeFinancialParametersBackup(state.profile)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = 'junto-parametros.json';
+            link.click();
+            URL.revokeObjectURL(url);
+          }}>Exportar parâmetros</button>
+          <label className="block">Importar parâmetros
+            <input type="file" accept="application/json,.json" onChange={async event => {
+              const file = event.target.files?.[0];
+              setBackupPreview(null);
+              setBackupError(null);
+              if (!file) return;
+              if (file.size > 4096) { setBackupError('Arquivo excede o limite de 4096 bytes.'); return; }
+              try {
+                const preview = parseFinancialParametersBackup(await file.text());
+                backupBaseline.current = {
+                  expectedYieldAnnual: state.profile.expectedYieldAnnual,
+                  emergencyReserveMonthsTarget: state.profile.emergencyReserveMonthsTarget,
+                };
+                setBackupPreview(preview);
+              } catch {
+                setBackupError('Arquivo de parâmetros inválido.');
+              }
+              event.target.value = '';
+            }} />
+          </label>
+          {backupError && <p role="alert">{backupError}</p>}
+          {backupPreview && (
+            <div className="space-y-2">
+              <p>Revise antes de restaurar:</p>
+              {Object.entries(backupPreview).map(([key, value]) => (
+                <p key={key}>{key === 'expectedYieldAnnual' ? 'Taxa esperada' : 'Meses de reserva'}: {String(state.profile[key as keyof typeof state.profile] ?? 'não informado')} → {String(value)}</p>
+              ))}
+              <button type="button" className="underline" onClick={() => {
+                const changed = Object.keys(backupPreview).some(key => state.profile[key as keyof typeof state.profile] !== backupBaseline.current[key]);
+                if (changed) { setBackupError('Os parâmetros mudaram desde a prévia. Importe o arquivo novamente para revisar.'); return; }
+                if (Object.keys(backupPreview).some(key => key in (headerConflicts || {}))) { setBackupError('Resolva o conflito do parâmetro antes de restaurar.'); return; }
+                const result = patchCoupleProfile(backupPreview);
+                if (!result.valid) { setBackupError(result.errors.join(' ')); return; }
+                setBackupPreview(null);
+                setSaveSuccessMsg(true);
+              }}>Confirmar restauração</button>
+              <button type="button" className="underline ml-4" onClick={() => setBackupPreview(null)}>Cancelar</button>
+            </div>
+          )}
+        </section>
       )}
 
       {/* ========================================================================= */}
@@ -814,6 +1016,120 @@ export const SettingsScreen: React.FC = () => {
       {activeTab === 'avatares' && <AvatarSettings />}
       {activeTab === 'geral' && (
         <div className="space-y-6">
+          {/* PERFIL DO CASAL (EDIÇÃO PARCIAL ISOLADA POR CAMPO) */}
+          <div className="bg-white dark:bg-slate-900 rounded-3xl p-6 sm:p-7 border-2 border-slate-200 dark:border-slate-800 shadow-sm space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h3 className="text-base sm:text-lg font-black text-slate-950 dark:text-white font-display">
+                  Perfil do Casal (Nomes de Exibição)
+                </h3>
+                <p className="text-xs text-slate-600 dark:text-slate-400 font-medium">
+                  Alterar nomes de exibição envia apenas os campos modificados, preservando planos, renda e parâmetros.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={handleSaveIdentityProfile}
+                className="px-4 py-2 rounded-xl bg-slate-900 hover:bg-black dark:bg-white dark:text-slate-900 text-white text-xs font-black flex items-center gap-1.5 shadow-sm transition-all active:scale-95 cursor-pointer"
+              >
+                <Save className="w-4 h-4" />
+                <span>Salvar Perfil</span>
+              </button>
+            </div>
+            {profileSectionError && (
+              <div role="alert" className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-300 text-rose-800 dark:text-rose-200 text-xs font-bold">
+                {profileSectionError}
+              </div>
+            )}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="space-y-1.5">
+                <label htmlFor="settings-partner1-name" className="text-xs font-black text-slate-800 dark:text-slate-200 block">
+                  Nome de Exibição (Pessoa 1)
+                </label>
+                <input
+                  id="settings-partner1-name"
+                  type="text"
+                  maxLength={80}
+                  value={partner1Name}
+                  onChange={e => { markProfileDirty('partner1Name'); setPartner1Name(e.target.value); }}
+                  className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border-2 border-slate-200 dark:border-slate-700 text-sm font-bold text-slate-900 dark:text-white"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <label htmlFor="settings-partner2-name" className="text-xs font-black text-slate-800 dark:text-slate-200 block">
+                  Nome de Exibição (Pessoa 2)
+                </label>
+                <input
+                  id="settings-partner2-name"
+                  type="text"
+                  maxLength={80}
+                  value={partner2Name}
+                  onChange={e => { markProfileDirty('partner2Name'); setPartner2Name(e.target.value); }}
+                  className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border-2 border-slate-200 dark:border-slate-700 text-sm font-bold text-slate-900 dark:text-white"
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* PARÂMETROS PATRIMONIAIS (TAXA REAL E RESERVA) */}
+          <div className="bg-white dark:bg-slate-900 rounded-3xl p-6 sm:p-7 border-2 border-slate-200 dark:border-slate-800 shadow-sm space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h3 className="text-base sm:text-lg font-black text-slate-950 dark:text-white font-display">
+                  Parâmetros Patrimoniais
+                </h3>
+                <p className="text-xs text-slate-600 dark:text-slate-400 font-medium">
+                  Taxa real anual (0% explícito é preservado) e meta de meses da reserva de emergência.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={handleSavePatrimonialParams}
+                className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black flex items-center gap-1.5 shadow-sm transition-all active:scale-95 cursor-pointer"
+              >
+                <Save className="w-4 h-4" />
+                <span>Salvar Parâmetros Patrimoniais</span>
+              </button>
+            </div>
+            {patrimonialSectionError && (
+              <div role="alert" className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-300 text-rose-800 dark:text-rose-200 text-xs font-bold">
+                {patrimonialSectionError}
+              </div>
+            )}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="space-y-1.5">
+                <label htmlFor="settings-expected-yield" className="text-xs font-black text-slate-800 dark:text-slate-200 block">
+                  Taxa Real Esperada (% a.a.)
+                </label>
+                <input
+                  id="settings-expected-yield"
+                  type="number"
+                  min="0"
+                  max="100"
+                  step="0.1"
+                  value={expectedYield}
+                  onChange={e => { markProfileDirty('expectedYieldAnnual'); setExpectedYield(e.target.value); }}
+                  className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border-2 border-slate-200 dark:border-slate-700 text-sm font-bold tabular-nums text-slate-900 dark:text-white"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <label htmlFor="settings-reserve-months" className="text-xs font-black text-slate-800 dark:text-slate-200 block">
+                  Meses de Reserva de Emergência
+                </label>
+                <input
+                  id="settings-reserve-months"
+                  type="number"
+                  min="1"
+                  max="120"
+                  step="1"
+                  value={reserveMonths}
+                  onChange={e => { markProfileDirty('emergencyReserveMonthsTarget'); setReserveMonths(e.target.value); }}
+                  className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border-2 border-slate-200 dark:border-slate-700 text-sm font-bold tabular-nums text-slate-900 dark:text-white"
+                />
+              </div>
+            </div>
+          </div>
+
           <MedicalCareerSettings />
           {/* BLOCO 1 — RENDA */}
           <div className="bg-white dark:bg-slate-900 rounded-3xl p-6 sm:p-7 border-2 border-slate-300 dark:border-slate-800 shadow-md space-y-5 animate-in fade-in duration-200">
@@ -855,7 +1171,7 @@ export const SettingsScreen: React.FC = () => {
                     type="number"
                     step="100"
                     value={partner1Income}
-                    onChange={e => setPartner1Income(e.target.value)}
+                    onChange={e => { markProfileDirty('partner1Income'); setPartner1Income(e.target.value); }}
                     className="w-full pl-9 pr-3 py-2.5 rounded-xl bg-white dark:bg-slate-900 border-2 border-slate-300 dark:border-slate-700 text-sm font-black text-slate-950 dark:text-white tabular-nums focus:border-emerald-500 focus:outline-hidden"
                   />
                 </div>
@@ -873,7 +1189,7 @@ export const SettingsScreen: React.FC = () => {
                     type="number"
                     step="100"
                     value={partner2Income}
-                    onChange={e => setPartner2Income(e.target.value)}
+                    onChange={e => { markProfileDirty('partner2Income'); setPartner2Income(e.target.value); }}
                     className="w-full pl-9 pr-3 py-2.5 rounded-xl bg-white dark:bg-slate-900 border-2 border-slate-300 dark:border-slate-700 text-sm font-black text-slate-950 dark:text-white tabular-nums focus:border-emerald-500 focus:outline-hidden"
                   />
                 </div>
@@ -1137,6 +1453,7 @@ export const SettingsScreen: React.FC = () => {
                     type="month"
                     value={selectedCompetence}
                     onChange={e => {
+                      dirtyBudget.current.clear();
                       setSelectedCompetence(e.target.value);
                       setProposedRebalance(null);
                       setPreviewSignature(null);
@@ -1385,7 +1702,7 @@ export const SettingsScreen: React.FC = () => {
                           min="0"
                           max="100"
                           value={pctMoradia}
-                          onChange={e => setPctMoradia(e.target.value === '' ? 0 : Number(e.target.value))}
+                          onChange={e => { markBudgetDirty('pct.moradia', liveCompetenceSnapshot.currentPercentages.moradia ?? 0); setPctMoradia(e.target.value === '' ? 0 : Number(e.target.value)); }}
                           className={`w-16 px-2 py-1.5 rounded-xl border-2 font-black text-sm text-center tabular-nums ${
                             customStatus.moradia.isCustom
                               ? 'border-amber-400 bg-amber-50 dark:bg-amber-950/50 text-amber-950 dark:text-amber-100'
@@ -1405,7 +1722,7 @@ export const SettingsScreen: React.FC = () => {
                           type="number"
                           step="100"
                           value={pisoMoradia}
-                          onChange={e => setPisoMoradia(Number(e.target.value))}
+                          onChange={e => { markBudgetDirty('floor.moradia', liveCompetenceSnapshot.floorsR$.moradia); setPisoMoradia(Number(e.target.value)); }}
                           className="w-20 px-2 py-1 rounded-lg border-2 border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 font-bold text-xs"
                         />
                       </div>
@@ -1468,7 +1785,7 @@ export const SettingsScreen: React.FC = () => {
                           min="0"
                           max="100"
                           value={pctTransporte}
-                          onChange={e => setPctTransporte(e.target.value === '' ? 0 : Number(e.target.value))}
+                          onChange={e => { markBudgetDirty('pct.transporte', liveCompetenceSnapshot.currentPercentages.transporte ?? 0); setPctTransporte(e.target.value === '' ? 0 : Number(e.target.value)); }}
                           className={`w-16 px-2 py-1.5 rounded-xl border-2 font-black text-sm text-center tabular-nums ${
                             customStatus.transporte.isCustom
                               ? 'border-amber-400 bg-amber-50 dark:bg-amber-950/50 text-amber-950 dark:text-amber-100'
@@ -1488,7 +1805,7 @@ export const SettingsScreen: React.FC = () => {
                           type="number"
                           step="100"
                           value={pisoTransporte}
-                          onChange={e => setPisoTransporte(Number(e.target.value))}
+                          onChange={e => { markBudgetDirty('floor.transporte', liveCompetenceSnapshot.floorsR$.transporte); setPisoTransporte(Number(e.target.value)); }}
                           className="w-20 px-2 py-1 rounded-lg border-2 border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 font-bold text-xs"
                         />
                       </div>
@@ -1551,7 +1868,7 @@ export const SettingsScreen: React.FC = () => {
                           min="0"
                           max="100"
                           value={pctComida}
-                          onChange={e => setPctComida(e.target.value === '' ? 0 : Number(e.target.value))}
+                          onChange={e => { markBudgetDirty('pct.comida', liveCompetenceSnapshot.currentPercentages.comida ?? 0); setPctComida(e.target.value === '' ? 0 : Number(e.target.value)); }}
                           className={`w-16 px-2 py-1.5 rounded-xl border-2 font-black text-sm text-center tabular-nums ${
                             customStatus.comida.isCustom
                               ? 'border-amber-400 bg-amber-50 dark:bg-amber-950/50 text-amber-950 dark:text-amber-100'
@@ -1571,7 +1888,7 @@ export const SettingsScreen: React.FC = () => {
                           type="number"
                           step="100"
                           value={pisoComida}
-                          onChange={e => setPisoComida(Number(e.target.value))}
+                          onChange={e => { markBudgetDirty('floor.comida', liveCompetenceSnapshot.floorsR$.comida); setPisoComida(Number(e.target.value)); }}
                           className="w-20 px-2 py-1 rounded-lg border-2 border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 font-bold text-xs"
                         />
                       </div>
@@ -1634,7 +1951,7 @@ export const SettingsScreen: React.FC = () => {
                           min="0"
                           max="100"
                           value={pctLazer}
-                          onChange={e => setPctLazer(e.target.value === '' ? 0 : Number(e.target.value))}
+                          onChange={e => { markBudgetDirty('pct.lazer', liveCompetenceSnapshot.currentPercentages.lazer ?? 0); setPctLazer(e.target.value === '' ? 0 : Number(e.target.value)); }}
                           className={`w-16 px-2 py-1.5 rounded-xl border-2 font-black text-sm text-center tabular-nums ${
                             customStatus.lazer.isCustom
                               ? 'border-amber-400 bg-amber-50 dark:bg-amber-950/50 text-amber-950 dark:text-amber-100'
@@ -1710,7 +2027,7 @@ export const SettingsScreen: React.FC = () => {
                           min="0"
                           max="100"
                           value={pctProtecao}
-                          onChange={e => setPctProtecao(e.target.value === '' ? 0 : Number(e.target.value))}
+                          onChange={e => { markBudgetDirty('pct.protecao', liveCompetenceSnapshot.currentPercentages.protecao ?? 0); setPctProtecao(e.target.value === '' ? 0 : Number(e.target.value)); }}
                           className={`w-16 px-2 py-1.5 rounded-xl border-2 font-black text-sm text-center tabular-nums ${
                             customStatus.protecao.isCustom
                               ? 'border-amber-400 bg-amber-50 dark:bg-amber-950/50 text-amber-950 dark:text-amber-100'
@@ -1730,7 +2047,7 @@ export const SettingsScreen: React.FC = () => {
                           type="number"
                           step="100"
                           value={pisoProtecao}
-                          onChange={e => setPisoProtecao(Number(e.target.value))}
+                          onChange={e => { markBudgetDirty('floor.protecao', liveCompetenceSnapshot.floorsR$.protecao); setPisoProtecao(Number(e.target.value)); }}
                           className="w-20 px-2 py-1 rounded-lg border-2 border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 font-bold text-xs"
                         />
                       </div>
@@ -1793,7 +2110,7 @@ export const SettingsScreen: React.FC = () => {
                           min="0"
                           max="100"
                           value={pctProfissional}
-                          onChange={e => setPctProfissional(e.target.value === '' ? 0 : Number(e.target.value))}
+                          onChange={e => { markBudgetDirty('pct.profissional', liveCompetenceSnapshot.currentPercentages.profissional ?? 0); setPctProfissional(e.target.value === '' ? 0 : Number(e.target.value)); }}
                           className={`w-16 px-2 py-1.5 rounded-xl border-2 font-black text-sm text-center tabular-nums ${
                             customStatus.profissional.isCustom
                               ? 'border-amber-400 bg-amber-50 dark:bg-amber-950/50 text-amber-950 dark:text-amber-100'
@@ -1813,7 +2130,7 @@ export const SettingsScreen: React.FC = () => {
                           type="number"
                           step="100"
                           value={pisoProfissional}
-                          onChange={e => setPisoProfissional(Number(e.target.value))}
+                          onChange={e => { markBudgetDirty('floor.profissional', liveCompetenceSnapshot.floorsR$.profissional); setPisoProfissional(Number(e.target.value)); }}
                           className="w-20 px-2 py-1 rounded-lg border-2 border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 font-bold text-xs"
                         />
                       </div>
@@ -1876,7 +2193,7 @@ export const SettingsScreen: React.FC = () => {
                           min="0"
                           max="100"
                           value={pctInvestimentos}
-                          onChange={e => setPctInvestimentos(e.target.value === '' ? 0 : Number(e.target.value))}
+                          onChange={e => { markBudgetDirty('pct.investimentos', liveCompetenceSnapshot.currentPercentages.investimentos ?? 0); setPctInvestimentos(e.target.value === '' ? 0 : Number(e.target.value)); }}
                           className={`w-16 px-2 py-1.5 rounded-xl border-2 font-black text-sm text-center tabular-nums ${
                             customStatus.investimentos.isCustom
                               ? 'border-amber-400 bg-amber-50 dark:bg-amber-950/50 text-amber-950 dark:text-amber-100'

@@ -502,7 +502,10 @@ describe('14 — Integração de percentuais, pisos, travas, autoria por UID e v
       const nextMonth = addMonthsToCompetence(curMonth, 1);
 
       const setupBase10kAndReinforcement8k = () => {
+        const snapshot = computeCompetenceBudgetSnapshot(state, curMonth);
         applyBudgetPlanContract({
+          baseSnapshotSignature: snapshot.signature,
+          planRevision: snapshot.planRevision,
           id: curMonth,
           competence: curMonth,
           plannedNetIncome: 36000,
@@ -621,4 +624,3 @@ describe('14 — Integração de percentuais, pisos, travas, autoria por UID e v
     expect(screen.getByText(/mudaram.*Recalcule/i)).toBeInTheDocument();
   });
 });
-

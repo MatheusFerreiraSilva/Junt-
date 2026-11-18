@@ -10,6 +10,7 @@ import { FinanceProvider, useFinance } from '../../../context/FinanceContext';
 import { FixedBillsPanelModal } from '../FixedBillsPanelModal';
 import { CoupleHubScreen } from '../../../screens/CoupleHubScreen';
 import { calculateCalendarEngine } from '../../../utils/calendarEngine';
+import { computeCompetenceBudgetSnapshot } from '../../../utils/rebalanceBudgetEngine';
 import { calculateThermometerEngine } from '../../../utils/thermometerEngine';
 
 const CoherentReadsProductionHarness: React.FC = () => {
@@ -118,7 +119,9 @@ const CoherentReadsProductionHarness: React.FC = () => {
   };
 
   const setZeroFixedCeilingPlan = () => {
+    const snapshot = computeCompetenceBudgetSnapshot(state, state.currentMonth);
     applyBudgetPlanContract({
+      baseSnapshotSignature: snapshot.signature, planRevision: snapshot.planRevision,
       competence: state.currentMonth,
       plannedNetIncome: 10000,
       version: '2.0',
@@ -128,23 +131,15 @@ const CoherentReadsProductionHarness: React.FC = () => {
         investimentos: { percentage: 10, amountR$: 1000 },
       },
       categoryPercentages: {
-        moradia: 0,
-        transporte: 20,
+        moradia: 20,
+        transporte: 15,
         comida: 30,
-        lazer: 20,
-        protecao: 0,
-        profissional: 20,
+        lazer: 15,
+        protecao: 5,
+        profissional: 5,
         investimentos: 10,
       },
-      categoryAmountsR$: {
-        moradia: 0,
-        transporte: 2000,
-        comida: 3000,
-        lazer: 2000,
-        protecao: 0,
-        profissional: 2000,
-        investimentos: 1000,
-      },
+      categoryAmountsR$: { moradia: 2000, transporte: 1500, comida: 3000, lazer: 1500, protecao: 500, profissional: 500, investimentos: 1000 },
       categoryLocks: {
         moradia: false,
         transporte: false,
@@ -154,15 +149,7 @@ const CoherentReadsProductionHarness: React.FC = () => {
         profissional: false,
         investimentos: false,
       },
-      categoryFloorsR$: {
-        moradia: 0,
-        transporte: 0,
-        comida: 0,
-        lazer: 0,
-        protecao: 0,
-        profissional: 0,
-        investimentos: 0,
-      },
+      categoryFloorsR$: snapshot.floorsR$,
       categoryPriorities: {
         moradia: 'P1',
         transporte: 'P1',
@@ -172,40 +159,16 @@ const CoherentReadsProductionHarness: React.FC = () => {
         profissional: 'P2',
         investimentos: 'P1',
       },
-      commitmentsR$: {
-        moradia: 0,
-        transporte: 0,
-        comida: 0,
-        lazer: 0,
-        protecao: 0,
-        profissional: 0,
-        investimentos: 0,
-      },
-      actualSpentR$: {
-        moradia: 0,
-        transporte: 0,
-        comida: 0,
-        lazer: 0,
-        protecao: 0,
-        profissional: 0,
-        investimentos: 0,
-      },
-      requiredMarginR$: {
-        moradia: 0,
-        transporte: 0,
-        comida: 0,
-        lazer: 0,
-        protecao: 0,
-        profissional: 0,
-        investimentos: 0,
-      },
+      commitmentsR$: { moradia: 0, transporte: 0, comida: 0, lazer: 0, protecao: 0, profissional: 0, investimentos: 0 },
+      actualSpentR$: { moradia: 0, transporte: 0, comida: 0, lazer: 0, protecao: 0, profissional: 0, investimentos: 0 },
+      requiredMarginR$: { moradia: 0, transporte: 0, comida: 0, lazer: 0, protecao: 0, profissional: 0, investimentos: 0 },
       referencePreset: {
-        moradia: 0,
-        transporte: 20,
+        moradia: 20,
+        transporte: 15,
         comida: 30,
-        lazer: 20,
-        protecao: 0,
-        profissional: 20,
+        lazer: 15,
+        protecao: 5,
+        profissional: 5,
         investimentos: 10,
       },
       status: 'feasible',

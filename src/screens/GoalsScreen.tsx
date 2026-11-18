@@ -1480,8 +1480,8 @@ export const GoalsScreen: React.FC<GoalsScreenProps> = () => {
                   const goalYieldPct = totalInvested > 0 ? (yieldAccum / totalInvested) * 100 : 0;
                   const remainingAmount = Math.max(0, bank.targetAmount - bank.currentAmount);
 
-                  // Compound interest calculation taking into account monthly deposit and expected yield rate
-                  const effectiveAnnualRate = state.profile.expectedYieldAnnual || 6.5;
+                  // Compound interest calculation taking into account monthly deposit and expected yield rate (respecting explicit 0%)
+                  const effectiveAnnualRate = state.profile.expectedYieldAnnual ?? 6.5;
                   const monthlyRate = Math.pow(1 + effectiveAnnualRate / 100, 1 / 12) - 1;
                   let projectedMonths = 0;
                   if (bank.monthlyDeposit > 0 && remainingAmount > 0) {

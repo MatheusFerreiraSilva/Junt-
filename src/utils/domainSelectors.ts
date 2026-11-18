@@ -277,7 +277,7 @@ export function selectEmergencyReserveMetrics(state: AppState, monthlyExpenses: 
   const currentAmount = state.protectionCurrentAmount || 0;
   const totalInvested = state.protectionTotalInvested || 0;
   const yieldAccumulated = state.protectionYieldAccumulated ?? (currentAmount - totalInvested);
-  const targetMonths = state.profile?.emergencyReserveMonthsTarget || 6;
+  const targetMonths = state.profile?.emergencyReserveMonthsTarget ?? 6;
   const targetAmount = roundMoney(monthlyExpenses * targetMonths);
   const monthsCovered = monthlyExpenses > 0 ? Number((currentAmount / monthlyExpenses).toFixed(1)) : 0;
 

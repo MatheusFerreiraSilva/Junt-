@@ -6,6 +6,8 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { readFile } from 'node:fs/promises';
 import { initializeTestEnvironment, assertFails, assertSucceeds, type RulesTestEnvironment } from '@firebase/rules-unit-testing';
 import { type Firestore, doc, getDoc, getDocs, collection, setDoc, updateDoc, deleteDoc } from 'firebase/firestore';
+import { commitCoupleHeaderPatchTransaction } from '../src/lib/coupleSnapshot';
+import { saveEntities } from '../src/lib/entitySync';
 
 // The emulator exposes compat clients; the modular SDK unwraps these instances.
 const sdk = (client: unknown) => client as Firestore;
@@ -103,6 +105,65 @@ describe.skipIf(!enabled)('Firestore couple isolation (emulator only)', () => {
     await assertFails(updateDoc(doc(alice, 'couples/a'), { emergencyReserveMonthsTarget: 0 }));
     await assertFails(updateDoc(doc(alice, 'couples/a'), { expectedYieldAnnual: 120 }));
     await assertFails(updateDoc(doc(alice, 'couples/a'), { unapprovedKey: 'invalid' }));
+  });
+
+  it('round-trips shared financial profile parameters through the production transaction and rejects outsiders and stale edits', async () => {
+    await env.withSecurityRulesDisabled(async context => {
+      await setDoc(doc(context.firestore(), 'couples/profile13'), {
+        partner1Uid: 'profile-alice', partner2Uid: 'profile-bob', departedMembers: {},
+      });
+    });
+    const alice = sdk(env.authenticatedContext('profile-alice').firestore());
+    const bob = sdk(env.authenticatedContext('profile-bob').firestore());
+    const outsider = sdk(env.authenticatedContext('profile-outsider').firestore());
+
+    const first = await commitCoupleHeaderPatchTransaction(alice, 'profile13', {},
+      { expectedYieldAnnual: 0, emergencyReserveMonthsTarget: 9 }, { authoredByUid: 'profile-alice' });
+    expect(first.status).toBe('success');
+    expect((await getDoc(doc(bob, 'couples/profile13'))).data()).toMatchObject({
+      expectedYieldAnnual: 0, emergencyReserveMonthsTarget: 9, lastUpdatedBy: 'profile-alice',
+    });
+
+    const stale = await commitCoupleHeaderPatchTransaction(bob, 'profile13', {},
+      { expectedYieldAnnual: 3 }, { authoredByUid: 'profile-bob' });
+    expect(stale.status).toBe('conflict');
+    expect(stale.conflictingFields).toEqual(['expectedYieldAnnual']);
+
+    const second = await commitCoupleHeaderPatchTransaction(bob, 'profile13',
+      { expectedYieldAnnual: 0, emergencyReserveMonthsTarget: 9 },
+      { emergencyReserveMonthsTarget: 12 }, { authoredByUid: 'profile-bob' });
+    expect(second.status).toBe('success');
+    expect((await getDoc(doc(alice, 'couples/profile13'))).data()).toMatchObject({
+      expectedYieldAnnual: 0, emergencyReserveMonthsTarget: 12, lastUpdatedBy: 'profile-bob',
+    });
+    await assertFails(getDoc(doc(outsider, 'couples/profile13')));
+    await assertFails(updateDoc(doc(outsider, 'couples/profile13'), { expectedYieldAnnual: 5 }));
+    const unauthorized = await commitCoupleHeaderPatchTransaction(outsider, 'profile13',
+      { expectedYieldAnnual: 0 }, { expectedYieldAnnual: 5 }, { authoredByUid: 'profile-outsider' });
+    expect(unauthorized.status).toBe('failure');
+  });
+
+  it('rejects a stale concurrent approval of the same monthly plan', async () => {
+    const original = { id: '2026-11', competence: '2026-11', planRevision: 1, plannedNetIncome: 10000 };
+    await env.withSecurityRulesDisabled(async context => {
+      const db = context.firestore();
+      await setDoc(doc(db, 'couples/plan-concurrency'), {
+        partner1Uid: 'plan-alice', partner2Uid: 'plan-bob', departedMembers: {},
+      });
+      await setDoc(doc(db, 'couples/plan-concurrency/entities/monthlyBudgetPlans%3A2026-11'), {
+        field: 'monthlyBudgetPlans', record: original, deleted: false, schemaVersion: 1,
+      });
+    });
+    const alice = sdk(env.authenticatedContext('plan-alice').firestore());
+    const bob = sdk(env.authenticatedContext('plan-bob').firestore());
+    const baseline = { monthlyBudgetPlans: [original] };
+    const approved = { ...original, planRevision: 2, plannedNetIncome: 11000 };
+    await saveEntities(alice, 'plan-concurrency', baseline, { monthlyBudgetPlans: [approved] });
+    await expect(saveEntities(bob, 'plan-concurrency', baseline, {
+      monthlyBudgetPlans: [{ ...original, planRevision: 2, plannedNetIncome: 12000 }],
+    })).rejects.toThrow('alterado pelo seu par');
+    const persisted = await getDoc(doc(alice, 'couples/plan-concurrency/entities/monthlyBudgetPlans%3A2026-11'));
+    expect(persisted.data()?.record).toEqual(approved);
   });
 
   it('enforces integer cents and non-negative balances for financialOperations and goals (29A)', async () => {

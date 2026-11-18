@@ -155,10 +155,55 @@ export const LIFE_TIERS: Record<LifeTierKey, LifeTierInfo> = {
   },
 };
 
+const NON_INCOME_CLASSIFICATIONS = new Set<IncomeSourceClassification>([
+  'internal_transfer',
+  'loan',
+  'emprestimo',
+  'principal_redemption',
+  'resgate_principal',
+  'refund',
+  'reembolso',
+  'reimbursement',
+  'passive_reinvested',
+  'renda_passiva_reinvestida',
+  'forecast',
+]);
+
+/**
+ * Returns true only for confirmed real net income entries, excluding principal redemptions,
+ * internal transfers, loans, refunds, reinvested passive income, and unconfirmed forecasts.
+ */
+export function isEligibleReceivedIncomeEntry(inc: IncomeItem): boolean {
+  if (!inc) return false;
+  if (inc.status === 'internal_transfer' || inc.status === 'pending' || inc.status === 'projected') {
+    return false;
+  }
+  if (inc.isForecast) return false;
+  if (inc.classification && NON_INCOME_CLASSIFICATIONS.has(inc.classification)) {
+    return false;
+  }
+  return true;
+}
+
+export function computeEligibleReceivedIncomeAmount(inc: IncomeItem): number {
+  if (!isEligibleReceivedIncomeEntry(inc)) return 0;
+  let raw = inc.amount || 0;
+  if (inc.classification === 'pj_gross') {
+    if (inc.taxRatePercent && inc.taxRatePercent > 0) {
+      const tax = (raw * Math.min(40, Math.max(0, inc.taxRatePercent))) / 100;
+      raw -= tax;
+    }
+    if (inc.monthlyAccountingCost && inc.monthlyAccountingCost > 0) {
+      raw -= inc.monthlyAccountingCost;
+    }
+  }
+  return Math.max(0, Math.round(raw * 100) / 100);
+}
+
 /**
  * MOTOR DINÂMICO DE FAIXAS DE RENDA
  * Analisa automaticamente a Renda Líquida Mensal Combinada do casal:
- * - Média dos últimos 3 meses ou mês atual (com base em transações reais)
+ * - Média dos últimos 3 meses ou mês atual (com base em receitas reais confirmadas, excluindo resgates/empréstimos/previsões)
  * - Fallback transparente para a renda declarada no perfil se ainda não houver lançamentos
  * Enquadra o casal instantaneamente em uma das quatro faixas sem configurações manuais.
  */
@@ -190,9 +235,14 @@ export function calculateDynamicCombinedNetIncome(
   }
 
   const history = months.map(monthKey => {
-    const monthIncomes = (incomes || []).filter(inc => inc.date && inc.date.startsWith(monthKey));
-    const total = monthIncomes.reduce((sum, item) => sum + (item.amount || 0), 0);
-    return { month: monthKey, amount: total };
+    const monthIncomes = (incomes || []).filter(
+      inc => inc.date && inc.date.startsWith(monthKey) && isEligibleReceivedIncomeEntry(inc)
+    );
+    const total = monthIncomes.reduce(
+      (sum, item) => sum + computeEligibleReceivedIncomeAmount(item),
+      0
+    );
+    return { month: monthKey, amount: Math.round(total * 100) / 100 };
   });
 
   const curMonthItem = history.find(h => h.month === currentMonth);
