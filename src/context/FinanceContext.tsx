@@ -150,6 +150,13 @@ import {
   selectCanonicalFixedBillsRegistry,
   toSafeCents,
 } from '../utils/occurrenceProjection';
+import {
+  buildBudgetApplicationCommand,
+  computeCompetenceBudgetSnapshot,
+  selectEffectiveBudgetPlanForCompetence,
+  type BuildBudgetApplicationCommandResult,
+  type RebalanceResult,
+} from '../utils/rebalanceBudgetEngine';
 
 export const CATEGORIES_BASE: Record<CategoryKey, { name: string; emoji: string; description: string; colorHex: string; bgLight: string; borderHex: string }> = {
   moradia: {
@@ -515,8 +522,18 @@ export interface FinanceContextType {
   updateCategoryFloors: (floors: Record<string, number>) => void;
   categoryLocks: Record<DestinationKey, boolean>;
   monthlyBudgetPlans: Record<string, BudgetPlanContract>;
+  activeCompetenceBudgetPlan?: BudgetPlanContract;
   updateCategoryLocks: (locks: Partial<Record<DestinationKey, boolean>>) => void;
   applyBudgetPlanContract: (plan: BudgetPlanContract) => void;
+  applyBudgetRebalanceProposal: (
+    proposal: RebalanceResult,
+    options?: {
+      expectedSignature?: string;
+      expectedPlanRevision?: number;
+      overwriteExistingFutureApprovedPlans?: boolean;
+      futureMonthsHorizon?: number;
+    }
+  ) => BuildBudgetApplicationCommandResult;
   appearanceSyncStatus: AppearanceSyncStatus;
   retryAppearanceSync: () => void;
   saveCurrentAppearance: () => void;
@@ -1566,6 +1583,13 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
     );
   }, [state.expenses, state.currentMonth]);
 
+  const activeCompetenceBudgetPlan = useMemo(() => {
+    return selectEffectiveBudgetPlanForCompetence(
+      { monthlyBudgetPlans: state.monthlyBudgetPlans },
+      state.currentMonth
+    ).plan;
+  }, [state.monthlyBudgetPlans, state.currentMonth]);
+
   const categoriesSpending = useMemo(() => {
     const res: Record<CategoryKey, { spent: number; budget: number; remaining: number; percentageUsed: number; isOver: boolean }> = {
       moradia: { spent: 0, budget: 0, remaining: 0, percentageUsed: 0, isOver: false },
@@ -1584,16 +1608,29 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
       profissional: 0,
     };
 
+    const planIncomeBase =
+      activeCompetenceBudgetPlan && activeCompetenceBudgetPlan.plannedNetIncome > 0
+        ? activeCompetenceBudgetPlan.plannedNetIncome
+        : totalIncome;
+
     (Object.keys(CATEGORIES_BASE) as CategoryKey[]).forEach(catKey => {
-      const pct = (state.categoryPercentages && state.categoryPercentages[catKey] !== undefined)
-        ? state.categoryPercentages[catKey]
-        : (activeLifeTier.percentages[catKey] || 0);
-      let budget = (totalIncome * pct) / 100;
+      let budget: number;
+      if (activeCompetenceBudgetPlan?.categoryAmountsR$?.[catKey] !== undefined && activeCompetenceBudgetPlan.plannedNetIncome > 0) {
+        budget = activeCompetenceBudgetPlan.categoryAmountsR$[catKey];
+      } else {
+        const pct =
+          activeCompetenceBudgetPlan?.categoryPercentages?.[catKey] !== undefined
+            ? activeCompetenceBudgetPlan.categoryPercentages[catKey]
+            : state.categoryPercentages && state.categoryPercentages[catKey] !== undefined
+            ? state.categoryPercentages[catKey]
+            : activeLifeTier.percentages[catKey] || 0;
+        budget = (planIncomeBase * pct) / 100;
+      }
       // REGRA 50 POR 50: 50% do excedente de plantão extra é liberado para Lazer no próprio mês sem culpa
       if (catKey === 'lazer' && bonusShiftCalculation.hasBonus) {
         budget += bonusShiftCalculation.toLeisure;
       }
-      res[catKey].budget = budget;
+      res[catKey].budget = roundMoney(budget);
     });
 
     const parentIdsWithSplits = new Set(
@@ -1634,7 +1671,7 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
     });
 
     return res;
-  }, [state.categoryPercentages, totalIncome, state.expenses, state.keywordRules, state.installments, activeInstallments, activeLifeTier, bonusShiftCalculation, state.currentMonth]);
+  }, [activeCompetenceBudgetPlan, state.categoryPercentages, totalIncome, state.expenses, state.keywordRules, state.installments, activeInstallments, activeLifeTier, bonusShiftCalculation, state.currentMonth]);
 
   const blownCategories = useMemo(() => {
     return (Object.keys(categoriesSpending) as CategoryKey[]).filter(k => categoriesSpending[k].isOver);
@@ -4973,9 +5010,125 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
     }));
   };
 
+  const resolveAuthenticatedPlanAuthor = () => {
+    const uid =
+      currentUser && !currentUser.isAnonymous && currentUser.uid
+        ? currentUser.uid
+        : userProfile?.uid;
+    const role = userProfile?.partnerRole;
+    const displayName =
+      role === 'partner2'
+        ? stateRef.current.profile.partner2Name
+        : role === 'partner1'
+        ? stateRef.current.profile.partner1Name
+        : currentUser?.displayName || stateRef.current.profile.partner1Name || 'Casal';
+    return { uid, displayName };
+  };
+
+  const applyBudgetRebalanceProposal = (
+    proposal: RebalanceResult,
+    options?: {
+      expectedSignature?: string;
+      expectedPlanRevision?: number;
+      overwriteExistingFutureApprovedPlans?: boolean;
+      futureMonthsHorizon?: number;
+    }
+  ): BuildBudgetApplicationCommandResult => {
+    const preSnap = stateRef.current;
+    const author = resolveAuthenticatedPlanAuthor();
+    const res = buildBudgetApplicationCommand({
+      state: preSnap,
+      proposal,
+      expectedSignature: options?.expectedSignature,
+      expectedPlanRevision: options?.expectedPlanRevision,
+      approvedByUid: author.uid,
+      approvedByDisplayName: author.displayName,
+      overwriteExistingFutureApprovedPlans: options?.overwriteExistingFutureApprovedPlans,
+      futureMonthsHorizon: options?.futureMonthsHorizon,
+    });
+
+    if (res.status === 'ready' && !res.idempotentNoOp) {
+      stateRef.current = res.nextState;
+      setState(res.nextState);
+      triggerCelebration();
+    }
+    return res;
+  };
+
   const applyBudgetPlanContract = (plan: BudgetPlanContract) => {
-    const upgradedPlan = upgradeBudgetPlanContract(plan);
+    const author = resolveAuthenticatedPlanAuthor();
     setState(prev => {
+      const existing = prev.monthlyBudgetPlans?.[plan.competence];
+      const cleanUid = plan.approvedByUid || author.uid;
+      const upgradedPlan = upgradeBudgetPlanContract({
+        ...plan,
+        planRevision: plan.planRevision ?? (existing?.planRevision ?? 0) + 1,
+        approvedByUid: cleanUid,
+        approvedByDisplayName: plan.approvedByDisplayName || author.displayName,
+        approvedBy: plan.approvedBy || author.displayName || cleanUid || 'Casal',
+      });
+
+      const appliedMonths: string[] = [upgradedPlan.competence];
+      const skippedApprovedMonths: string[] = [];
+      const nextMonthlyPlans: Record<string, BudgetPlanContract> = {
+        ...(prev.monthlyBudgetPlans || {}),
+      };
+
+      if (upgradedPlan.applyToFutureMonths) {
+        const snap = computeCompetenceBudgetSnapshot(prev, upgradedPlan.competence);
+        const cmdRes = buildBudgetApplicationCommand({
+          state: prev,
+          proposal: {
+            status: upgradedPlan.status || 'feasible',
+            competence: upgradedPlan.competence,
+            plannedNetIncome: upgradedPlan.plannedNetIncome,
+            version: upgradedPlan.version,
+            proposedPercentages: upgradedPlan.categoryPercentages,
+            proposedAmountsR$: upgradedPlan.categoryAmountsR$,
+            oldPercentages: snap.currentPercentages,
+            oldAmountsR$: upgradedPlan.categoryAmountsR$,
+            locks: upgradedPlan.categoryLocks,
+            floorsR$: upgradedPlan.categoryFloorsR$,
+            commitmentsR$: upgradedPlan.commitmentsR$,
+            actualSpentR$: upgradedPlan.actualSpentR$,
+            requiredMarginR$: upgradedPlan.requiredMarginR$,
+            macroGroups: upgradedPlan.macroGroups!,
+            categoryMatrixCents: upgradedPlan.categoryMatrixCents!,
+            totalPercentagesSum: 100,
+            totalProposedR$: upgradedPlan.plannedNetIncome,
+            totalRequiredR$: upgradedPlan.plannedNetIncome,
+            deficitR$: 0,
+            conflicts: [],
+            explanation: upgradedPlan.explanation,
+            recoveryOptions: [],
+            referencePreset: upgradedPlan.referencePreset,
+            applyToFutureMonths: true,
+          },
+          approvedByUid: cleanUid,
+          approvedByDisplayName: upgradedPlan.approvedByDisplayName,
+        });
+        if (cmdRes.status === 'ready') {
+          return cmdRes.nextState;
+        }
+      }
+
+      nextMonthlyPlans[upgradedPlan.competence] = {
+        ...upgradedPlan,
+        appliedFutureMonths: appliedMonths.slice(1),
+        skippedApprovedMonths,
+      };
+
+      // Strict competence scope: ONLY update global active-month compatibility fields when competence === prev.currentMonth!
+      // Future plans (e.g. 2026-11 while in 2026-10) and historical plans (< 2026-10) MUST NOT overwrite currentMonth!
+      const affectsCurrentMonth = upgradedPlan.competence === prev.currentMonth;
+
+      if (!affectsCurrentMonth) {
+        return {
+          ...prev,
+          monthlyBudgetPlans: nextMonthlyPlans,
+        };
+      }
+
       const nextCategoryPercentages: Record<CategoryKey, number> = {
         moradia: upgradedPlan.categoryPercentages.moradia ?? prev.categoryPercentages.moradia,
         transporte: upgradedPlan.categoryPercentages.transporte ?? prev.categoryPercentages.transporte,
@@ -4985,7 +5138,8 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
         profissional: upgradedPlan.categoryPercentages.profissional ?? prev.categoryPercentages.profissional,
       };
 
-      const nextInvestmentsPercentage = upgradedPlan.categoryPercentages.investimentos ?? (prev.profile.investmentsPercentage || 20);
+      const nextInvestmentsPercentage =
+        upgradedPlan.categoryPercentages.investimentos ?? (prev.profile.investmentsPercentage ?? 10);
 
       const nextCategoryLocks = {
         ...(prev.categoryLocks || {
@@ -4998,11 +5152,6 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
           investimentos: false,
         }),
         ...upgradedPlan.categoryLocks,
-      };
-
-      const nextMonthlyPlans = {
-        ...(prev.monthlyBudgetPlans || {}),
-        [upgradedPlan.competence]: upgradedPlan,
       };
 
       return {
@@ -5572,8 +5721,10 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
         updateCategoryFloors,
         categoryLocks: state.categoryLocks || INITIAL_STATE.categoryLocks!,
         monthlyBudgetPlans: state.monthlyBudgetPlans || {},
+        activeCompetenceBudgetPlan,
         updateCategoryLocks,
         applyBudgetPlanContract,
+        applyBudgetRebalanceProposal,
         appearanceSyncStatus,
         retryAppearanceSync,
         saveCurrentAppearance,

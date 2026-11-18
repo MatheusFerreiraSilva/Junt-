@@ -815,7 +815,13 @@ export function upgradeBudgetPlanContract(plan: Partial<BudgetPlanContract>): Bu
     conflicts: plan.conflicts || [],
     approvedAt: plan.approvedAt,
     approvedBy: plan.approvedBy,
+    approvedByUid: plan.approvedByUid,
+    approvedByDisplayName: plan.approvedByDisplayName,
+    baseSnapshotSignature: plan.baseSnapshotSignature,
     applyToFutureMonths: Boolean(plan.applyToFutureMonths),
+    appliedFutureMonths: plan.appliedFutureMonths,
+    skippedApprovedMonths: plan.skippedApprovedMonths,
+    partnerCeilings: plan.partnerCeilings,
   };
 }
 

@@ -673,7 +673,12 @@ export interface BudgetPlanContract {
   conflicts: string[];
   approvedAt?: string;
   approvedBy?: string;
+  approvedByUid?: string;
+  approvedByDisplayName?: string;
+  baseSnapshotSignature?: string;
   applyToFutureMonths?: boolean;
+  appliedFutureMonths?: string[];
+  skippedApprovedMonths?: string[];
   partnerCeilings?: Partial<Record<'partner1' | 'partner2', PartnerScopedPlanCeiling>>;
 }
 
