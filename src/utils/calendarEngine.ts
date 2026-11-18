@@ -23,7 +23,12 @@ import {
 
 export { getDaysInMonth, clampDayToMonth, getApportionedAmount };
 
-export type ObligationType = 'fixed_bill' | 'subscription' | 'installment' | 'medical_receivable';
+export type ObligationType =
+  | 'fixed_bill'
+  | 'subscription'
+  | 'installment'
+  | 'credit_invoice'
+  | 'medical_receivable';
 export type ObligationStatus = 'previsto' | 'vencido' | 'parcial' | 'pago' | 'cancelado';
 
 export interface CalendarObligation {
@@ -360,6 +365,65 @@ export function calculateCalendarEngine(
         totalNumber: instOcc.totalInstallments,
         bankName: instOcc.bankName,
       },
+      isSimulatedPostponed: isPostponed,
+      originalDueDate: isPostponed ? standardDueDate : undefined,
+    });
+  });
+
+  // C.2) Pending 1x Credit Card Purchases (including Goal Direct Purchases on Credit Card — preserves invoice debt in cash!)
+  const parentSplitExpenseIds = new Set(
+    (state.expenses || []).filter((e) => e.splits && e.splits.length > 0).map((e) => e.id)
+  );
+  (state.expenses || []).forEach((exp) => {
+    if (!exp || exp.paymentMethod !== 'credit') return;
+    if (exp.installmentId || exp.linkedBillId) return;
+    if (exp.splitParentId && parentSplitExpenseIds.has(exp.splitParentId)) return;
+    const compMonth =
+      exp.billCompetenceMonth && /^\d{4}-\d{2}$/.test(exp.billCompetenceMonth)
+        ? exp.billCompetenceMonth
+        : (exp.date || '').slice(0, 7);
+    if (compMonth !== activeMonth) return;
+
+    const expCents = toSafeCents(exp.amount, exp.amountCents);
+    if (expCents <= 0) return;
+    const split = apportionCentsByScope(
+      expCents,
+      viewMode,
+      exp.paidBy || 'both',
+      exp.splitPartner1Pct,
+      exp.splitPartner2Pct,
+      exp.assignedTo
+    );
+    if (!split.isInScope) return;
+
+    const rawDay = parseInt((exp.date || '').slice(8, 10), 10) || 10;
+    const dueDay = clampDayToMonth(year, month, rawDay);
+    const standardDueDate = `${activeMonth}-${String(dueDay).padStart(2, '0')}`;
+    const oblKey = `cc-${exp.id}`;
+    const effectiveDueDate = options?.postponedObligations?.[oblKey] || standardDueDate;
+    const isPostponed = Boolean(options?.postponedObligations?.[oblKey]);
+    const isInvoicePaid = Boolean(exp.notes && /\[fatura paga\]/i.test(exp.notes));
+    const status: ObligationStatus = isInvoicePaid
+      ? 'pago'
+      : effectiveDueDate < todayStr
+      ? 'vencido'
+      : 'previsto';
+
+    allObligations.push({
+      id: oblKey,
+      sourceId: exp.id,
+      type: 'credit_invoice',
+      title: `Fatura Cartão: ${exp.description}`,
+      category: mapToCanonicalCategoryKey(exp.category),
+      amount: roundMoney(split.scopedCents / 100),
+      originalAmount: roundMoney(expCents / 100),
+      dueDate: effectiveDueDate,
+      dueDay: parseInt(effectiveDueDate.slice(8, 10), 10),
+      competenceMonth: activeMonth,
+      status,
+      payer: exp.paidBy || 'both',
+      linkedExpenseId: exp.id,
+      notes: exp.bankName ? `Cartão ${exp.bankName}` : 'Compra 1x no cartão',
       isSimulatedPostponed: isPostponed,
       originalDueDate: isPostponed ? standardDueDate : undefined,
     });

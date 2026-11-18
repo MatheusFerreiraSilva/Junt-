@@ -239,6 +239,9 @@ export interface InstallmentPurchase {
   totalInstallments?: number;
   currentInstallment?: number;
   firstPaymentDate?: string;
+  fundingSource?: FundingSourceType;
+  fundingGoalId?: string;
+  isExcludedFromMonthlyBudget?: boolean;
 }
 
 export interface AdvanceInstallmentFundingSource {
@@ -673,7 +676,12 @@ export interface BudgetPlanContract {
   conflicts: string[];
   approvedAt?: string;
   approvedBy?: string;
+  approvedByUid?: string;
+  approvedByDisplayName?: string;
+  baseSnapshotSignature?: string;
   applyToFutureMonths?: boolean;
+  appliedFutureMonths?: string[];
+  skippedApprovedMonths?: string[];
   partnerCeilings?: Partial<Record<'partner1' | 'partner2', PartnerScopedPlanCeiling>>;
 }
 
