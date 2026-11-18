@@ -239,6 +239,9 @@ export interface InstallmentPurchase {
   totalInstallments?: number;
   currentInstallment?: number;
   firstPaymentDate?: string;
+  fundingSource?: FundingSourceType;
+  fundingGoalId?: string;
+  isExcludedFromMonthlyBudget?: boolean;
 }
 
 export interface AdvanceInstallmentFundingSource {

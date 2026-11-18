@@ -153,6 +153,7 @@ import {
 import {
   buildBudgetApplicationCommand,
   computeCompetenceBudgetSnapshot,
+  rebalanceBudget,
   selectEffectiveBudgetPlanForCompetence,
   type BuildBudgetApplicationCommandResult,
   type RebalanceResult,
@@ -815,7 +816,49 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
 
   const isCloudSynced = financeSyncStatus === 'saved';
 
-  const [state, setState] = useState<AppState>(INITIAL_STATE);
+  const sessionUid = useRef<string | null>(null);
+  const [cacheOwner, setCacheOwner] = useState<string | null>(null);
+  const [cacheCoupleId, setCacheCoupleId] = useState<string | null>(null);
+  const sessionGeneration = useRef(0);
+  const entityBaseline = useRef<EntityState>({});
+  const entityReady = useRef(false);
+  const inFlightTxCountRef = useRef(0);
+  const entityListener = useRef<(() => void) | null>(null);
+  const coupleListener = useRef<(() => void) | null>(null);
+
+  const loadCache = (uid?: string, coupleId?: string): AppState => {
+    try {
+      const saved = localStorage.getItem(cacheKey(uid));
+      if (saved) {
+        const envelope = JSON.parse(saved);
+        if (envelope.version !== 1 || envelope.coupleId !== (coupleId || null)) return { ...INITIAL_STATE };
+        entityBaseline.current = envelope.baseline || {};
+        const parsed = envelope.state;
+        if (!parsed || typeof parsed !== 'object') return { ...INITIAL_STATE };
+        delete parsed.pluggyCredentials;
+        if (parsed.monthlyBudgetPlans && typeof parsed.monthlyBudgetPlans === 'object') {
+          const upgradedPlans: Record<string, BudgetPlanContract> = {};
+          for (const [comp, rawPlan] of Object.entries(parsed.monthlyBudgetPlans)) {
+            if (rawPlan && typeof rawPlan === 'object') {
+              upgradedPlans[comp] = upgradeBudgetPlanContract({
+                ...(rawPlan as Partial<BudgetPlanContract>),
+                competence: comp,
+              });
+            }
+          }
+          parsed.monthlyBudgetPlans = upgradedPlans;
+        }
+        return { ...INITIAL_STATE, ...parsed, profile: { ...INITIAL_STATE.profile, ...parsed.profile } };
+      }
+    } catch { console.warn('Não foi possível recuperar o cache desta conta.'); }
+    return { ...INITIAL_STATE };
+  };
+
+  const [state, setState] = useState<AppState>(() =>
+    auth.currentUser ? { ...INITIAL_STATE } : loadCache()
+  );
+  const stateRef = useRef(state);
+  stateRef.current = state;
   const [appearanceSyncStatus, setAppearanceSyncStatus] = useState<AppearanceSyncStatus>('local');
   const appearanceSession = useRef<{ uid: string; sync: ReturnType<typeof createPreferenceSync> } | null>(null);
   const appearanceUid = currentUser && !currentUser.isAnonymous ? currentUser.uid : null;
@@ -878,32 +921,6 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
       }
     } catch { console.warn('Não foi possível remover as credenciais do cache legado.'); }
   }, []);
-  const sessionUid = useRef<string | null>(null);
-  const [cacheOwner, setCacheOwner] = useState<string | null>(null);
-  const [cacheCoupleId, setCacheCoupleId] = useState<string | null>(null);
-  const sessionGeneration = useRef(0);
-  const entityBaseline = useRef<EntityState>({});
-  const stateRef = useRef(state);
-  stateRef.current = state;
-  const entityReady = useRef(false);
-  const inFlightTxCountRef = useRef(0);
-  const entityListener = useRef<(() => void) | null>(null);
-  const coupleListener = useRef<(() => void) | null>(null);
-  const loadCache = (uid?: string, coupleId?: string): AppState => {
-    try {
-      const saved = localStorage.getItem(cacheKey(uid));
-      if (saved) {
-        const envelope = JSON.parse(saved);
-        if (envelope.version !== 1 || envelope.coupleId !== (coupleId || null)) return { ...INITIAL_STATE };
-        entityBaseline.current = envelope.baseline || {};
-        const parsed = envelope.state;
-        if (!parsed || typeof parsed !== 'object') return { ...INITIAL_STATE };
-        delete parsed.pluggyCredentials;
-        return { ...INITIAL_STATE, ...parsed, profile: { ...INITIAL_STATE.profile, ...parsed.profile } };
-      }
-    } catch { console.warn('Não foi possível recuperar o cache desta conta.'); }
-    return { ...INITIAL_STATE };
-  };
 
   const [isSyncingBanks, setIsSyncingBanks] = useState(false);
 
@@ -1013,6 +1030,42 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
                                 if (comp) plansMap[comp] = upgradeBudgetPlanContract(item as unknown as BudgetPlanContract);
                               }
                               nextState.monthlyBudgetPlans = plansMap;
+                              const activePlanAfterSync = selectEffectiveBudgetPlanForCompetence(
+                                { monthlyBudgetPlans: plansMap },
+                                prev.currentMonth
+                              ).plan;
+                              if (activePlanAfterSync) {
+                                nextState.categoryPercentages = {
+                                  moradia:
+                                    activePlanAfterSync.categoryPercentages.moradia ??
+                                    prev.categoryPercentages.moradia,
+                                  transporte:
+                                    activePlanAfterSync.categoryPercentages.transporte ??
+                                    prev.categoryPercentages.transporte,
+                                  comida:
+                                    activePlanAfterSync.categoryPercentages.comida ??
+                                    prev.categoryPercentages.comida,
+                                  lazer:
+                                    activePlanAfterSync.categoryPercentages.lazer ??
+                                    prev.categoryPercentages.lazer,
+                                  protecao:
+                                    activePlanAfterSync.categoryPercentages.protecao ??
+                                    prev.categoryPercentages.protecao,
+                                  profissional:
+                                    activePlanAfterSync.categoryPercentages.profissional ??
+                                    prev.categoryPercentages.profissional,
+                                };
+                                nextState.categoryLocks = {
+                                  ...(prev.categoryLocks || INITIAL_STATE.categoryLocks!),
+                                  ...activePlanAfterSync.categoryLocks,
+                                };
+                                nextState.profile = {
+                                  ...prev.profile,
+                                  investmentsPercentage:
+                                    activePlanAfterSync.categoryPercentages.investimentos ??
+                                    prev.profile.investmentsPercentage,
+                                };
+                              }
                             } else {
                               const localList = (prev[field] as any) || [];
                               nextState[field] = rebaseEntities(previous[field] || [], localList, remote[field] || []) as any;
@@ -1613,6 +1666,32 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
         ? activeCompetenceBudgetPlan.plannedNetIncome
         : totalIncome;
 
+    const reinforcementCentsByCat: Record<CategoryKey, number> = {
+      moradia: 0,
+      transporte: 0,
+      comida: 0,
+      lazer: 0,
+      protecao: 0,
+      profissional: 0,
+    };
+    (state.financialOperations || []).forEach(op => {
+      if (!op || op.type !== 'CATEGORY_REINFORCEMENT') return;
+      if (op.state === 'reverted' || op.state === 'estornado' || op.state === 'planned') return;
+      const opComp = op.competence || (op.date ? op.date.slice(0, 7) : '');
+      if (opComp !== state.currentMonth) return;
+      if (op.targetRef?.type === 'category' && op.targetRef.id) {
+        const catKey = mapToCanonicalCategoryKey(op.targetRef.id);
+        reinforcementCentsByCat[catKey] += toSafeCents(op.amountR$, op.amountCents);
+      }
+    });
+    Object.values(state.temporaryBudgetAdjustments || {}).forEach(adj => {
+      if (!adj) return;
+      if (adj.expiresAt && adj.expiresAt.slice(0, 7) === state.currentMonth) {
+        const catKey = mapToCanonicalCategoryKey(adj.category);
+        reinforcementCentsByCat[catKey] += toSafeCents(adj.amount);
+      }
+    });
+
     (Object.keys(CATEGORIES_BASE) as CategoryKey[]).forEach(catKey => {
       let budget: number;
       if (activeCompetenceBudgetPlan?.categoryAmountsR$?.[catKey] !== undefined && activeCompetenceBudgetPlan.plannedNetIncome > 0) {
@@ -1629,6 +1708,10 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
       // REGRA 50 POR 50: 50% do excedente de plantão extra é liberado para Lazer no próprio mês sem culpa
       if (catKey === 'lazer' && bonusShiftCalculation.hasBonus) {
         budget += bonusShiftCalculation.toLeisure;
+      }
+      // 26C & 14: Reforço temporário soma apenas ao envelope efetivo da competência (sem alterar % base nem repetir no mês seguinte)
+      if (reinforcementCentsByCat[catKey] > 0) {
+        budget += reinforcementCentsByCat[catKey] / 100;
       }
       res[catKey].budget = roundMoney(budget);
     });
@@ -1658,6 +1741,7 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
     );
     instOccurrences.forEach(instOcc => {
       if (instOcc.alreadyInExpenses) return;
+      if (instOcc.isExcludedFromMonthlyBudget) return;
       const catKey = mapToCanonicalCategoryKey(instOcc.category);
       spentCentsByCat[catKey] += instOcc.effectiveCents;
     });
@@ -1671,7 +1755,7 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
     });
 
     return res;
-  }, [activeCompetenceBudgetPlan, state.categoryPercentages, totalIncome, state.expenses, state.keywordRules, state.installments, activeInstallments, activeLifeTier, bonusShiftCalculation, state.currentMonth]);
+  }, [activeCompetenceBudgetPlan, state.categoryPercentages, state.financialOperations, state.temporaryBudgetAdjustments, totalIncome, state.expenses, state.keywordRules, state.installments, activeInstallments, activeLifeTier, bonusShiftCalculation, state.currentMonth]);
 
   const blownCategories = useMemo(() => {
     return (Object.keys(categoriesSpending) as CategoryKey[]).filter(k => categoriesSpending[k].isOver);
@@ -4143,34 +4227,119 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
 
   const restoreTierDefaultPercentages = (tierKey?: LifeTierKey) => {
     const targetTier = LIFE_TIERS[tierKey || activeLifeTier.key];
-    setState(prev => ({
-      ...prev,
-      categoryPercentages: {
-        moradia: targetTier.percentages.moradia,
-        transporte: targetTier.percentages.transporte,
-        comida: targetTier.percentages.comida,
-        lazer: targetTier.percentages.lazer,
-        protecao: targetTier.percentages.protecao,
-        profissional: targetTier.percentages.profissional,
-      },
-      profile: {
-        ...prev.profile,
-        investmentsPercentage: targetTier.percentages.investimentos,
-      },
-      isCustomizedPercentages: false,
-      lastAcknowledgedTierKey: targetTier.key,
-      notifications: [
-        {
-          id: `notif-restore-defaults-${Date.now()}`,
-          title: 'Padrões do Junto Restaurados! 🔄',
-          message: `As porcentagens foram restauradas para as recomendações originais da ${targetTier.name}.`,
-          timestamp: 'Agora mesmo',
-          type: 'success',
-          isRead: false,
+    setState(prev => {
+      const snap = computeCompetenceBudgetSnapshot(prev, prev.currentMonth);
+      const effectiveLocks: Record<DestinationKey, boolean> = {
+        moradia: Boolean(prev.categoryLocks?.moradia || snap.locks.moradia),
+        transporte: Boolean(prev.categoryLocks?.transporte || snap.locks.transporte),
+        comida: Boolean(prev.categoryLocks?.comida || snap.locks.comida),
+        lazer: Boolean(prev.categoryLocks?.lazer || snap.locks.lazer),
+        protecao: Boolean(prev.categoryLocks?.protecao || snap.locks.protecao),
+        profissional: Boolean(prev.categoryLocks?.profissional || snap.locks.profissional),
+        investimentos: Boolean(prev.categoryLocks?.investimentos || snap.locks.investimentos),
+      };
+      const hasAnyLock = Object.values(effectiveLocks).some(Boolean);
+
+      if (hasAnyLock) {
+        const incomeForRebalance =
+          snap.plannedNetIncome > 0
+            ? snap.plannedNetIncome
+            : (prev.profile.partner1Income || 0) + (prev.profile.partner2Income || 0) || 10000;
+        const currentWithLocks: Record<DestinationKey, number> = {
+          moradia: effectiveLocks.moradia ? snap.currentPercentages.moradia : targetTier.percentages.moradia,
+          transporte: effectiveLocks.transporte ? snap.currentPercentages.transporte : targetTier.percentages.transporte,
+          comida: effectiveLocks.comida ? snap.currentPercentages.comida : targetTier.percentages.comida,
+          lazer: effectiveLocks.lazer ? snap.currentPercentages.lazer : targetTier.percentages.lazer,
+          protecao: effectiveLocks.protecao ? snap.currentPercentages.protecao : targetTier.percentages.protecao,
+          profissional: effectiveLocks.profissional ? snap.currentPercentages.profissional : targetTier.percentages.profissional,
+          investimentos: effectiveLocks.investimentos
+            ? snap.currentPercentages.investimentos
+            : targetTier.percentages.investimentos,
+        };
+        const reb = rebalanceBudget({
+          plannedNetIncome: incomeForRebalance,
+          currentPercentages: currentWithLocks,
+          locks: effectiveLocks,
+          floorsR$: snap.floorsR$,
+          commitmentsR$: snap.pendingCommitmentsR$,
+          actualSpentR$: snap.actualSpentR$,
+          referencePreset: targetTier.percentages,
+          competence: prev.currentMonth,
+        });
+        const finalPcts =
+          reb.status === 'feasible' ? reb.proposedPercentages : snap.currentPercentages;
+
+        const nextPlans = { ...(prev.monthlyBudgetPlans || {}) };
+        if (nextPlans[prev.currentMonth] && reb.status === 'feasible') {
+          nextPlans[prev.currentMonth] = upgradeBudgetPlanContract({
+            ...nextPlans[prev.currentMonth],
+            categoryPercentages: finalPcts,
+            categoryAmountsR$: reb.proposedAmountsR$,
+            categoryLocks: effectiveLocks,
+          });
+        }
+
+        return {
+          ...prev,
+          categoryPercentages: {
+            moradia: finalPcts.moradia,
+            transporte: finalPcts.transporte,
+            comida: finalPcts.comida,
+            lazer: finalPcts.lazer,
+            protecao: finalPcts.protecao,
+            profissional: finalPcts.profissional,
+          },
+          categoryLocks: effectiveLocks,
+          monthlyBudgetPlans: nextPlans,
+          profile: {
+            ...prev.profile,
+            investmentsPercentage: finalPcts.investimentos,
+          },
+          isCustomizedPercentages: true,
+          lastAcknowledgedTierKey: targetTier.key,
+          notifications: [
+            {
+              id: `notif-restore-defaults-${Date.now()}`,
+              title: 'Pesos Aplicados Respeitando Travas 🔒',
+              message: `Os pesos sugeridos da ${targetTier.name} foram aplicados nas destinações destravadas, preservando suas travas ativas.`,
+              timestamp: 'Agora mesmo',
+              type: 'success',
+              isRead: false,
+            },
+            ...prev.notifications,
+          ],
+        };
+      }
+
+      return {
+        ...prev,
+        categoryPercentages: {
+          moradia: targetTier.percentages.moradia,
+          transporte: targetTier.percentages.transporte,
+          comida: targetTier.percentages.comida,
+          lazer: targetTier.percentages.lazer,
+          protecao: targetTier.percentages.protecao,
+          profissional: targetTier.percentages.profissional,
         },
-        ...prev.notifications,
-      ],
-    }));
+        profile: {
+          ...prev.profile,
+          investmentsPercentage: targetTier.percentages.investimentos,
+        },
+        isCustomizedPercentages: false,
+        lastAcknowledgedTierKey: targetTier.key,
+        notifications: [
+          {
+            id: `notif-restore-defaults-${Date.now()}`,
+            title: 'Padrões do Junto Restaurados! 🔄',
+            message: `As porcentagens foram restauradas para as recomendações originais da ${targetTier.name}.`,
+            timestamp: 'Agora mesmo',
+            type: 'success',
+            isRead: false,
+          },
+          ...prev.notifications,
+        ],
+      };
+    });
     triggerCelebration();
   };
 

@@ -1,14 +1,21 @@
 import { AvatarSettings, MemberAvatar } from '../avatars/AvatarUI';
 import React, { useState, useMemo, useEffect } from 'react';
-import { Users, DollarSign, AlertTriangle, CheckCircle2, Sparkles, RefreshCw, Save, Check, X, RotateCcw, Trash2, Palette, Building, Smartphone, Tag, Plus, Bell, Copy, UploadCloud, FileText } from 'lucide-react';
+import { Users, DollarSign, AlertTriangle, CheckCircle2, Sparkles, RefreshCw, Save, Check, X, RotateCcw, Trash2, Palette, Building, Smartphone, Tag, Plus, Bell, Copy, UploadCloud, FileText, Lock, Unlock, Calendar } from 'lucide-react';
 import { useFinance, CATEGORIES_BASE, ACCENT_THEMES } from '../context/FinanceContext';
-import { CategoryKey, AccentTheme, LifeTierInfo } from '../types/finance';
+import { CategoryKey, DestinationKey, AccentTheme, LifeTierInfo } from '../types/finance';
 import { getLifeTier } from '../utils/incomeTiersEngine';
 import { formatCurrency } from '../utils/formatters';
 import { BankSyncModal } from '../components/BankSyncModal';
 import { MedicalCareerSettings } from '../components/MedicalCareerSettings';
 import { PWAInstallButton } from '../components/PWAInstallButton';
 import { BudgetRebalanceModal } from '../components/modals/BudgetRebalanceModal';
+import {
+  rebalanceBudget,
+  computeCompetenceBudgetSnapshot,
+  previewFutureMonthsScope,
+  DESTINATION_NAMES,
+  type RebalanceResult,
+} from '../utils/rebalanceBudgetEngine';
 import {
   getCurrentMonthlyReviewSchedule,
   requestPushNotificationPermission,
@@ -20,13 +27,6 @@ import {
   getBrowserPermissionStatus,
 } from '../utils/pushNotificationEngine';
 
-interface ProposedRebalance {
-  percentages: Record<string, number>;
-  amounts: Record<string, number>;
-  oldPercentages: Record<string, number>;
-  oldAmounts: Record<string, number>;
-}
-
 type SettingsTab = 'avatares' | 'geral' | 'contas' | 'cores' | 'regras' | 'pwa' | 'casal' | 'dados';
 
 export const SettingsScreen: React.FC = () => {
@@ -36,6 +36,9 @@ export const SettingsScreen: React.FC = () => {
     updateProfile,
     updateCategoryPercentages,
     updateCategoryFloors,
+    categoryLocks,
+    updateCategoryLocks,
+    applyBudgetRebalanceProposal,
     toggleProtectionComplete,
     resetToSampleData,
     toggleThemeMode,
@@ -108,15 +111,30 @@ export const SettingsScreen: React.FC = () => {
   const totalRendaCalculada = numP1 + numP2;
 
   // ==========================================
-  // BLOCO 2: PORCENTAGENS E PISOS MÍNIMOS STATE
+  // BLOCO 2: COMPETÊNCIA, PORCENTAGENS, TRAVAS E PISOS MÍNIMOS STATE
   // ==========================================
-  const [pctMoradia, setPctMoradia] = useState<number>(state.categoryPercentages.moradia ?? 30);
-  const [pctTransporte, setPctTransporte] = useState<number>(state.categoryPercentages.transporte ?? 10);
-  const [pctComida, setPctComida] = useState<number>(state.categoryPercentages.comida ?? 15);
-  const [pctLazer, setPctLazer] = useState<number>(state.categoryPercentages.lazer ?? 15);
-  const [pctProtecao, setPctProtecao] = useState<number>(state.categoryPercentages.protecao ?? 10);
-  const [pctProfissional, setPctProfissional] = useState<number>(state.categoryPercentages.profissional ?? 10);
-  const [pctInvestimentos, setPctInvestimentos] = useState<number>(state.profile.investmentsPercentage ?? 10);
+  const [selectedCompetence, setSelectedCompetence] = useState<string>(
+    state.currentMonth || new Date().toISOString().slice(0, 7)
+  );
+  const [applyToFutureMonths, setApplyToFutureMonths] = useState<boolean>(false);
+  const [overwriteApprovedFutureMonths, setOverwriteApprovedFutureMonths] = useState<boolean>(false);
+
+  const liveCompetenceSnapshot = useMemo(
+    () => computeCompetenceBudgetSnapshot(state, selectedCompetence),
+    [state, selectedCompetence]
+  );
+
+  const [pctMoradia, setPctMoradia] = useState<number>(liveCompetenceSnapshot.currentPercentages.moradia ?? 30);
+  const [pctTransporte, setPctTransporte] = useState<number>(liveCompetenceSnapshot.currentPercentages.transporte ?? 10);
+  const [pctComida, setPctComida] = useState<number>(liveCompetenceSnapshot.currentPercentages.comida ?? 15);
+  const [pctLazer, setPctLazer] = useState<number>(liveCompetenceSnapshot.currentPercentages.lazer ?? 15);
+  const [pctProtecao, setPctProtecao] = useState<number>(liveCompetenceSnapshot.currentPercentages.protecao ?? 10);
+  const [pctProfissional, setPctProfissional] = useState<number>(liveCompetenceSnapshot.currentPercentages.profissional ?? 10);
+  const [pctInvestimentos, setPctInvestimentos] = useState<number>(liveCompetenceSnapshot.currentPercentages.investimentos ?? 10);
+
+  const [localLocks, setLocalLocks] = useState<Record<DestinationKey, boolean>>(() => ({
+    ...liveCompetenceSnapshot.locks,
+  }));
 
   // Pisos Mínimos (R$ ou % para investimentos)
   const defaultFloors = state.categoryFloors || {
@@ -137,17 +155,19 @@ export const SettingsScreen: React.FC = () => {
   const [pisoProfissional, setPisoProfissional] = useState<number>(defaultFloors.profissional ?? 0);
   const [pisoInvestimentosPct, setPisoInvestimentosPct] = useState<number>(defaultFloors.investimentos ?? 0);
 
-  // Reajuste Automático Modal / State
-  const [rebalanceProposal, setProposedRebalance] = useState<ProposedRebalance | null>(null);
+  // Reajuste Canônico (25C + 14) State
+  const [rebalanceProposal, setProposedRebalance] = useState<RebalanceResult | null>(null);
+  const [previewSignature, setPreviewSignature] = useState<string | null>(null);
+  const [previewRevision, setPreviewRevision] = useState<number>(0);
   const [rebalanceMessage, setRebalanceMessage] = useState<string | null>(null);
   const [isRebalanceModalOpen, setIsRebalanceModalOpen] = useState(false);
 
   // Investimentos Settings
   const [reserveMonths, setReserveMonths] = useState<number>(
-    state.profile.emergencyReserveMonthsTarget || 10
+    state.profile.emergencyReserveMonthsTarget ?? 10
   );
   const [expectedYield, setExpectedYield] = useState<string>(
-    (state.profile.expectedYieldAnnual || 6.0).toString()
+    (state.profile.expectedYieldAnnual ?? 6.0).toString()
   );
 
   // Clear / Reset All Data State
@@ -193,16 +213,16 @@ export const SettingsScreen: React.FC = () => {
   const [pushStatusMsg, setPushStatusMsg] = useState<string | null>(null);
   const reviewSchedule = useMemo(() => getCurrentMonthlyReviewSchedule(), []);
 
-  // Synchronization with Context changes
+  // Synchronization with Competence Snapshot & Context changes
   useEffect(() => {
-    if (state.categoryPercentages) {
-      setPctMoradia(state.categoryPercentages.moradia ?? 30);
-      setPctTransporte(state.categoryPercentages.transporte ?? 10);
-      setPctComida(state.categoryPercentages.comida ?? 15);
-      setPctLazer(state.categoryPercentages.lazer ?? 15);
-      setPctProtecao(state.categoryPercentages.protecao ?? 10);
-      setPctProfissional(state.categoryPercentages.profissional ?? 10);
-    }
+    setPctMoradia(liveCompetenceSnapshot.currentPercentages.moradia ?? 30);
+    setPctTransporte(liveCompetenceSnapshot.currentPercentages.transporte ?? 10);
+    setPctComida(liveCompetenceSnapshot.currentPercentages.comida ?? 15);
+    setPctLazer(liveCompetenceSnapshot.currentPercentages.lazer ?? 15);
+    setPctProtecao(liveCompetenceSnapshot.currentPercentages.protecao ?? 10);
+    setPctProfissional(liveCompetenceSnapshot.currentPercentages.profissional ?? 10);
+    setPctInvestimentos(liveCompetenceSnapshot.currentPercentages.investimentos ?? 10);
+    setLocalLocks({ ...liveCompetenceSnapshot.locks });
     if (state.categoryFloors) {
       setPisoMoradia(state.categoryFloors.moradia ?? 0);
       setPisoTransporte(state.categoryFloors.transporte ?? 0);
@@ -212,10 +232,27 @@ export const SettingsScreen: React.FC = () => {
       setPisoProfissional(state.categoryFloors.profissional ?? 0);
       setPisoInvestimentosPct(state.categoryFloors.investimentos ?? 0);
     }
-    if (state.profile.investmentsPercentage !== undefined) {
-      setPctInvestimentos(state.profile.investmentsPercentage);
-    }
-  }, [state.categoryPercentages, state.categoryFloors, state.profile.investmentsPercentage]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    selectedCompetence,
+    state.categoryPercentages,
+    state.categoryFloors,
+    categoryLocks,
+    state.profile.investmentsPercentage,
+    state.monthlyBudgetPlans,
+  ]);
+
+  useEffect(() => {
+    setPartner1Income(state.profile.partner1Income.toString());
+    setPartner2Income(state.profile.partner2Income.toString());
+    setPartner1Name(state.profile.partner1Name);
+    setPartner2Name(state.profile.partner2Name);
+  }, [
+    state.profile.partner1Income,
+    state.profile.partner2Income,
+    state.profile.partner1Name,
+    state.profile.partner2Name,
+  ]);
 
   // Calculated Values & Life Tier for Bloco 1 & 2
   const currentIncome = totalRendaCalculada > 0 ? totalRendaCalculada : totalIncome;
@@ -335,32 +372,75 @@ export const SettingsScreen: React.FC = () => {
 
   const hasAnyCustomPercentage = customizedCategoriesList.length > 0;
 
-  // Restore Junto Algorithm defaults for current preview tier
-  const handleRestoreJuntoDefaults = () => {
-    setPctMoradia(tierDefaults.moradia);
-    setPctTransporte(tierDefaults.transporte);
-    setPctComida(tierDefaults.comida);
-    setPctLazer(tierDefaults.lazer);
-    setPctProtecao(tierDefaults.protecao);
-    setPctProfissional(tierDefaults.profissional);
-    setPctInvestimentos(tierDefaults.investimentos);
+  const isInlinePreviewStale = Boolean(
+    rebalanceProposal &&
+      previewSignature &&
+      previewSignature !== liveCompetenceSnapshot.signature
+  );
 
+  const currentEditablePercentages: Record<DestinationKey, number> = {
+    moradia: pctMoradia,
+    transporte: pctTransporte,
+    comida: pctComida,
+    lazer: pctLazer,
+    protecao: pctProtecao,
+    profissional: pctProfissional,
+    investimentos: pctInvestimentos,
+  };
+
+  const futureScopePreview = useMemo(
+    () =>
+      applyToFutureMonths
+        ? previewFutureMonthsScope(
+            state,
+            selectedCompetence,
+            rebalanceProposal?.proposedPercentages || currentEditablePercentages,
+            6,
+            overwriteApprovedFutureMonths
+          )
+        : null,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [
+      applyToFutureMonths,
+      state.monthlyBudgetPlans,
+      selectedCompetence,
+      rebalanceProposal,
+      pctMoradia,
+      pctTransporte,
+      pctComida,
+      pctLazer,
+      pctProtecao,
+      pctProfissional,
+      pctInvestimentos,
+      overwriteApprovedFutureMonths,
+    ]
+  );
+
+  const handleToggleDestinationLock = (dest: DestinationKey) => {
+    const nextLocked = !localLocks[dest];
+    setLocalLocks(prev => ({ ...prev, [dest]: nextLocked }));
+    if (selectedCompetence === state.currentMonth) {
+      updateCategoryLocks({ [dest]: nextLocked });
+    }
+    setProposedRebalance(null);
+    setPreviewSignature(null);
+    setRebalanceMessage(null);
+  };
+
+  // Restore Junto Algorithm defaults for current preview tier (strictly respecting active locks!)
+  const handleRestoreJuntoDefaults = () => {
     restoreTierDefaultPercentages(currentPreviewTier.key);
+    setProposedRebalance(null);
+    setPreviewSignature(null);
     setSaveSuccessMsg(true);
     triggerCelebration();
     setTimeout(() => setSaveSuccessMsg(false), 4000);
   };
 
   const handleApplyTierChangeDefaults = () => {
-    setPctMoradia(tierDefaults.moradia);
-    setPctTransporte(tierDefaults.transporte);
-    setPctComida(tierDefaults.comida);
-    setPctLazer(tierDefaults.lazer);
-    setPctProtecao(tierDefaults.protecao);
-    setPctProfissional(tierDefaults.profissional);
-    setPctInvestimentos(tierDefaults.investimentos);
-
     applyNewTierDefaults();
+    setProposedRebalance(null);
+    setPreviewSignature(null);
     setSaveSuccessMsg(true);
     triggerCelebration();
     setTimeout(() => setSaveSuccessMsg(false), 4000);
@@ -372,53 +452,89 @@ export const SettingsScreen: React.FC = () => {
     setTimeout(() => setSaveSuccessMsg(false), 4000);
   };
 
-  const isMoradiaOk = valMoradia >= pisoMoradia;
-  const isTransporteOk = valTransporte >= pisoTransporte;
-  const isComidaOk = valComida >= pisoComida;
-  const isLazerOk = valLazer >= pisoLazer;
-  const isProtecaoOk = valProtecao >= pisoProtecao;
-  const isProfissionalOk = valProfissional >= pisoProfissional;
-  const isInvestimentosOk = pctInvestimentos >= pisoInvestimentosPct;
-
-  const allFloorsCovered =
-    isMoradiaOk &&
-    isTransporteOk &&
-    isComidaOk &&
-    isLazerOk &&
-    isProtecaoOk &&
-    isProfissionalOk &&
-    isInvestimentosOk;
-
   const handleSaveBasicProfile = () => {
+    const parsedYield = parseFloat(expectedYield.replace(',', '.'));
+    const safeYield = Number.isFinite(parsedYield)
+      ? parsedYield
+      : state.profile.expectedYieldAnnual ?? 6.0;
+
     updateProfile({
       partner1Name,
       partner2Name,
       partner1Income: numP1,
       partner2Income: numP2,
       emergencyReserveMonthsTarget: reserveMonths,
-      expectedYieldAnnual: parseFloat(expectedYield.replace(',', '.')) || 6.0,
-      investmentsPercentage: pctInvestimentos,
+      expectedYieldAnnual: safeYield,
+      ...(selectedCompetence === state.currentMonth ? { investmentsPercentage: pctInvestimentos } : {}),
     });
 
-    updateCategoryPercentages({
-      moradia: pctMoradia,
-      transporte: pctTransporte,
-      comida: pctComida,
-      lazer: pctLazer,
-      protecao: pctProtecao,
-      profissional: pctProfissional,
-    });
+    if (selectedCompetence === state.currentMonth) {
+      updateCategoryPercentages({
+        moradia: pctMoradia,
+        transporte: pctTransporte,
+        comida: pctComida,
+        lazer: pctLazer,
+        protecao: pctProtecao,
+        profissional: pctProfissional,
+      });
 
-    updateCategoryFloors({
-      moradia: pisoMoradia,
-      transporte: pisoTransporte,
-      comida: pisoComida,
-      lazer: pisoLazer,
-      protecao: pisoProtecao,
-      profissional: pisoProfissional,
-      investimentos: pisoInvestimentosPct,
-    });
+      updateCategoryFloors({
+        moradia: pisoMoradia,
+        transporte: pisoTransporte,
+        comida: pisoComida,
+        lazer: pisoLazer,
+        protecao: pisoProtecao,
+        profissional: pisoProfissional,
+        investimentos: pisoInvestimentosPct,
+      });
 
+      updateCategoryLocks(localLocks);
+    }
+
+    const effectiveIncomeForSave = currentIncome > 0 ? currentIncome : liveCompetenceSnapshot.plannedNetIncome;
+    if (effectiveIncomeForSave > 0 && Math.abs(totalPercentagesSum - 100) < 0.01) {
+      const floorsR$: Record<DestinationKey, number> = {
+        moradia: pisoMoradia,
+        transporte: pisoTransporte,
+        comida: pisoComida,
+        lazer: pisoLazer,
+        protecao: pisoProtecao,
+        profissional: pisoProfissional,
+        investimentos: (effectiveIncomeForSave * pisoInvestimentosPct) / 100,
+      };
+      const allLockedForDirectSave: Record<DestinationKey, boolean> = {
+        moradia: true,
+        transporte: true,
+        comida: true,
+        lazer: true,
+        protecao: true,
+        profissional: true,
+        investimentos: true,
+      };
+      const directRes = rebalanceBudget({
+        plannedNetIncome: effectiveIncomeForSave,
+        currentPercentages: currentEditablePercentages,
+        locks: allLockedForDirectSave,
+        floorsR$,
+        commitmentsR$: liveCompetenceSnapshot.pendingCommitmentsR$,
+        actualSpentR$: liveCompetenceSnapshot.actualSpentR$,
+        actualSpentByNatureR$: liveCompetenceSnapshot.actualSpentByNatureR$,
+        pendingByNatureR$: liveCompetenceSnapshot.pendingByNatureR$,
+        competence: selectedCompetence,
+        applyToFutureMonths,
+        baseSnapshotSignature: liveCompetenceSnapshot.signature,
+      });
+      if (directRes.status === 'feasible') {
+        applyBudgetRebalanceProposal(
+          { ...directRes, locks: localLocks },
+          {
+            expectedSignature: liveCompetenceSnapshot.signature,
+            expectedPlanRevision: liveCompetenceSnapshot.planRevision,
+            overwriteExistingFutureApprovedPlans: overwriteApprovedFutureMonths,
+          }
+        );
+      }
+    }
 
     setSaveSuccessMsg(true);
     triggerCelebration();
@@ -428,157 +544,68 @@ export const SettingsScreen: React.FC = () => {
   const handleTriggerRebalance = () => {
     setRebalanceMessage(null);
 
-    if (allFloorsCovered) {
-      setRebalanceMessage('Tudo certo. As porcentagens atuais já cobrem os mínimos.');
-      return;
-    }
+    const effectiveIncomeForSim =
+      currentIncome > 0 ? currentIncome : liveCompetenceSnapshot.plannedNetIncome;
 
-    if (currentIncome <= 0) {
-      setRebalanceMessage('Sua renda está zerada. Insira os valores de renda primeiro.');
-      return;
-    }
-
-    const minMoradiaAmt = pisoMoradia;
-    const minTransporteAmt = pisoTransporte;
-    const minComidaAmt = pisoComida;
-    const minProtecaoAmt = pisoProtecao;
-    const minProfissionalAmt = pisoProfissional;
-    const minInvestimentosAmt = (pisoInvestimentosPct / 100) * currentIncome;
-
-    const minEssentialSum =
-      minMoradiaAmt +
-      minTransporteAmt +
-      minComidaAmt +
-      minProtecaoAmt +
-      minProfissionalAmt +
-      minInvestimentosAmt;
-
-    if (currentIncome < minEssentialSum) {
-      setRebalanceMessage(
-        'Sua renda atual não cobre os pisos mínimos inegociáveis. Reveja os pisos ou aumente a renda.'
-      );
-      return;
-    }
-
-    const targetMoradiaPct = Math.max(pctMoradia, (minMoradiaAmt / currentIncome) * 100);
-    const targetTransportePct = Math.max(pctTransporte, (minTransporteAmt / currentIncome) * 100);
-    const targetComidaPct = Math.max(pctComida, (minComidaAmt / currentIncome) * 100);
-    let targetProtecaoPct = Math.max(pctProtecao, (minProtecaoAmt / currentIncome) * 100);
-    let targetProfissionalPct = Math.max(pctProfissional, (minProfissionalAmt / currentIncome) * 100);
-    let targetInvestimentosPct = Math.max(pctInvestimentos, pisoInvestimentosPct);
-    let targetLazerPct = pctLazer;
-
-    const currentSum =
-      targetMoradiaPct +
-      targetTransportePct +
-      targetComidaPct +
-      targetProtecaoPct +
-      targetProfissionalPct +
-      targetInvestimentosPct +
-      targetLazerPct;
-
-    let excess = currentSum - 100;
-
-    if (excess > 0) {
-      const lazerCut = Math.min(targetLazerPct, excess);
-      targetLazerPct -= lazerCut;
-      excess -= lazerCut;
-    }
-
-    if (excess > 0) {
-      const minProfPct = (minProfissionalAmt / currentIncome) * 100;
-      const profSlack = Math.max(0, targetProfissionalPct - minProfPct);
-      const profCut = Math.min(profSlack, excess);
-      targetProfissionalPct -= profCut;
-      excess -= profCut;
-    }
-
-    if (excess > 0) {
-      const minProtPct = (minProtecaoAmt / currentIncome) * 100;
-      const protSlack = Math.max(0, targetProtecaoPct - minProtPct);
-      const protCut = Math.min(protSlack, excess);
-      targetProtecaoPct -= protCut;
-      excess -= protCut;
-    }
-
-    if (excess > 0) {
-      const invSlack = Math.max(0, targetInvestimentosPct - pisoInvestimentosPct);
-      const invCut = Math.min(invSlack, excess);
-      targetInvestimentosPct -= invCut;
-      excess -= invCut;
-    }
-
-    const round = (n: number) => Math.round(n * 10) / 10;
-
-    const proposed: ProposedRebalance = {
-      percentages: {
-        moradia: round(targetMoradiaPct),
-        transporte: round(targetTransportePct),
-        comida: round(targetComidaPct),
-        lazer: round(targetLazerPct),
-        protecao: round(targetProtecaoPct),
-        profissional: round(targetProfissionalPct),
-        investimentos: round(targetInvestimentosPct),
-      },
-      amounts: {
-        moradia: (targetMoradiaPct / 100) * currentIncome,
-        transporte: (targetTransportePct / 100) * currentIncome,
-        comida: (targetComidaPct / 100) * currentIncome,
-        lazer: (targetLazerPct / 100) * currentIncome,
-        protecao: (targetProtecaoPct / 100) * currentIncome,
-        profissional: (targetProfissionalPct / 100) * currentIncome,
-        investimentos: (targetInvestimentosPct / 100) * currentIncome,
-      },
-      oldPercentages: {
-        moradia: pctMoradia,
-        transporte: pctTransporte,
-        comida: pctComida,
-        lazer: pctLazer,
-        protecao: pctProtecao,
-        profissional: pctProfissional,
-        investimentos: pctInvestimentos,
-      },
-      oldAmounts: {
-        moradia: valMoradia,
-        transporte: valTransporte,
-        comida: valComida,
-        lazer: valLazer,
-        protecao: valProtecao,
-        profissional: valProfissional,
-        investimentos: valInvestimentos,
-      },
+    const floorsR$: Record<DestinationKey, number> = {
+      moradia: pisoMoradia,
+      transporte: pisoTransporte,
+      comida: pisoComida,
+      lazer: pisoLazer,
+      protecao: pisoProtecao,
+      profissional: pisoProfissional,
+      investimentos:
+        effectiveIncomeForSim > 0 ? (effectiveIncomeForSim * pisoInvestimentosPct) / 100 : 0,
     };
 
-    setProposedRebalance(proposed);
+    const res = rebalanceBudget({
+      plannedNetIncome: effectiveIncomeForSim,
+      currentPercentages: currentEditablePercentages,
+      locks: localLocks,
+      floorsR$,
+      commitmentsR$: liveCompetenceSnapshot.pendingCommitmentsR$,
+      actualSpentR$: liveCompetenceSnapshot.actualSpentR$,
+      actualSpentByNatureR$: liveCompetenceSnapshot.actualSpentByNatureR$,
+      pendingByNatureR$: liveCompetenceSnapshot.pendingByNatureR$,
+      competence: selectedCompetence,
+      applyToFutureMonths,
+      baseSnapshotSignature: liveCompetenceSnapshot.signature,
+    });
+
+    setProposedRebalance(res);
+    setPreviewSignature(liveCompetenceSnapshot.signature);
+    setPreviewRevision(liveCompetenceSnapshot.planRevision);
+    if (res.status === 'infeasible') {
+      setRebalanceMessage(res.explanation);
+    }
   };
 
   const handleApplyRebalance = () => {
-    if (!rebalanceProposal) return;
+    if (!rebalanceProposal || rebalanceProposal.status !== 'feasible') return;
 
-    setPctMoradia(rebalanceProposal.percentages.moradia);
-    if (rebalanceProposal.percentages.transporte !== undefined) {
-      setPctTransporte(rebalanceProposal.percentages.transporte);
+    const cmdResult = applyBudgetRebalanceProposal(rebalanceProposal, {
+      expectedSignature: previewSignature ?? undefined,
+      expectedPlanRevision: previewRevision,
+      overwriteExistingFutureApprovedPlans: overwriteApprovedFutureMonths,
+    });
+
+    if (cmdResult.status !== 'ready') {
+      setRebalanceMessage(cmdResult.reason);
+      setProposedRebalance(null);
+      setPreviewSignature(null);
+      return;
     }
-    setPctComida(rebalanceProposal.percentages.comida);
-    setPctLazer(rebalanceProposal.percentages.lazer);
-    setPctProtecao(rebalanceProposal.percentages.protecao);
-    setPctProfissional(rebalanceProposal.percentages.profissional);
-    setPctInvestimentos(rebalanceProposal.percentages.investimentos);
 
-    updateCategoryPercentages({
-      moradia: rebalanceProposal.percentages.moradia,
-      transporte: rebalanceProposal.percentages.transporte || pctTransporte,
-      comida: rebalanceProposal.percentages.comida,
-      lazer: rebalanceProposal.percentages.lazer,
-      protecao: rebalanceProposal.percentages.protecao,
-      profissional: rebalanceProposal.percentages.profissional,
-    });
-
-    updateProfile({
-      investmentsPercentage: rebalanceProposal.percentages.investimentos,
-    });
+    setPctMoradia(rebalanceProposal.proposedPercentages.moradia ?? 0);
+    setPctTransporte(rebalanceProposal.proposedPercentages.transporte ?? 0);
+    setPctComida(rebalanceProposal.proposedPercentages.comida ?? 0);
+    setPctLazer(rebalanceProposal.proposedPercentages.lazer ?? 0);
+    setPctProtecao(rebalanceProposal.proposedPercentages.protecao ?? 0);
+    setPctProfissional(rebalanceProposal.proposedPercentages.profissional ?? 0);
+    setPctInvestimentos(rebalanceProposal.proposedPercentages.investimentos ?? 0);
 
     setProposedRebalance(null);
+    setPreviewSignature(null);
     setSaveSuccessMsg(true);
     triggerCelebration();
     setTimeout(() => setSaveSuccessMsg(false), 4000);
@@ -1079,6 +1106,15 @@ export const SettingsScreen: React.FC = () => {
 
                 <button
                   type="button"
+                  onClick={handleTriggerRebalance}
+                  className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 dark:bg-slate-100 dark:hover:bg-white text-white dark:text-slate-900 font-bold text-xs shadow-md transition-all cursor-pointer"
+                >
+                  <Sparkles className="w-3.5 h-3.5" />
+                  <span>Simular Redistribuição na Competência</span>
+                </button>
+
+                <button
+                  type="button"
                   onClick={() => setIsRebalanceModalOpen(true)}
                   className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-white font-bold text-xs shadow-md transition-all cursor-pointer"
                 >
@@ -1088,27 +1124,141 @@ export const SettingsScreen: React.FC = () => {
               </div>
             </div>
 
+            {/* Seletor de Competência, Vigência e Autoria (14) */}
+            <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 space-y-3 text-xs">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Calendar className="w-4 h-4 text-sky-600 dark:text-sky-400 shrink-0" />
+                  <label htmlFor="settings-budget-competence" className="font-black text-slate-800 dark:text-slate-200">
+                    Competência do Plano:
+                  </label>
+                  <input
+                    id="settings-budget-competence"
+                    type="month"
+                    value={selectedCompetence}
+                    onChange={e => {
+                      setSelectedCompetence(e.target.value);
+                      setProposedRebalance(null);
+                      setPreviewSignature(null);
+                      setRebalanceMessage(null);
+                    }}
+                    className="px-3 py-1.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 font-black text-slate-900 dark:text-white text-xs"
+                  />
+                  {selectedCompetence > state.currentMonth && (
+                    <span className="px-2.5 py-0.5 rounded-full bg-sky-100 dark:bg-sky-950 text-sky-900 dark:text-sky-200 font-bold text-[11px]">
+                      Futuro (não altera {state.currentMonth})
+                    </span>
+                  )}
+                  {selectedCompetence < state.currentMonth && (
+                    <span className="px-2.5 py-0.5 rounded-full bg-slate-200 dark:bg-slate-700 text-slate-800 dark:text-slate-200 font-bold text-[11px]">
+                      Histórico (preserva presente)
+                    </span>
+                  )}
+                  {liveCompetenceSnapshot.hasApprovedPlan && liveCompetenceSnapshot.approvedPlan && (
+                    <span className="px-2.5 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950 text-emerald-900 dark:text-emerald-200 font-bold text-[11px]">
+                      Aprovado v{liveCompetenceSnapshot.planRevision} •{' '}
+                      {liveCompetenceSnapshot.approvedPlan.approvedByDisplayName ||
+                        liveCompetenceSnapshot.approvedPlan.approvedBy ||
+                        'Casal'}
+                    </span>
+                  )}
+                </div>
+
+                <label className="flex items-center gap-2 font-bold text-slate-700 dark:text-slate-300 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={applyToFutureMonths}
+                    onChange={e => {
+                      setApplyToFutureMonths(e.target.checked);
+                      setProposedRebalance(null);
+                    }}
+                    className="rounded text-amber-600 w-4 h-4"
+                  />
+                  <span>Aplicar aos próximos meses</span>
+                </label>
+              </div>
+
+              {applyToFutureMonths && futureScopePreview && (
+                <div className="pt-2 border-t border-slate-200 dark:border-slate-700 space-y-2 text-[11px]">
+                  <div className="flex flex-wrap items-center justify-between gap-2 text-slate-700 dark:text-slate-300">
+                    <span>
+                      Período ({futureScopePreview.targetMonths[0]} a{' '}
+                      {futureScopePreview.targetMonths[futureScopePreview.targetMonths.length - 1]}):{' '}
+                      <strong>{futureScopePreview.monthsToApply.length}</strong> mês(es) afetado(s)
+                      {futureScopePreview.preservedApprovedMonths.length > 0 &&
+                        `, preservando ${futureScopePreview.preservedApprovedMonths.length} mês(es) já aprovado(s)`}
+                      .
+                    </span>
+                    {futureScopePreview.preservedApprovedMonths.length > 0 && (
+                      <label className="flex items-center gap-1.5 font-bold cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={overwriteApprovedFutureMonths}
+                          onChange={e => setOverwriteApprovedFutureMonths(e.target.checked)}
+                          className="rounded text-amber-600 w-3.5 h-3.5"
+                        />
+                        <span>Confirmar substituição dos meses já aprovados</span>
+                      </label>
+                    )}
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-1.5 text-[10px]">
+                    {futureScopePreview.monthsWithDiffs.map(item => (
+                      <div
+                        key={item.month}
+                        className="px-2.5 py-1 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 font-semibold"
+                      >
+                        {item.summary}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
             <BudgetRebalanceModal
               isOpen={isRebalanceModalOpen}
               onClose={() => setIsRebalanceModalOpen(false)}
+              initialCompetence={selectedCompetence}
             />
 
-            {rebalanceMessage && (
-              <div className="p-3.5 rounded-2xl bg-amber-50 dark:bg-amber-950/50 border-2 border-amber-300 dark:border-amber-800 text-amber-950 dark:text-amber-200 text-xs font-black flex items-center gap-2">
-                <AlertTriangle className="w-4 h-4 shrink-0" />
-                <span>{rebalanceMessage}</span>
+            {(rebalanceMessage || isInlinePreviewStale) && (
+              <div
+                role="alert"
+                className="p-3.5 rounded-2xl bg-amber-50 dark:bg-amber-950/50 border-2 border-amber-300 dark:border-amber-800 text-amber-950 dark:text-amber-200 text-xs font-black flex items-center justify-between gap-2"
+              >
+                <div className="flex items-center gap-2">
+                  <AlertTriangle className="w-4 h-4 shrink-0" />
+                  <span>
+                    {isInlinePreviewStale
+                      ? 'Os dados desta competência mudaram. Recalcule a prévia antes de aprovar.'
+                      : rebalanceMessage}
+                  </span>
+                </div>
+                {isInlinePreviewStale && (
+                  <button
+                    type="button"
+                    onClick={handleTriggerRebalance}
+                    className="px-3 py-1 rounded-xl bg-amber-600 text-white text-[11px] font-bold shrink-0"
+                  >
+                    Recalcular
+                  </button>
+                )}
               </div>
             )}
 
-            {/* Rebalance Modal Preview */}
+            {/* Rebalance Proposal Preview (25C + 14 Canonical Engine) */}
             {rebalanceProposal && (
               <div className="p-5 rounded-3xl bg-amber-50/70 dark:bg-amber-950/40 border-2 border-amber-400 dark:border-amber-700 space-y-4 animate-in fade-in">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2 text-amber-950 dark:text-amber-200 font-black text-sm">
                     <Sparkles className="w-5 h-5 text-amber-500" />
-                    <span>Proposta de Rebalanceamento Inteligente</span>
+                    <span>
+                      Proposta de Rebalanceamento ({rebalanceProposal.competence}) —{' '}
+                      {rebalanceProposal.status === 'feasible' ? 'Viável' : 'Inviável'}
+                    </span>
                   </div>
                   <button
+                    type="button"
                     onClick={() => setProposedRebalance(null)}
                     className="p-1 rounded-lg text-amber-600 hover:bg-amber-200/50"
                   >
@@ -1117,46 +1267,65 @@ export const SettingsScreen: React.FC = () => {
                 </div>
 
                 <p className="text-xs text-amber-950 dark:text-amber-300 font-bold">
-                  Os cortes necessários foram distribuídos preservando os pisos mínimos inegociáveis de Moradia e Comida:
+                  {rebalanceProposal.explanation}
                 </p>
 
-                <div className="grid grid-cols-2 sm:grid-cols-6 gap-2">
-                  {Object.entries(rebalanceProposal.percentages).map(([key, newPct]) => {
-                    const oldPct = rebalanceProposal.oldPercentages[key];
-                    const diff = newPct - oldPct;
-                    return (
-                      <div
-                        key={key}
-                        className="p-3 rounded-2xl bg-white dark:bg-slate-900 border-2 border-amber-200 dark:border-amber-800 text-center"
-                      >
-                        <span className="text-[11px] font-black text-slate-700 dark:text-slate-300 capitalize block">
-                          {key}
-                        </span>
-                        <div className="text-sm font-black text-slate-950 dark:text-white mt-1">
-                          {newPct}%
-                        </div>
-                        <span
-                          className={`text-[10px] font-black ${
-                            diff > 0 ? 'text-emerald-700 dark:text-emerald-400' : diff < 0 ? 'text-rose-700 dark:text-rose-400' : 'text-slate-400'
-                          }`}
-                        >
-                          {diff > 0 ? `+${diff.toFixed(1)}%` : diff < 0 ? `${diff.toFixed(1)}%` : 'Sem alteração'}
-                        </span>
-                      </div>
-                    );
-                  })}
-                </div>
+                {rebalanceProposal.status === 'feasible' && (
+                  <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-7 gap-2">
+                    {(Object.entries(rebalanceProposal.proposedPercentages) as [DestinationKey, number][]).map(
+                      ([key, newPct]) => {
+                        const oldPct = rebalanceProposal.oldPercentages[key] ?? 0;
+                        const diff = newPct - oldPct;
+                        return (
+                          <div
+                            key={key}
+                            className="p-3 rounded-2xl bg-white dark:bg-slate-900 border-2 border-amber-200 dark:border-amber-800 text-center"
+                          >
+                            <span className="text-[11px] font-black text-slate-700 dark:text-slate-300 block truncate">
+                              {DESTINATION_NAMES[key]}
+                            </span>
+                            <div className="text-sm font-black text-slate-950 dark:text-white mt-1">
+                              {newPct}%
+                            </div>
+                            <span
+                              className={`text-[10px] font-black ${
+                                diff > 0
+                                  ? 'text-emerald-700 dark:text-emerald-400'
+                                  : diff < 0
+                                  ? 'text-rose-700 dark:text-rose-400'
+                                  : 'text-slate-400'
+                              }`}
+                            >
+                              {diff > 0
+                                ? `+${diff.toFixed(1)}%`
+                                : diff < 0
+                                ? `${diff.toFixed(1)}%`
+                                : 'Sem alteração'}
+                            </span>
+                          </div>
+                        );
+                      }
+                    )}
+                  </div>
+                )}
 
                 <div className="flex justify-end gap-2 pt-2">
                   <button
+                    type="button"
                     onClick={() => setProposedRebalance(null)}
                     className="px-4 py-2 rounded-xl bg-slate-200 dark:bg-slate-800 text-slate-800 dark:text-slate-200 text-xs font-black"
                   >
                     Descartar
                   </button>
                   <button
+                    type="button"
+                    disabled={rebalanceProposal.status !== 'feasible' || isInlinePreviewStale}
                     onClick={handleApplyRebalance}
-                    className="px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-black shadow-md cursor-pointer"
+                    className={`px-4 py-2 rounded-xl text-white text-xs font-black shadow-md ${
+                      rebalanceProposal.status === 'feasible' && !isInlinePreviewStale
+                        ? 'bg-amber-600 hover:bg-amber-700 cursor-pointer'
+                        : 'bg-slate-400 cursor-not-allowed'
+                    }`}
                   >
                     Confirmar e Aplicar Novo Equilíbrio
                   </button>
@@ -1198,12 +1367,25 @@ export const SettingsScreen: React.FC = () => {
                     </td>
                     <td className="py-3.5 px-3 text-center">
                       <div className="inline-flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          aria-label="Trava de Moradia"
+                          onClick={() => handleToggleDestinationLock('moradia')}
+                          className={`px-2 py-1 rounded-lg text-[10px] font-bold border flex items-center gap-1 ${
+                            localLocks.moradia
+                              ? 'bg-amber-600 text-white border-amber-600'
+                              : 'bg-white dark:bg-slate-900 text-slate-500 border-slate-300 dark:border-slate-700'
+                          }`}
+                        >
+                          {localLocks.moradia ? <Lock className="w-3 h-3" /> : <Unlock className="w-3 h-3" />}
+                          <span>{localLocks.moradia ? 'Travado' : 'Livre'}</span>
+                        </button>
                         <input
                           type="number"
                           min="0"
                           max="100"
                           value={pctMoradia}
-                          onChange={e => setPctMoradia(Number(e.target.value))}
+                          onChange={e => setPctMoradia(e.target.value === '' ? 0 : Number(e.target.value))}
                           className={`w-16 px-2 py-1.5 rounded-xl border-2 font-black text-sm text-center tabular-nums ${
                             customStatus.moradia.isCustom
                               ? 'border-amber-400 bg-amber-50 dark:bg-amber-950/50 text-amber-950 dark:text-amber-100'
@@ -1268,12 +1450,25 @@ export const SettingsScreen: React.FC = () => {
                     </td>
                     <td className="py-3.5 px-3 text-center">
                       <div className="inline-flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          aria-label="Trava de Transporte"
+                          onClick={() => handleToggleDestinationLock('transporte')}
+                          className={`px-2 py-1 rounded-lg text-[10px] font-bold border flex items-center gap-1 ${
+                            localLocks.transporte
+                              ? 'bg-amber-600 text-white border-amber-600'
+                              : 'bg-white dark:bg-slate-900 text-slate-500 border-slate-300 dark:border-slate-700'
+                          }`}
+                        >
+                          {localLocks.transporte ? <Lock className="w-3 h-3" /> : <Unlock className="w-3 h-3" />}
+                          <span>{localLocks.transporte ? 'Travado' : 'Livre'}</span>
+                        </button>
                         <input
                           type="number"
                           min="0"
                           max="100"
                           value={pctTransporte}
-                          onChange={e => setPctTransporte(Number(e.target.value))}
+                          onChange={e => setPctTransporte(e.target.value === '' ? 0 : Number(e.target.value))}
                           className={`w-16 px-2 py-1.5 rounded-xl border-2 font-black text-sm text-center tabular-nums ${
                             customStatus.transporte.isCustom
                               ? 'border-amber-400 bg-amber-50 dark:bg-amber-950/50 text-amber-950 dark:text-amber-100'
@@ -1338,12 +1533,25 @@ export const SettingsScreen: React.FC = () => {
                     </td>
                     <td className="py-3.5 px-3 text-center">
                       <div className="inline-flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          aria-label="Trava de Comida"
+                          onClick={() => handleToggleDestinationLock('comida')}
+                          className={`px-2 py-1 rounded-lg text-[10px] font-bold border flex items-center gap-1 ${
+                            localLocks.comida
+                              ? 'bg-amber-600 text-white border-amber-600'
+                              : 'bg-white dark:bg-slate-900 text-slate-500 border-slate-300 dark:border-slate-700'
+                          }`}
+                        >
+                          {localLocks.comida ? <Lock className="w-3 h-3" /> : <Unlock className="w-3 h-3" />}
+                          <span>{localLocks.comida ? 'Travado' : 'Livre'}</span>
+                        </button>
                         <input
                           type="number"
                           min="0"
                           max="100"
                           value={pctComida}
-                          onChange={e => setPctComida(Number(e.target.value))}
+                          onChange={e => setPctComida(e.target.value === '' ? 0 : Number(e.target.value))}
                           className={`w-16 px-2 py-1.5 rounded-xl border-2 font-black text-sm text-center tabular-nums ${
                             customStatus.comida.isCustom
                               ? 'border-amber-400 bg-amber-50 dark:bg-amber-950/50 text-amber-950 dark:text-amber-100'
@@ -1408,12 +1616,25 @@ export const SettingsScreen: React.FC = () => {
                     </td>
                     <td className="py-3.5 px-3 text-center">
                       <div className="inline-flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          aria-label="Trava de Lazer"
+                          onClick={() => handleToggleDestinationLock('lazer')}
+                          className={`px-2 py-1 rounded-lg text-[10px] font-bold border flex items-center gap-1 ${
+                            localLocks.lazer
+                              ? 'bg-amber-600 text-white border-amber-600'
+                              : 'bg-white dark:bg-slate-900 text-slate-500 border-slate-300 dark:border-slate-700'
+                          }`}
+                        >
+                          {localLocks.lazer ? <Lock className="w-3 h-3" /> : <Unlock className="w-3 h-3" />}
+                          <span>{localLocks.lazer ? 'Travado' : 'Livre'}</span>
+                        </button>
                         <input
                           type="number"
                           min="0"
                           max="100"
                           value={pctLazer}
-                          onChange={e => setPctLazer(Number(e.target.value))}
+                          onChange={e => setPctLazer(e.target.value === '' ? 0 : Number(e.target.value))}
                           className={`w-16 px-2 py-1.5 rounded-xl border-2 font-black text-sm text-center tabular-nums ${
                             customStatus.lazer.isCustom
                               ? 'border-amber-400 bg-amber-50 dark:bg-amber-950/50 text-amber-950 dark:text-amber-100'
@@ -1471,12 +1692,25 @@ export const SettingsScreen: React.FC = () => {
                     </td>
                     <td className="py-3.5 px-3 text-center">
                       <div className="inline-flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          aria-label="Trava de Proteção"
+                          onClick={() => handleToggleDestinationLock('protecao')}
+                          className={`px-2 py-1 rounded-lg text-[10px] font-bold border flex items-center gap-1 ${
+                            localLocks.protecao
+                              ? 'bg-amber-600 text-white border-amber-600'
+                              : 'bg-white dark:bg-slate-900 text-slate-500 border-slate-300 dark:border-slate-700'
+                          }`}
+                        >
+                          {localLocks.protecao ? <Lock className="w-3 h-3" /> : <Unlock className="w-3 h-3" />}
+                          <span>{localLocks.protecao ? 'Travado' : 'Livre'}</span>
+                        </button>
                         <input
                           type="number"
                           min="0"
                           max="100"
                           value={pctProtecao}
-                          onChange={e => setPctProtecao(Number(e.target.value))}
+                          onChange={e => setPctProtecao(e.target.value === '' ? 0 : Number(e.target.value))}
                           className={`w-16 px-2 py-1.5 rounded-xl border-2 font-black text-sm text-center tabular-nums ${
                             customStatus.protecao.isCustom
                               ? 'border-amber-400 bg-amber-50 dark:bg-amber-950/50 text-amber-950 dark:text-amber-100'
@@ -1541,12 +1775,25 @@ export const SettingsScreen: React.FC = () => {
                     </td>
                     <td className="py-3.5 px-3 text-center">
                       <div className="inline-flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          aria-label="Trava de Profissional"
+                          onClick={() => handleToggleDestinationLock('profissional')}
+                          className={`px-2 py-1 rounded-lg text-[10px] font-bold border flex items-center gap-1 ${
+                            localLocks.profissional
+                              ? 'bg-amber-600 text-white border-amber-600'
+                              : 'bg-white dark:bg-slate-900 text-slate-500 border-slate-300 dark:border-slate-700'
+                          }`}
+                        >
+                          {localLocks.profissional ? <Lock className="w-3 h-3" /> : <Unlock className="w-3 h-3" />}
+                          <span>{localLocks.profissional ? 'Travado' : 'Livre'}</span>
+                        </button>
                         <input
                           type="number"
                           min="0"
                           max="100"
                           value={pctProfissional}
-                          onChange={e => setPctProfissional(Number(e.target.value))}
+                          onChange={e => setPctProfissional(e.target.value === '' ? 0 : Number(e.target.value))}
                           className={`w-16 px-2 py-1.5 rounded-xl border-2 font-black text-sm text-center tabular-nums ${
                             customStatus.profissional.isCustom
                               ? 'border-amber-400 bg-amber-50 dark:bg-amber-950/50 text-amber-950 dark:text-amber-100'
@@ -1611,12 +1858,25 @@ export const SettingsScreen: React.FC = () => {
                     </td>
                     <td className="py-3.5 px-3 text-center">
                       <div className="inline-flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          aria-label="Trava de Investimentos"
+                          onClick={() => handleToggleDestinationLock('investimentos')}
+                          className={`px-2 py-1 rounded-lg text-[10px] font-bold border flex items-center gap-1 ${
+                            localLocks.investimentos
+                              ? 'bg-amber-600 text-white border-amber-600'
+                              : 'bg-white dark:bg-slate-900 text-slate-500 border-slate-300 dark:border-slate-700'
+                          }`}
+                        >
+                          {localLocks.investimentos ? <Lock className="w-3 h-3" /> : <Unlock className="w-3 h-3" />}
+                          <span>{localLocks.investimentos ? 'Travado' : 'Livre'}</span>
+                        </button>
                         <input
                           type="number"
                           min="0"
                           max="100"
                           value={pctInvestimentos}
-                          onChange={e => setPctInvestimentos(Number(e.target.value))}
+                          onChange={e => setPctInvestimentos(e.target.value === '' ? 0 : Number(e.target.value))}
                           className={`w-16 px-2 py-1.5 rounded-xl border-2 font-black text-sm text-center tabular-nums ${
                             customStatus.investimentos.isCustom
                               ? 'border-amber-400 bg-amber-50 dark:bg-amber-950/50 text-amber-950 dark:text-amber-100'

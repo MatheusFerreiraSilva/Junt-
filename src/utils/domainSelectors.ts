@@ -700,12 +700,17 @@ export function upgradeBudgetPlanContract(plan: Partial<BudgetPlanContract>): Bu
     investimentos: { percentage: investPct, amountR$: allocation.macroGroups.investimentos.amountR$ },
   };
 
+  const cleanApprovedByUid =
+    typeof plan.approvedByUid === 'string' && plan.approvedByUid.trim().length > 0
+      ? plan.approvedByUid.trim()
+      : undefined;
+
   const policyMeta: BudgetPlanPolicyMeta = plan.policyMeta || {
     policyId: `policy-${fixosPct}-${varPct}-${investPct}`,
     policyName: `Política Orçamentária ${fixosPct}/${varPct}/${investPct}`,
     policyVersion: '1.0',
     validFrom: competence,
-    authoredByUid: plan.approvedBy,
+    authoredByUid: cleanApprovedByUid,
     incomeSourceMode: 'planned_net',
   };
 
@@ -815,14 +820,53 @@ export function upgradeBudgetPlanContract(plan: Partial<BudgetPlanContract>): Bu
     conflicts: plan.conflicts || [],
     approvedAt: plan.approvedAt,
     approvedBy: plan.approvedBy,
-    approvedByUid: plan.approvedByUid,
-    approvedByDisplayName: plan.approvedByDisplayName,
+    approvedByUid: cleanApprovedByUid,
+    approvedByDisplayName:
+      plan.approvedByDisplayName ||
+      (!cleanApprovedByUid && plan.approvedBy ? plan.approvedBy : undefined),
     baseSnapshotSignature: plan.baseSnapshotSignature,
     applyToFutureMonths: Boolean(plan.applyToFutureMonths),
     appliedFutureMonths: plan.appliedFutureMonths,
     skippedApprovedMonths: plan.skippedApprovedMonths,
     partnerCeilings: plan.partnerCeilings,
   };
+}
+
+/**
+ * Seleciona o plano orçamentário vigente para uma competência:
+ * 1. Plano explicitamente salvo em `monthlyBudgetPlans[competence]`, se existir;
+ * 2. Plano anterior mais recente com `applyToFutureMonths === true` e `plan.competence < competence`, se existir;
+ * 3. `undefined` (usa projeção compatível do estado vigente sem inventar aprovação humana nem aplicar plano futuro ao presente).
+ */
+export function selectEffectiveBudgetPlanForCompetence(
+  state: Pick<AppState, 'monthlyBudgetPlans'>,
+  competence: string
+): { plan?: BudgetPlanContract; source: 'explicit_month' | 'inherited_future' | 'none' } {
+  const plans = state.monthlyBudgetPlans || {};
+  if (plans[competence]) {
+    return {
+      plan: upgradeBudgetPlanContract(plans[competence]),
+      source: 'explicit_month',
+    };
+  }
+
+  const inheritedCandidates = Object.values(plans)
+    .filter((p) => p && p.applyToFutureMonths && p.competence && p.competence < competence)
+    .sort((a, b) => a.competence.localeCompare(b.competence));
+
+  if (inheritedCandidates.length > 0) {
+    const latest = inheritedCandidates[inheritedCandidates.length - 1];
+    return {
+      plan: upgradeBudgetPlanContract({
+        ...latest,
+        id: competence,
+        competence,
+      }),
+      source: 'inherited_future',
+    };
+  }
+
+  return { plan: undefined, source: 'none' };
 }
 
 /**
@@ -1486,7 +1530,9 @@ export function selectPlannedNetIncome(
   scope: DomainScope = 'casal',
   monthKey?: string
 ): number {
-  const plan = monthKey ? state.monthlyBudgetPlans?.[monthKey] : undefined;
+  const plan = monthKey
+    ? selectEffectiveBudgetPlanForCompetence(state, monthKey).plan
+    : undefined;
   if (scope === 'casal') {
     if (plan && typeof plan.plannedNetIncome === 'number' && Number.isFinite(plan.plannedNetIncome)) {
       return Math.max(0, roundMoney(plan.plannedNetIncome));
@@ -1869,7 +1915,7 @@ export function selectReconciledBudgetMatrix(
   const plannedNetIncome = selectPlannedNetIncome(state, scope, currentMonthKey);
   const receivedEligibleNetIncome = selectEligibleNetIncomeReceived(state, scope, currentMonthKey);
 
-  const plan = state.monthlyBudgetPlans?.[currentMonthKey];
+  const plan = selectEffectiveBudgetPlanForCompetence(state, currentMonthKey).plan;
   let fixedPct = plan?.macroGroups?.fixos?.percentage ?? 60;
   let varPct = plan?.macroGroups?.variaveis?.percentage ?? 30;
   let investPct = plan?.macroGroups?.investimentos?.percentage ?? 10;
@@ -2040,6 +2086,7 @@ export function selectReconciledBudgetMatrix(
   );
   for (const instOcc of instOccurrences) {
     if (instOcc.isFixedNature) continue; // já incluída em fixedOccurrences
+    if (instOcc.isExcludedFromMonthlyBudget) continue;
     const cat = mapToCanonicalMatrixCategory(instOcc.category);
     if (instOcc.status === 'paid' || instOcc.status === 'advanced') {
       catVarCents[cat] += instOcc.scopedCents;

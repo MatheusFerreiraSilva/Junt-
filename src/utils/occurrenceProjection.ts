@@ -727,6 +727,7 @@ export interface ProjectedInstallmentOccurrence {
   bankName?: string;
   linkedExpenseId?: string;
   alreadyInExpenses: boolean;
+  isExcludedFromMonthlyBudget?: boolean;
 }
 
 /**
@@ -749,6 +750,12 @@ export function projectInstallmentOccurrencesForCompetence(
 
     const linkedExpense = expenses.find(
       (e) => e.installmentId === inst.id && resolveExpenseCompetenceMonth(e) === competenceMonth
+    );
+    const isGoalOrExcluded = Boolean(
+      inst.isExcludedFromMonthlyBudget ||
+        (inst.fundingSource && inst.fundingSource !== 'month_budget') ||
+        linkedExpense?.isExcludedFromMonthlyBudget ||
+        (linkedExpense?.fundingSource && linkedExpense.fundingSource !== 'month_budget')
     );
     const isFixedNature =
       inst.nature === 'fixa' || inst.nature === 'fixo' || inst.type === 'financing';
@@ -850,6 +857,7 @@ export function projectInstallmentOccurrencesForCompetence(
           bankName: inst.bankName,
           linkedExpenseId: linkedExpense?.id,
           alreadyInExpenses: Boolean(linkedExpense),
+          isExcludedFromMonthlyBudget: isGoalOrExcluded,
         });
       }
       continue;
@@ -928,6 +936,7 @@ export function projectInstallmentOccurrencesForCompetence(
       bankName: inst.bankName,
       linkedExpenseId: linkedExpense?.id,
       alreadyInExpenses: Boolean(linkedExpense),
+      isExcludedFromMonthlyBudget: isGoalOrExcluded,
     });
   }
 
@@ -1182,6 +1191,7 @@ export function projectSharedFixedOccurrences(
   );
   for (const instOcc of instOccurrences) {
     if (!instOcc.isFixedNature) continue;
+    if (instOcc.isExcludedFromMonthlyBudget) continue;
     const catKey = mapToCanonicalCategoryKey(instOcc.category);
     const meta = CATEGORY_PRESENTATION_META[catKey] || CATEGORY_PRESENTATION_META.moradia;
     const normStatus: 'paid' | 'pending' | 'overdue' =

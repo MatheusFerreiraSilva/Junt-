@@ -22,12 +22,15 @@ import {
 import {
   allocateIncomeByPolicy,
   DEFAULT_CATEGORY_GROUP_MAPPING,
+  selectEffectiveBudgetPlanForCompetence,
   selectEligibleNetIncomeReceived,
   selectGoalDirectConsumptionExpenses,
   selectGrossBankInflows,
   selectPlannedNetIncome,
   upgradeBudgetPlanContract,
 } from './domainSelectors';
+
+export { selectEffectiveBudgetPlanForCompetence };
 
 export type PriorityLevel = 'P1' | 'P2' | 'P3';
 
@@ -249,41 +252,85 @@ export interface CompetenceBudgetSnapshot {
   signature: string;
 }
 
+export interface FutureMonthsScopePreview {
+  baseCompetence: string;
+  targetMonths: string[];
+  monthsToApply: string[];
+  preservedApprovedMonths: Array<{
+    month: string;
+    existingInvestPct: number;
+    existingMoradiaPct: number;
+    approvedAt?: string;
+  }>;
+  monthsWithDiffs: Array<{
+    month: string;
+    status: 'will_apply' | 'preserved_approved' | 'will_overwrite';
+    summary: string;
+  }>;
+}
+
 /**
- * Seleciona o plano orçamentário vigente para uma competência:
- * 1. Plano explicitamente salvo em `monthlyBudgetPlans[competence]`, se existir;
- * 2. Plano anterior mais recente com `applyToFutureMonths === true` e `plan.competence <= competence`, se existir;
- * 3. `undefined` (usa projeção compatível do estado vigente sem inventar aprovação humana).
+ * Apresenta o alcance concreto de `applyToFutureMonths` com os meses afetados,
+ * meses explicitamente aprovados preservados e diferenças concretas antes da confirmação.
  */
-export function selectEffectiveBudgetPlanForCompetence(
+export function previewFutureMonthsScope(
   state: Pick<AppState, 'monthlyBudgetPlans'>,
-  competence: string
-): { plan?: BudgetPlanContract; source: 'explicit_month' | 'inherited_future' | 'none' } {
+  baseCompetence: string,
+  proposedPercentages: Record<DestinationKey, number>,
+  horizon = 6,
+  overwriteApproved = false
+): FutureMonthsScopePreview {
   const plans = state.monthlyBudgetPlans || {};
-  if (plans[competence]) {
-    return {
-      plan: upgradeBudgetPlanContract(plans[competence]),
-      source: 'explicit_month',
-    };
+  const targetMonths: string[] = [];
+  const monthsToApply: string[] = [];
+  const preservedApprovedMonths: FutureMonthsScopePreview['preservedApprovedMonths'] = [];
+  const monthsWithDiffs: FutureMonthsScopePreview['monthsWithDiffs'] = [];
+
+  for (let i = 1; i <= horizon; i++) {
+    const m = addMonthsToCompetence(baseCompetence, i);
+    targetMonths.push(m);
+    const existing = plans[m];
+    const isExplicitlyApproved = Boolean(existing && existing.approvedAt);
+
+    if (isExplicitlyApproved && !overwriteApproved) {
+      const exInv = existing!.categoryPercentages?.investimentos ?? 10;
+      const exMor = existing!.categoryPercentages?.moradia ?? 30;
+      preservedApprovedMonths.push({
+        month: m,
+        existingInvestPct: exInv,
+        existingMoradiaPct: exMor,
+        approvedAt: existing!.approvedAt,
+      });
+      monthsWithDiffs.push({
+        month: m,
+        status: 'preserved_approved',
+        summary: `${m}: preservado plano aprovado (Moradia ${exMor}%, Invest. ${exInv}%)`,
+      });
+    } else if (isExplicitlyApproved && overwriteApproved) {
+      const exInv = existing!.categoryPercentages?.investimentos ?? 10;
+      monthsToApply.push(m);
+      monthsWithDiffs.push({
+        month: m,
+        status: 'will_overwrite',
+        summary: `${m}: substituirá plano aprovado (Invest. ${exInv}% → ${proposedPercentages.investimentos ?? 10}%)`,
+      });
+    } else {
+      monthsToApply.push(m);
+      monthsWithDiffs.push({
+        month: m,
+        status: 'will_apply',
+        summary: `${m}: aplicará novo plano (Moradia ${proposedPercentages.moradia ?? 30}%, Invest. ${proposedPercentages.investimentos ?? 10}%)`,
+      });
+    }
   }
 
-  const inheritedCandidates = Object.values(plans)
-    .filter((p) => p && p.applyToFutureMonths && p.competence && p.competence < competence)
-    .sort((a, b) => a.competence.localeCompare(b.competence));
-
-  if (inheritedCandidates.length > 0) {
-    const latest = inheritedCandidates[inheritedCandidates.length - 1];
-    return {
-      plan: upgradeBudgetPlanContract({
-        ...latest,
-        id: competence,
-        competence,
-      }),
-      source: 'inherited_future',
-    };
-  }
-
-  return { plan: undefined, source: 'none' };
+  return {
+    baseCompetence,
+    targetMonths,
+    monthsToApply,
+    preservedApprovedMonths,
+    monthsWithDiffs,
+  };
 }
 
 /**
@@ -411,6 +458,7 @@ export function computeCompetenceBudgetSnapshot(
   const instOccurrences = projectInstallmentOccurrencesForCompetence(state, competence, 'couple');
   for (const instOcc of instOccurrences) {
     if (instOcc.isFixedNature) continue;
+    if (instOcc.isExcludedFromMonthlyBudget) continue;
     const cat = mapToCanonicalCategoryKey(instOcc.category);
     if (instOcc.status === 'paid' || instOcc.status === 'advanced') {
       actualVarCents[cat] += instOcc.scopedCents;
@@ -593,8 +641,11 @@ export function computeCompetenceBudgetSnapshot(
     plannedNetIncome,
     actualSpentR$,
     pendingCommitmentsR$,
+    actualSpentByNatureR$,
+    pendingByNatureR$,
     floorsR$,
     locks,
+    currentPercentages,
     planRevision,
   };
   const signature = JSON.stringify(signaturePayload);

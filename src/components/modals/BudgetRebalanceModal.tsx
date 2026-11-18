@@ -17,6 +17,7 @@ import { formatCurrency } from '../../utils/formatters';
 import {
   rebalanceBudget,
   computeCompetenceBudgetSnapshot,
+  previewFutureMonthsScope,
   proposeCustomInvestmentRatio,
   ALL_DESTINATIONS,
   DESTINATION_NAMES,
@@ -103,6 +104,27 @@ export const BudgetRebalanceModal: React.FC<BudgetRebalanceModalProps> = ({
   const customInvestProposal = useMemo(
     () => proposeCustomInvestmentRatio(percentages.investimentos ?? 10),
     [percentages.investimentos]
+  );
+
+  const futureScopePreview = useMemo(
+    () =>
+      applyToFutureMonths
+        ? previewFutureMonthsScope(
+            { monthlyBudgetPlans: state.monthlyBudgetPlans },
+            competence,
+            proposal?.proposedPercentages || percentages,
+            6,
+            overwriteApprovedFutureMonths
+          )
+        : null,
+    [
+      applyToFutureMonths,
+      state.monthlyBudgetPlans,
+      competence,
+      proposal,
+      percentages,
+      overwriteApprovedFutureMonths,
+    ]
   );
 
   if (!isOpen) return null;
@@ -233,20 +255,45 @@ export const BudgetRebalanceModal: React.FC<BudgetRebalanceModalProps> = ({
             </label>
           </div>
 
-          {applyToFutureMonths && (
-            <div className="pt-2 border-t border-slate-200/70 dark:border-slate-700/70 flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-600 dark:text-slate-300">
-              <span>
-                Propaga pelos próximos 6 meses preservando meses que já tenham planos aprovados.
-              </span>
-              <label className="flex items-center gap-1.5 font-semibold cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={overwriteApprovedFutureMonths}
-                  onChange={(e) => setOverwriteApprovedFutureMonths(e.target.checked)}
-                  className="rounded text-amber-600 w-3.5 h-3.5"
-                />
-                <span>Substituir meses futuros já aprovados</span>
-              </label>
+          {applyToFutureMonths && futureScopePreview && (
+            <div className="pt-2 border-t border-slate-200/70 dark:border-slate-700/70 space-y-2 text-[11px] text-slate-600 dark:text-slate-300">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span>
+                  Alcance concreto ({futureScopePreview.targetMonths[0]} a{' '}
+                  {futureScopePreview.targetMonths[futureScopePreview.targetMonths.length - 1]}):{' '}
+                  <strong>{futureScopePreview.monthsToApply.length}</strong> mês(es) aplicarão o plano
+                  {futureScopePreview.preservedApprovedMonths.length > 0 &&
+                    `, preservando ${futureScopePreview.preservedApprovedMonths.length} já aprovado(s)`}
+                  .
+                </span>
+                {futureScopePreview.preservedApprovedMonths.length > 0 && (
+                  <label className="flex items-center gap-1.5 font-semibold cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={overwriteApprovedFutureMonths}
+                      onChange={(e) => setOverwriteApprovedFutureMonths(e.target.checked)}
+                      className="rounded text-amber-600 w-3.5 h-3.5"
+                    />
+                    <span>Substituir meses futuros já aprovados</span>
+                  </label>
+                )}
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-1 text-[10px]">
+                {futureScopePreview.monthsWithDiffs.map((item) => (
+                  <div
+                    key={item.month}
+                    className={`px-2 py-1 rounded-lg border ${
+                      item.status === 'preserved_approved'
+                        ? 'bg-emerald-50/70 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300'
+                        : item.status === 'will_overwrite'
+                        ? 'bg-amber-50/80 dark:bg-amber-950/40 border-amber-300 dark:border-amber-700 text-amber-900 dark:text-amber-200'
+                        : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700'
+                    }`}
+                  >
+                    {item.summary}
+                  </div>
+                ))}
+              </div>
             </div>
           )}
         </div>

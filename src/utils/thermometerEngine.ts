@@ -16,6 +16,7 @@ import {
   selectCanonicalFixedBillsRegistry,
   toSafeCents,
 } from './occurrenceProjection';
+import { selectEffectiveBudgetPlanForCompetence } from './domainSelectors';
 
 export { roundMoney };
 
@@ -201,8 +202,8 @@ export function calculateThermometerEngine(
     ? Math.max(1, daysInMonth - currentDayOfMonth + 1)
     : daysInMonth;
 
-  // 2. Scope-based declared income & approved competence plan prioritization (R29-15)
-  const plan = state.monthlyBudgetPlans?.[currentMonthKey];
+  // 2. Scope-based declared income & approved competence plan prioritization (R29-15 & 14)
+  const plan = selectEffectiveBudgetPlanForCompetence(state, currentMonthKey).plan;
   let declaredIncome = 0;
   let programmedSavings = 0;
   let expenseBudget = 0;
