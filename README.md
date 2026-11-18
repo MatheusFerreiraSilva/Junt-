@@ -1,53 +1,43 @@
-# JUNTÔ
-
-### A vida de vocês, os planos de vocês, o dinheiro organizado.
-
-O **Juntô** é um aplicativo de finanças para um casal de futuros médicos: acompanha o orçamento da casa, os gastos de cada pessoa, os objetivos compartilhados e as mudanças financeiras entre faculdade, residência e vida profissional.
-
-A proposta é simples: registrar o que aconteceu, entender o mês e planejar o próximo passo juntos. O uso principal é **manual, com importação de extratos CSV e revisão dos lançamentos**.
-
-[![CI](https://github.com/MatheusFerreiraSilva/Junt-/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/MatheusFerreiraSilva/Junt-/actions/workflows/ci.yml)
-![React](https://img.shields.io/badge/React-19-149eca)
-![TypeScript](https://img.shields.io/badge/TypeScript-5-3178c6)
-![Firebase](https://img.shields.io/badge/Firebase-Auth%20%2B%20Firestore-dd8e00)
-
-[Começar](#executar-localmente) · [Importar extratos](#importação-de-extratos) · [Configuração](#configuração) · [Verificações](#testes-e-qualidade) · [Limitações](#estado-atual-e-limitações)
+<div align="center">
+  <img src="public/favicon.svg" alt="" width="88" height="88" />
+  <h1>Juntô</h1>
+  <p><strong>Finanças a dois, do gasto de hoje aos planos de amanhã.</strong></p>
+  <p>Organizem as contas da casa, acompanhem o mês e planejem metas compartilhadas.<br />Registrem os lançamentos à mão ou revisem um extrato CSV.</p>
+  <p>
+    <a href="https://github.com/MatheusFerreiraSilva/Junt-/actions/workflows/ci.yml"><img src="https://github.com/MatheusFerreiraSilva/Junt-/actions/workflows/ci.yml/badge.svg?branch=main" alt="Status da integração contínua" /></a>
+    <img src="https://img.shields.io/badge/React-19-27755C?style=flat-square" alt="React 19" />
+    <img src="https://img.shields.io/badge/TypeScript-5-27755C?style=flat-square" alt="TypeScript 5" />
+    <img src="https://img.shields.io/badge/Firebase-Auth%20%2B%20Firestore-A94F33?style=flat-square" alt="Firebase Auth e Firestore" />
+  </p>
+  <p><a href="#o-que-vocês-podem-fazer">Recursos</a> · <a href="#importar-um-extrato">Extratos</a> · <a href="#executar-localmente">Instalação</a> · <a href="#google-ai-studio">Google AI Studio</a> · <a href="#testes-e-qualidade">Testes</a></p>
+</div>
 
 ---
 
-## O que o Juntô organiza
+## O que vocês podem fazer
 
-| Área | Recursos |
+| Área | Como funciona |
 | --- | --- |
-| **O mês** | Orçamento por categoria, receitas, despesas e acompanhamento dos valores disponíveis no orçamento. |
-| **Cada pessoa e o casal** | Visões individuais e conjunta, responsáveis pelos lançamentos e divisão de despesas. |
-| **Compras parceladas** | Compras, acompanhamento de parcelas e antecipação; cálculos distribuem os centavos para preservar o total. |
-| **Planos a dois** | Metas, cofrinhos, lista de desejos, contas fixas e simulações. |
-| **Formação médica** | Modo Faculdade e etapa individual: graduação, internato, preparação para residência, residência ou atuação. |
-| **Plantões** | Cadastro, execução, previsão de pagamento, recebimento parcial, alocação de depósitos e reversão da conciliação. |
-| **Extratos** | Importação CSV com prévia, titularidade, identificação de repetidos e revisão antes de virar receita ou despesa. |
-| **Assistente opcional** | Chat com Gemini e sugestão de orçamento no onboarding, com validação dos percentuais e indicação de fallback. |
-| **Uso no celular** | Interface responsiva, PWA e lembretes locais opcionais. |
+| **Painel e Termômetro do Mês** | Acompanhem os gastos e o ritmo do orçamento. Alternem entre as visões individual e do casal. |
+| **Gastos, Calendário e Parcelas** | Registrem lançamentos, acompanhem vencimentos de contas fixas e consultem o impacto das compras parceladas nos próximos meses. |
+| **Orçamento do mês** | Planejem tetos de gastos fixos e variáveis e a alocação para investimentos. Usem pisos e travas por categoria para preservar prioridades ao simular um remanejamento. |
+| **Hub do Casal e Investimentos** | Planejem sonhos e objetivos compartilhados no Hub. Acompanhem cofrinhos, reserva de emergência e liberdade financeira nas áreas correspondentes. |
+| **Plantões e formação médica** | Acompanhem a etapa de formação de cada pessoa, os plantões realizados e os pagamentos previstos ou recebidos, inclusive parciais. |
+| **Perfil e sincronização** | Vinculem as contas por convite. Personalizem os avatares e sincronizem os ajustes compartilhados do casal pelo Firebase. |
+| **Assistente opcional** | Usem o Gemini no chat e nas sugestões de orçamento do cadastro quando ele estiver configurado. |
 
-**Saldo bancário, orçamento disponível e recebimento previsto são conceitos diferentes.** Importar um extrato não deve transformar o saldo de uma conta em uma nova receita; um plantão agendado não representa dinheiro recebido.
+> O orçamento mostra quanto foi planejado e utilizado no mês. O extrato mostra as movimentações registradas. Depósitos previstos entram como recebimentos quando forem confirmados.
 
-## Uma rotina simples
+### Uma rotina para começar
 
-1. Configure o perfil e a etapa de formação de cada pessoa.
-2. Crie o vínculo do casal e compartilhe o convite com seu par.
-3. Registre receitas e gastos ou importe um extrato.
-4. Confira categorias, parcelas, transferências e recebimentos.
-5. Acompanhe o mês e ajuste os objetivos de vocês.
+1. Configurem os perfis e vinculem as contas pelo convite.
+2. Registrem a renda, os gastos e as contas fixas. Se preferirem, importem um extrato CSV.
+3. Confiram lançamentos e vencimentos no painel e no calendário.
+4. Ajustem o orçamento do mês e acompanhem os objetivos do casal.
 
-O orçamento não exige renda de plantões. Estudantes podem usar o aplicativo com bolsa, ajuda familiar ou outras receitas informadas, sem presumir atividade médica remunerada.
+## Importar um extrato
 
-## Importação de extratos
-
-A tela de importação **não exige conexão ao banco nem assinatura de Open Finance**. O arquivo é lido no navegador; os lançamentos confirmados participam da persistência do aplicativo.
-
-### Formato aceito
-
-CSV com cabeçalhos reconhecíveis de **data, descrição e valor**. Exemplo com separador ponto e vírgula:
+Exportem o CSV no banco, mantenham uma identificação estável para a conta e selecionem o titular no Juntô. Conferiram a prévia? Enviem os lançamentos à fila de revisão e confirmem as receitas e despesas. Marquem as transferências entre contas para evitar que inflem os totais.
 
 ```csv
 data;descricao;valor
@@ -56,37 +46,21 @@ data;descricao;valor
 29/10/2026;Transferência entre contas;-200,00
 ```
 
-- Datas: `DD/MM/AAAA` ou `AAAA-MM-DD`.
-- Valores negativos: saídas; positivos: entradas.
-- Separadores: vírgula ou ponto e vírgula; campos entre aspas são aceitos.
-- Cabeçalhos também reconhecem variantes como `date`, `description`, `amount`, `histórico` e `título`.
-- Limites: **5 MB por arquivo e 5.000 lançamentos**.
-- OFX, PDF e layouts bancários arbitrários **ainda não são suportados**.
+<details>
+<summary>Formatos, duplicidades e lembretes</summary>
 
-### Como importar
+- O CSV aceita data, descrição e valor, incluindo cabeçalhos como `date`, `description` e `amount`. Use data `DD/MM/AAAA` ou `AAAA-MM-DD`, vírgula ou ponto e vírgula como separador e aspas quando necessário.
+- Cada arquivo pode ter até 5 MB e 5.000 lançamentos. OFX e PDF estão fora dos formatos aceitos.
+- A identificação de duplicidades considera conta, data, descrição, valor e ocorrência de linhas idênticas. Confiram manualmente períodos sobrepostos e lançamentos já digitados.
+- O lembrete diário é verificado com o aplicativo aberto. A notificação do navegador depende de permissão, e a exportação continua sendo feita no banco.
 
-1. Exporte o CSV pelo banco e confira se as colunas correspondem ao formato aceito.
-2. Informe uma identificação estável, como **Conta conjunta — Banco X**.
-3. Selecione o titular: pessoa 1, pessoa 2 ou conta conjunta.
-4. Escolha o arquivo e revise a prévia.
-5. Adicione os novos lançamentos à fila de revisão.
-6. Confirme cada receita ou gasto; marque transferências entre contas para não inflar receitas e despesas.
-
-### Como são reconhecidos os repetidos
-
-A identificação considera **conta, data, descrição e valor**, além da ocorrência de linhas idênticas no arquivo. Importar novamente o mesmo extrato com a mesma identificação de conta mantém os identificadores.
-
-Isso não substitui um identificador bancário único. Alterar o nome da conta ou a descrição pode fazer um registro parecer novo; períodos sobrepostos com transações idênticas exigem conferência. Lançamentos digitados manualmente também precisam ser comparados com o extrato antes da confirmação.
-
-### Lembrete diário
-
-A importação oferece um lembrete opcional para conferir o extrato. Ele é verificado enquanto o aplicativo está aberto, e notificações do navegador dependem de permissão. **Não há agendamento remoto garantido com o app fechado.** Exportar o arquivo continua sendo uma ação feita por vocês no banco.
+</details>
 
 ## Executar localmente
 
 ### Pré-requisitos
 
-- **Node.js 24 LTS**, recomendado para reproduzir o ambiente local de validação. A CI usa Node.js 22.
+- **Node.js 22**, versão usada no GitHub Actions.
 - npm e Git.
 - Projeto Firebase para autenticação e compartilhamento.
 - Java 21 para executar os testes do Firestore Emulator.
@@ -116,7 +90,7 @@ Configure o Firebase conforme a seção abaixo e inicie:
 npm run dev
 ```
 
-Abra **http://localhost:3000**. O servidor Express fornece as APIs e integra o Vite durante o desenvolvimento.
+Abra `http://localhost:3000`. O servidor Express fornece as APIs e integra o Vite durante o desenvolvimento.
 
 ## Configuração
 
@@ -152,7 +126,7 @@ A associação ao casal é concedida pelo servidor. Alterar o perfil no navegado
 
 Sem Gemini configurado, o chat informa indisponibilidade. O onboarding pode oferecer uma heurística identificada como tal, sem afirmar que houve análise por IA.
 
-### Google AI Studio
+## Google AI Studio
 
 Use a branch **`main`** como fonte da versão atual. Configure os segredos no ambiente do servidor e mantenha o projeto Firebase coerente com a configuração web.
 
@@ -160,58 +134,20 @@ A execução precisa comportar o **servidor Node/Express**, não apenas arquivos
 
 ## Arquitetura
 
-```text
-Interface React / PWA
-├── Lançamentos manuais e leitura CSV no navegador
-├── Firebase Auth → identidade de cada pessoa
-├── Firestore → dados compartilhados do casal
-└── Express /api
-    ├── Firebase Admin → verificação de identidade e vínculos
-    ├── Convites e cotas compartilhadas
-    ├── Gemini → assistente opcional
-    └── Pluggy → código legado opcional, fora do fluxo manual
-```
-
-| Camada | Tecnologias |
+| Camada | Responsabilidade |
 | --- | --- |
-| Interface | React 19, TypeScript, Tailwind CSS, Lucide e Motion |
-| Servidor | Express, Firebase Admin e SDK Gemini |
-| Dados | Firebase Auth, Firestore e cache local com identificação de usuário/casal |
-| Build | Vite, esbuild e plugin PWA |
-| Qualidade | ESLint, Vitest, Testing Library e GitHub Actions |
+| **React · TypeScript · Vite** | Interface responsiva e PWA, revisão de extratos no navegador e visualizações financeiras. |
+| **Firebase Auth · Firestore** | Identidade das contas, persistência de entidades financeiras, preferências e avatares, com regras de acesso. |
+| **Express · Firebase Admin** | APIs autenticadas, convites e operações administrativas do vínculo do casal. |
+| **Gemini** | Assistente opcional, chamado pelo servidor quando configurado. |
 
-```text
-src/
-├── components/        Componentes e formulários
-├── screens/           Telas do aplicativo
-├── context/           Estado e ações financeiras
-├── lib/               Firebase, API autenticada e sincronização de entidades
-├── hooks/             Comportamentos de interface
-├── types/             Contratos do domínio
-└── utils/             Importação, centavos, plantões e motores financeiros
-server/                Autorização, convites, orçamento e integração legada
-scripts/               Smoke test e migração local de segurança
-tests/                 Testes das regras do Firestore
-docs/                  Segurança, migração e registro de validação
-```
-
-## Segurança e persistência
-
-- APIs protegidas exigem Firebase ID token; endpoints de saúde são públicos.
-- Convites têm expiração, uso único e consumo transacional.
-- Cache identifica usuário e casal, e a troca de sessão encerra listeners e invalida operações pendentes.
-- Entidades financeiras usam documentos independentes e verificação transacional de conflitos.
-- Arrays legados são preservados na migração incremental; tombstones evitam recriar registros excluídos.
-- O assistente não possui autoridade para modificar dados financeiros por meio de uma resposta.
-
-Há limites importantes: configurações e totais agregados ainda têm operações no documento principal. A migração completa para um ledger transacional permanece pendente para garantir invariantes entre documentos em todos os cenários concorrentes.
-
-Antes de migrar dados existentes, faça backup e leia [migração e rollback](docs/IMPLEMENTATION.md). O script `scripts/migrate-security.mjs` trabalha apenas em exports locais, com dry-run por padrão; não resolve automaticamente identidades legadas nem altera produção.
+O fluxo principal funciona com lançamentos manuais e CSV. O backend mantém a integração legada com Pluggy como opção separada.
 
 ## Testes e qualidade
 
+A [CI no GitHub](https://github.com/MatheusFerreiraSilva/Junt-/actions/workflows/ci.yml) executa a instalação limpa, as verificações estáticas, os testes da aplicação, as regras Firestore em emulador, o build e o smoke de produção.
+
 ```bash
-npm ci
 npm run lint
 npm run typecheck
 npm test
@@ -219,64 +155,22 @@ npm run build:all
 node scripts/smoke-production.mjs
 ```
 
-Para ambientes com poucos recursos, execute `npm test -- --maxWorkers=2`.
-
-Os testes de regras são separados da suíte de aplicação. Com Java 21 disponível:
+Com Java 21, execute os testes de regras em um projeto fictício:
 
 ```bash
 npx firebase emulators:exec --only firestore --project demo-junto-rules "npx vitest run --config vitest.rules.config.ts"
 ```
 
-Use o projeto fictício `demo-junto-rules`. O arquivo `firebase.json` define o emulador local na porta 8085; não aponte testes de autorização para dados reais.
+Para rodar a versão compilada, use `npm run start:prod` depois do build. `npm run preview` serve apenas a prévia estática do frontend. O endpoint `/api/health` verifica se o servidor está respondendo.
 
-**Estado verificado em 28/10/2026:** as melhorias foram incorporadas à `main` no commit [`b1eb5c3`](https://github.com/MatheusFerreiraSilva/Junt-/commit/b1eb5c33bd440e790de3d1dfcb620faf5e59af46). A [CI desse commit passou](https://github.com/MatheusFerreiraSilva/Junt-/actions/runs/40628639666), incluindo lint, TypeScript, suíte de aplicação, builds e smoke do servidor. A validação local registrou 80 testes em 18 arquivos. Os testes de regras do Firestore não fazem parte desse resultado da CI; sua execução ainda precisa ser confirmada.
-
-## Scripts úteis
-
-| Comando | Finalidade |
-| --- | --- |
-| `npm run dev` | Express + Vite em desenvolvimento |
-| `npm run build:all` | Gera cliente em `dist/` e servidor em `server.js` |
-| `npm run start:prod` | Executa o servidor compilado |
-| `npm run preview` | Prévia estática do frontend; não substitui o Express para APIs |
-| `npm run test:watch` | Testes durante desenvolvimento |
-| `npm run test:coverage` | Relatório de cobertura |
-| `npm run format:check` | Verifica formatação |
-| `npm run clean` | Remove arquivos gerados de build e cobertura |
-
-### Executar o build de produção
-
-```bash
-npm run build:all
-npm run start:prod
-```
-
-Configure `NODE_ENV=production` no host e mantenha as variáveis e permissões necessárias para o Firebase Admin. Os endpoints `/health` e `/api/health` indicam que o processo está vivo; não certificam que todas as integrações estão configuradas.
-
-## Estado atual e limitações
-
-| Disponível | Ainda precisa evoluir |
-| --- | --- |
-| Lançamentos manuais e importação CSV com revisão | OFX, PDF, mapeamento de colunas e validação com layouts reais de cada banco |
-| Identificação determinística de repetidos no CSV | Conferência de períodos sobrepostos e correspondência com lançamentos manuais |
-| Lembrete diário com app aberto | Agendamento e entrega remota de notificações |
-| Perfis médicos individuais e conciliação de plantões | Calendário completo de formação, conflitos de agenda e planejamento profissional ampliado |
-| Persistência de entidades e detecção de conflitos | Ledger transacional completo para operações entre agregados |
-| Cache da interface PWA | Validação de instalação/atualização em dispositivos reais e fluxo offline completo |
-
-O backend ainda contém endpoints Pluggy da evolução anterior. Eles não são necessários para a rotina manual e sua existência não comprova uma conexão bancária em produção.
-
-## Documentação complementar
+<details>
+<summary>Documentação técnica e contribuições</summary>
 
 - [Segurança](docs/SECURITY.md)
-- [Autenticação, convites e backend](docs/BACKEND_SECURITY.md) — inclui detalhes da integração bancária legada.
-- [Migração, rollback e limitações de arquitetura](docs/IMPLEMENTATION.md)
-- [Registro de validação local](docs/VALIDATION.md) — registro histórico; consulte também a CI mais recente.
+- [Autenticação, convites e backend](docs/BACKEND_SECURITY.md)
+- [Arquitetura, migração e rollback](docs/IMPLEMENTATION.md)
+- [Histórico de validação local](docs/VALIDATION.md)
 
-## Contribuindo
+Ao contribuir, use dados fictícios, preserve a compatibilidade com dados existentes e cubra alterações financeiras ou de autorização com testes. Mantenha credenciais e extratos reais fora do repositório.
 
-Faça alterações pequenas e verificáveis. Preserve dados antigos, adicione testes quando houver risco financeiro ou de autorização e descreva as mudanças de schema. Use fixtures e emuladores para testes; nunca inclua extratos reais, dados de pacientes, tokens ou credenciais em commits e issues.
-
-## Licença
-
-O repositório ainda não possui um arquivo `LICENSE` definindo os termos de distribuição. A escolha da licença cabe ao autor.
+</details>
