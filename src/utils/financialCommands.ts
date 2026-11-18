@@ -16,6 +16,7 @@ import type {
   StrategicSpendingIntent,
   TransactionSplit,
 } from '../types/finance';
+import { resolveExpenseCompetenceMonth } from './occurrenceProjection';
 
 const MAX_REAIS_BOUND = 90071992547409;
 const MAX_EXPENSE_REAIS = 10000000;
@@ -1606,13 +1607,36 @@ export function executeExpenseDeleteCommand(
   };
 
   let nextBills = workingState.coupleFixedBills || [];
-  if (target.linkedBillId && target.billCompetenceMonth) {
-    nextBills = nextBills.map((b) => {
+  let nextLegacyBills = workingState.fixedBillAlerts;
+  if (target.linkedBillId) {
+    const compMonth = resolveExpenseCompetenceMonth(target);
+    const reopenBillForMonth = (b: typeof nextBills[number]) => {
       if (b.id !== target.linkedBillId) return b;
       const history = { ...(b.history || {}) };
-      delete history[target.billCompetenceMonth!];
-      return { ...b, status: 'pending' as const, history };
-    });
+      if (compMonth) {
+        delete history[compMonth];
+      }
+      const remainingPaidMonths = Object.entries(history)
+        .filter(([, h]) => h?.status === 'paid')
+        .map(([k]) => k)
+        .sort();
+      const nextLastPaid =
+        remainingPaidMonths.length > 0
+          ? remainingPaidMonths[remainingPaidMonths.length - 1]
+          : b.lastPaidMonth === compMonth
+          ? undefined
+          : b.lastPaidMonth;
+      return {
+        ...b,
+        status: (remainingPaidMonths.length > 0 ? 'paid' : 'pending') as 'paid' | 'pending',
+        lastPaidMonth: nextLastPaid,
+        history,
+      };
+    };
+    nextBills = nextBills.map(reopenBillForMonth);
+    if (Array.isArray(nextLegacyBills)) {
+      nextLegacyBills = nextLegacyBills.map(reopenBillForMonth);
+    }
     touched.coupleFixedBills = [target.linkedBillId];
   }
 
@@ -1689,6 +1713,7 @@ export function executeExpenseDeleteCommand(
       ...workingState,
       expenses: workingState.expenses.filter((e) => e.id !== expenseId),
       coupleFixedBills: nextBills,
+      ...(nextLegacyBills !== undefined ? { fixedBillAlerts: nextLegacyBills } : {}),
     },
     expense: target,
     touchedEntities: touched,

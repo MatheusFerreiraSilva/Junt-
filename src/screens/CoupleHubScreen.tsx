@@ -39,6 +39,8 @@ import {
 } from '../types/finance';
 import { formatCurrency } from '../utils/formatters';
 import { FixedBillsPanelModal } from '../components/modals/FixedBillsPanelModal';
+import { selectCanonicalFixedBillsRegistry } from '../utils/occurrenceProjection';
+import { selectFixedBillOccurrences } from '../utils/fixedBillEngine';
 
 type SubTab = 'goals' | 'vacation' | 'wishlist' | 'dreams' | 'bills' | 'profile';
 
@@ -235,10 +237,25 @@ export const CoupleHubScreen: React.FC = () => {
     [state.coupleWishlist]
   );
 
-  const fixedBills: FixedBillAlert[] = useMemo(
-    () => (state.coupleFixedBills || []).filter((b) => !b.isDeleted),
-    [state.coupleFixedBills]
+  const { bills: fixedBills, conflicts: fixedBillRegistryConflicts } = useMemo(
+    () =>
+      selectCanonicalFixedBillsRegistry({
+        coupleFixedBills: state.coupleFixedBills,
+        fixedBillAlerts: state.fixedBillAlerts,
+      }),
+    [state.coupleFixedBills, state.fixedBillAlerts]
   );
+
+  const currentMonthBillOccurrencesById = useMemo(() => {
+    const occs = selectFixedBillOccurrences(state, state.currentMonth, 'casal');
+    const map = new Map<string, typeof occs[number]>();
+    occs.forEach((o) => {
+      if (!o.isDirectExpense) {
+        map.set(o.billId, o);
+      }
+    });
+    return map;
+  }, [state]);
 
   const dreams: DreamSimulation[] = useMemo(
     () => (state.dreamSimulations || []).filter((d) => !d.isDeleted),
@@ -1460,95 +1477,108 @@ export const CoupleHubScreen: React.FC = () => {
               </p>
             </div>
           ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-              {fixedBills.map((bill) => {
-                const currentMonthHistory = bill.history?.[state.currentMonth];
-                const isPaidInCurrentMonth =
-                  currentMonthHistory?.status === 'paid' || bill.lastPaidMonth === state.currentMonth;
+            <div className="space-y-4">
+              {fixedBillRegistryConflicts.length > 0 && (
+                <div className="p-3 rounded-2xl bg-amber-100 dark:bg-amber-950/60 border border-amber-300 dark:border-amber-800 text-xs font-bold text-amber-900 dark:text-amber-200">
+                  {fixedBillRegistryConflicts.map((c) => (
+                    <div key={c.billId}>⚠️ {c.reason}</div>
+                  ))}
+                </div>
+              )}
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+                {fixedBills.map((bill) => {
+                  const occ = currentMonthBillOccurrencesById.get(bill.id);
+                  const isPaidInCurrentMonth = occ ? occ.status === 'paid' : false;
+                  const displayAmount = occ ? occ.amountEffective : bill.amount;
 
-                return (
-                  <div
-                    key={bill.id}
-                    className={`clay-card p-5 bg-white dark:bg-slate-900 border rounded-3xl space-y-3 shadow-sm relative ${
-                      isPaidInCurrentMonth
-                        ? 'border-emerald-300 dark:border-emerald-800 bg-emerald-50/20 dark:bg-emerald-950/20'
-                        : bill.active === false
-                        ? 'border-slate-300 dark:border-slate-800 opacity-60'
-                        : 'border-slate-200 dark:border-slate-800'
-                    }`}
-                  >
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <h4 className="font-black text-base text-[#111318] dark:text-white leading-snug">
-                            {bill.title}
-                          </h4>
-                          {bill.autoPay && (
-                            <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-200 font-bold">
-                              Débito Auto
-                            </span>
-                          )}
+                  return (
+                    <div
+                      key={bill.id}
+                      className={`clay-card p-5 bg-white dark:bg-slate-900 border rounded-3xl space-y-3 shadow-sm relative ${
+                        isPaidInCurrentMonth
+                          ? 'border-emerald-300 dark:border-emerald-800 bg-emerald-50/20 dark:bg-emerald-950/20'
+                          : bill.active === false
+                          ? 'border-slate-300 dark:border-slate-800 opacity-60'
+                          : 'border-slate-200 dark:border-slate-800'
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <h4 className="font-black text-base text-[#111318] dark:text-white leading-snug">
+                              {bill.title}
+                            </h4>
+                            {bill.autoPay && (
+                              <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-200 font-bold">
+                                Débito Auto
+                              </span>
+                            )}
+                          </div>
+                          <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block mt-0.5">
+                            Vencimento: Dia {occ ? occ.dueDate.slice(8, 10) : bill.dueDay}
+                          </span>
                         </div>
-                        <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block mt-0.5">
-                          Vencimento: Dia {bill.dueDay}
+
+                        <div className="flex items-center gap-1">
+                          <button
+                            onClick={() => handleOpenEditBill(bill)}
+                            className="p-1.5 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-500 cursor-pointer"
+                          >
+                            <Edit3 className="w-4 h-4" />
+                          </button>
+                          <button
+                            onClick={() => handleDeleteBill(bill.id)}
+                            className="p-1.5 rounded-xl hover:bg-rose-100 dark:hover:bg-rose-950 text-rose-500 cursor-pointer"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center justify-between text-xs pt-1">
+                        <span className="font-black text-slate-900 dark:text-white font-mono text-base">
+                          R$ {displayAmount.toLocaleString('pt-BR')}
+                        </span>
+                        <span className="text-slate-500 font-medium">
+                          Resp: {bill.assignedPayer === 'partner1' ? p1Name : bill.assignedPayer === 'partner2' ? p2Name : 'Casal'}
                         </span>
                       </div>
 
-                      <div className="flex items-center gap-1">
-                        <button
-                          onClick={() => handleOpenEditBill(bill)}
-                          className="p-1.5 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-500 cursor-pointer"
-                        >
-                          <Edit3 className="w-4 h-4" />
-                        </button>
-                        <button
-                          onClick={() => handleDeleteBill(bill.id)}
-                          className="p-1.5 rounded-xl hover:bg-rose-100 dark:hover:bg-rose-950 text-rose-500 cursor-pointer"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
+                      <div className="pt-2 flex items-center justify-between border-t border-slate-100 dark:border-slate-800">
+                        {isPaidInCurrentMonth ? (
+                          <div className="flex items-center justify-between w-full">
+                            <span className="text-xs font-black text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
+                              <CheckCircle2 className="w-4 h-4" /> Pago neste mês
+                            </span>
+                            <button
+                              onClick={() => handleUnpayBill(bill)}
+                              className="text-[11px] text-slate-500 hover:text-rose-600 font-bold underline cursor-pointer"
+                            >
+                              Estornar Baixa
+                            </button>
+                          </div>
+                        ) : bill.active === false ? (
+                          <span className="text-xs font-bold text-slate-400">
+                            Recorrência encerrada para {state.currentMonth}
+                          </span>
+                        ) : (
+                          <div className="flex items-center justify-between w-full">
+                            <span className="text-xs font-bold text-amber-600 dark:text-amber-400">
+                              Pendente em {state.currentMonth}
+                            </span>
+                            <button
+                              onClick={() => handleOpenPayBillModal(bill)}
+                              className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black shadow-xs cursor-pointer"
+                            >
+                              Dar Baixa →
+                            </button>
+                          </div>
+                        )}
                       </div>
                     </div>
-
-                    <div className="flex items-center justify-between text-xs pt-1">
-                      <span className="font-black text-slate-900 dark:text-white font-mono text-base">
-                        R$ {bill.amount.toLocaleString('pt-BR')}
-                      </span>
-                      <span className="text-slate-500 font-medium">
-                        Resp: {bill.assignedPayer === 'partner1' ? p1Name : bill.assignedPayer === 'partner2' ? p2Name : 'Casal'}
-                      </span>
-                    </div>
-
-                    <div className="pt-2 flex items-center justify-between border-t border-slate-100 dark:border-slate-800">
-                      {isPaidInCurrentMonth ? (
-                        <div className="flex items-center justify-between w-full">
-                          <span className="text-xs font-black text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
-                            <CheckCircle2 className="w-4 h-4" /> Pago neste mês
-                          </span>
-                          <button
-                            onClick={() => handleUnpayBill(bill)}
-                            className="text-[11px] text-slate-500 hover:text-rose-600 font-bold underline cursor-pointer"
-                          >
-                            Estornar Baixa
-                          </button>
-                        </div>
-                      ) : (
-                        <div className="flex items-center justify-between w-full">
-                          <span className="text-xs font-bold text-amber-600 dark:text-amber-400">
-                            Pendente em {state.currentMonth}
-                          </span>
-                          <button
-                            onClick={() => handleOpenPayBillModal(bill)}
-                            className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black shadow-xs cursor-pointer"
-                          >
-                            Dar Baixa →
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
+                  );
+                })}
+              </div>
             </div>
           )}
         </div>

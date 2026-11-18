@@ -924,7 +924,9 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                       </button>
                     </h4>
                     <p className="text-xs text-slate-600 dark:text-slate-400 font-medium">
-                      Teto aprovado: {formatCurrency(reconciledBudgetMatrix.structureBlocks.fixos.plannedBudget)} ({reconciledBudgetMatrix.policyRatios.fixedPct}% da renda planejada)
+                      {reconciledBudgetMatrix.structureBlocks.fixos.hasExplicitCeiling
+                        ? `Teto aprovado: ${formatCurrency(reconciledBudgetMatrix.structureBlocks.fixos.plannedBudget)} (${reconciledBudgetMatrix.policyRatios.fixedPct}% da renda planejada)`
+                        : 'Sem teto individual aprovado para este escopo'}
                     </p>
                   </div>
                 </div>
@@ -986,7 +988,9 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                       Bloco 2: Custos Variáveis do Mês
                     </h4>
                     <p className="text-xs text-slate-600 dark:text-slate-400 font-medium">
-                      Teto aprovado: {formatCurrency(reconciledBudgetMatrix.structureBlocks.variaveis.plannedBudget)} ({reconciledBudgetMatrix.policyRatios.varPct}% da renda planejada)
+                      {reconciledBudgetMatrix.structureBlocks.variaveis.hasExplicitCeiling
+                        ? `Teto aprovado: ${formatCurrency(reconciledBudgetMatrix.structureBlocks.variaveis.plannedBudget)} (${reconciledBudgetMatrix.policyRatios.varPct}% da renda planejada)`
+                        : 'Sem teto individual aprovado para este escopo'}
                     </p>
                   </div>
                 </div>
@@ -1085,6 +1089,28 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                 💡 Aportes não realizados não viram despesa nem aumentam o consumo de despesas.
               </p>
             </div>
+
+            {/* Classificação de Natureza Pendente (R29-14) */}
+            {reconciledBudgetMatrix.unclassifiedSpent > 0 && (
+              <div className="p-4 rounded-2xl border-2 border-amber-200 dark:border-amber-900/60 bg-amber-50/40 dark:bg-amber-950/20 space-y-1.5">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xl">🏷️</span>
+                    <div>
+                      <h4 className="text-sm font-black text-slate-900 dark:text-white">
+                        Classificação de Natureza Pendente ({reconciledBudgetMatrix.pendingClassificationCount} {reconciledBudgetMatrix.pendingClassificationCount === 1 ? 'item' : 'itens'})
+                      </h4>
+                      <p className="text-xs text-slate-600 dark:text-slate-400 font-medium">
+                        {formatCurrency(reconciledBudgetMatrix.unclassifiedSpent)} preservados no consumo total sem inflar Fixos ou Variáveis até confirmação.
+                      </p>
+                    </div>
+                  </div>
+                  <span className="text-[11px] font-extrabold text-amber-800 dark:text-amber-300 bg-amber-100 dark:bg-amber-900/60 px-2.5 py-1 rounded-full border border-amber-300 dark:border-amber-800">
+                    Triagem Pendente
+                  </span>
+                </div>
+              </div>
+            )}
 
             {/* Bloco Extraordinários (Path B - Caixinhas) */}
             {reconciledBudgetMatrix.goalDirectConsumption > 0 && (

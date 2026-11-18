@@ -625,7 +625,23 @@ export interface BudgetPlanPolicyMeta {
 export interface CategoryMatrixEntryCents {
   fixedCents: number;
   variableCents: number;
+  unclassifiedCents?: number;
   totalCents: number;
+}
+
+export type CeilingState = 'explicit_positive' | 'explicit_zero' | 'absent';
+
+export interface FixedBillRegistryConflict {
+  billId: string;
+  reason: string;
+}
+
+export interface PartnerScopedPlanCeiling {
+  plannedNetIncome: number;
+  fixedCeilingR$?: number;
+  variableCeilingR$?: number;
+  investTargetR$?: number;
+  categoryAmountsR$?: Partial<Record<DestinationKey, number>>;
 }
 
 export interface BudgetPlanContract {
@@ -658,9 +674,10 @@ export interface BudgetPlanContract {
   approvedAt?: string;
   approvedBy?: string;
   applyToFutureMonths?: boolean;
+  partnerCeilings?: Partial<Record<'partner1' | 'partner2', PartnerScopedPlanCeiling>>;
 }
 
-// 28C: Tipos para as Duas Visões Reconciliadas do Orçamento (Categorias vs Estrutura)
+// 28C & 29B: Tipos para as Duas Visões Reconciliadas do Orçamento (Categorias vs Estrutura)
 export interface ReconciledStructureBlock {
   key: 'fixos' | 'variaveis';
   title: string;
@@ -673,6 +690,9 @@ export interface ReconciledStructureBlock {
   isOverCeiling: boolean;
   overAmount: number; // R$
   percentageUsed: number;
+  hasExplicitCeiling?: boolean;
+  ceilingState?: CeilingState;
+  denominatorLabel?: string;
 }
 
 export interface ReconciledInvestmentBlock {
@@ -690,13 +710,16 @@ export interface ReconciledCategoryRow {
   plannedBudget: number; // R$
   fixedSpent: number; // R$ (fatias de natureza fixa)
   variableSpent: number; // R$ (fatias de natureza variável)
-  realizedLiquid: number; // R$ (fixedSpent + variableSpent)
+  unclassifiedSpent?: number; // R$ (fatias sem natureza confiável — pendente de classificação)
+  realizedLiquid: number; // R$ (fixedSpent + variableSpent + unclassifiedSpent)
   pendingCommitments: number; // R$ (obrigações pendentes da categoria)
   projectedTotal: number; // R$ (realized + pending)
   signedMargin: number; // R$ (plannedBudget - projectedTotal)
   isOverCeiling: boolean;
   overAmount: number; // R$
   percentageUsed: number;
+  hasExplicitCeiling?: boolean;
+  ceilingState?: CeilingState;
 }
 
 export interface ReconciledBudgetMatrixResult {
@@ -705,6 +728,8 @@ export interface ReconciledBudgetMatrixResult {
   plannedNetIncome: number; // R$ (base alocada no plano)
   receivedEligibleNetIncome: number; // R$ (renda alocada recebida no caixa)
   policyRatios: { fixedPct: number; varPct: number; investPct: number };
+  hasExplicitCeiling?: boolean;
+  ceilingState?: CeilingState;
   
   // Visão por Estrutura (Fixos vs Variáveis vs Aportes)
   structureBlocks: {
@@ -722,6 +747,13 @@ export interface ReconciledBudgetMatrixResult {
   totalPendingCommitments: number; // R$
   totalProjectedConsumption: number; // R$
   totalSignedMargin: number; // R$
+
+  // 29B: Parcela sem natureza confiável (pendente de classificação, preservada no total sem inventar variável)
+  unclassifiedSpent?: number; // R$
+  unclassifiedCents?: number;
+  pendingClassificationCount?: number;
+  pendingClassificationSliceIds?: string[];
+  registryConflicts?: FixedBillRegistryConflict[];
   
   // Consumo Extraordinário de Caixinha/Reserva (Path B - C43)
   goalDirectConsumption: number; // R$
@@ -1195,6 +1227,7 @@ export interface FixedBillAlert {
   title: string;
   category: CategoryKey;
   amount: number;
+  amountCents?: number;
   dueDay: number; // Day of month (1-31)
   assignedPayer: PaidBy;
   bankAccountOrCard?: string;
@@ -1209,6 +1242,10 @@ export interface FixedBillAlert {
   assignedTo?: PaidBy;
   splitPartner1Pct?: number;
   splitPartner2Pct?: number;
+  nature?: ExpenseNature;
+  priority?: ExpensePriority;
+  validFrom?: string; // YYYY-MM ou YYYY-MM-DD
+  validTo?: string; // YYYY-MM ou YYYY-MM-DD
 }
 
 export interface DreamSimulation {

@@ -149,10 +149,16 @@ export const FixedBillsPanelModal: React.FC<FixedBillsPanelModalProps> = ({
                 </span>
               </div>
 
-              {summary.hasExplicitCeiling ? (
+              {summary.ceilingState === 'explicit_positive' ? (
                 <div className="text-right">
                   <span className="text-xs font-extrabold text-indigo-700 dark:text-indigo-300 bg-indigo-100 dark:bg-indigo-900/60 px-3 py-1 rounded-full border border-indigo-200 dark:border-indigo-800">
                     Consumo: {summary.pctConsumedOfCeiling.toFixed(1)}% do Teto Fixo
+                  </span>
+                </div>
+              ) : summary.ceilingState === 'explicit_zero' ? (
+                <div className="text-right">
+                  <span className="text-xs font-extrabold text-indigo-700 dark:text-indigo-300 bg-indigo-100 dark:bg-indigo-900/60 px-3 py-1 rounded-full border border-indigo-200 dark:border-indigo-800">
+                    Teto Fixo Explícito: R$ 0,00
                   </span>
                 </div>
               ) : (
@@ -169,7 +175,7 @@ export const FixedBillsPanelModal: React.FC<FixedBillsPanelModalProps> = ({
                   Teto Aprovado
                 </div>
                 <div className="text-sm sm:text-base font-black text-slate-900 dark:text-white tabular-nums mt-0.5">
-                  {summary.hasExplicitCeiling ? formatCurrency(summary.fixedCeilingR$) : 'R$ 0,00'}
+                  {summary.hasExplicitCeiling ? formatCurrency(summary.fixedCeilingR$) : 'Não definido'}
                 </div>
               </div>
 
@@ -227,6 +233,21 @@ export const FixedBillsPanelModal: React.FC<FixedBillsPanelModalProps> = ({
                 <span>
                   Atenção: O comprometido fixo ultrapassou o teto em {formatCurrency(summary.excessR$)}.
                 </span>
+              </div>
+            )}
+
+            {/* Conflito entre cadastros de fixos (R29-11) */}
+            {summary.registryConflicts && summary.registryConflicts.length > 0 && (
+              <div className="p-3 rounded-xl bg-amber-100 dark:bg-amber-950/60 border border-amber-300 dark:border-amber-800 flex items-start gap-2 text-amber-900 dark:text-amber-200 text-xs font-bold">
+                <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+                <div>
+                  <div>Divergência detectada entre cadastros de contas fixas:</div>
+                  <ul className="list-disc list-inside font-medium mt-0.5">
+                    {summary.registryConflicts.map((c) => (
+                      <li key={c.billId}>{c.reason}</li>
+                    ))}
+                  </ul>
+                </div>
               </div>
             )}
           </div>

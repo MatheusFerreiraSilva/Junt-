@@ -2,14 +2,26 @@ import {
   CategoryKey,
   ExpenseItem,
   IncomeItem,
-  InstallmentPurchase,
   MedicalShift,
   PaidBy,
   AppState,
 } from '../types/finance';
-import { installmentInMonth, buildInstallmentSchedule } from './installmentMoney';
-import { roundMoney } from './thermometerEngine';
 import { getShiftBalance } from './shiftsEngine';
+import {
+  apportionCentsByScope,
+  clampDayToMonth,
+  doesExpenseMatchBillCompetence,
+  getApportionedAmount,
+  getDaysInMonth,
+  isFixedBillActiveInCompetence,
+  mapToCanonicalCategoryKey,
+  projectInstallmentOccurrencesForCompetence,
+  roundMoney,
+  selectCanonicalFixedBillsRegistry,
+  toSafeCents,
+} from './occurrenceProjection';
+
+export { getDaysInMonth, clampDayToMonth, getApportionedAmount };
 
 export type ObligationType = 'fixed_bill' | 'subscription' | 'installment' | 'medical_receivable';
 export type ObligationStatus = 'previsto' | 'vencido' | 'parcial' | 'pago' | 'cancelado';
@@ -24,6 +36,7 @@ export interface CalendarObligation {
   originalAmount: number;
   dueDate: string; // YYYY-MM-DD
   dueDay: number;
+  competenceMonth?: string; // YYYY-MM
   status: ObligationStatus;
   payer: PaidBy;
   assignedToPartner?: 'partner1' | 'partner2' | 'couple';
@@ -91,45 +104,9 @@ export interface CalendarMonthCalculatedResult {
 }
 
 /**
- * Total days in given month with leap year safety (Date.UTC).
- */
-export function getDaysInMonth(year: number, month: number): number {
-  return new Date(Date.UTC(year, month, 0)).getUTCDate();
-}
-
-/**
- * Clamps any due day (e.g. 31) to the actual maximum days of that month (28, 29, 30, or 31).
- */
-export function clampDayToMonth(year: number, month: number, day: number): number {
-  const maxDays = getDaysInMonth(year, month);
-  return Math.min(maxDays, Math.max(1, day));
-}
-
-/**
- * Calculates apportioned value based on view scope and custom/50-50 splits.
- */
-export function getApportionedAmount(
-  amount: number,
-  scope: 'couple' | 'partner1' | 'partner2' | 'casal',
-  payer: PaidBy | undefined,
-  splitPartner1Pct: number = 50,
-  splitPartner2Pct: number = 50
-): number {
-  if (scope === 'couple' || scope === 'casal') return roundMoney(amount);
-  if (payer === 'partner1') return scope === 'partner1' ? roundMoney(amount) : 0;
-  if (payer === 'partner2') return scope === 'partner2' ? roundMoney(amount) : 0;
-
-  // both or custom
-  if (scope === 'partner1') {
-    const p1 = typeof splitPartner1Pct === 'number' ? splitPartner1Pct : 50;
-    return roundMoney(amount * (p1 / 100));
-  }
-  const p2 = typeof splitPartner2Pct === 'number' ? splitPartner2Pct : (100 - (splitPartner1Pct ?? 50));
-  return roundMoney(amount * (p2 / 100));
-}
-
-/**
  * Pure deterministic calculation engine for the Financial Calendar Screen.
+ * Reconciled in 29B with canonical fixed bills registry, explicit competence settlement,
+ * vigência, unified installment projection, and exact integer-cent partner apportioning.
  */
 export function calculateCalendarEngine(
   state: AppState,
@@ -149,7 +126,7 @@ export function calculateCalendarEngine(
   const todayStr = options?.todayDateStr || now.toISOString().slice(0, 10);
 
   // 1. Calculate Available Cash from Valid Connected Accounts
-  const validAccounts = (state.linkedAccounts || []).filter(acc => {
+  const validAccounts = (state.linkedAccounts || []).filter((acc) => {
     if (acc.status === 'error') return false;
     if (typeof acc.balance !== 'number' || Number.isNaN(acc.balance)) return false;
     if (viewMode === 'partner1' && acc.holder === 'partner2') return false;
@@ -158,69 +135,97 @@ export function calculateCalendarEngine(
   });
 
   const hasCashReconciliation = validAccounts.length > 0;
-  const reconciledBankBalance = roundMoney(validAccounts.reduce((sum, acc) => sum + acc.balance, 0));
+  const reconciledBankBalance = roundMoney(
+    validAccounts.reduce((sum, acc) => sum + acc.balance, 0)
+  );
 
   let protectedFunds = 0;
   if (hasCashReconciliation) {
     if (viewMode === 'couple') {
-      protectedFunds = (state.protectionCurrentAmount || 0) + (state.piggyBanks || []).reduce((sum, b) => sum + (b.currentAmount || 0), 0);
+      protectedFunds =
+        (state.protectionCurrentAmount || 0) +
+        (state.piggyBanks || []).reduce((sum, b) => sum + (b.currentAmount || 0), 0);
     } else if (viewMode === 'partner1') {
       const reserveShare = roundMoney((state.protectionCurrentAmount || 0) * 0.5);
       const piggyShare = (state.piggyBanks || []).reduce((sum, b) => {
-        const sharePct = b.coupleAgreement?.type === 'proportional' ? (b.coupleAgreement.partner1SharePct / 100) : 0.5;
+        const sharePct =
+          b.coupleAgreement?.type === 'proportional'
+            ? b.coupleAgreement.partner1SharePct / 100
+            : 0.5;
         return sum + roundMoney((b.currentAmount || 0) * sharePct);
       }, 0);
       protectedFunds = reserveShare + piggyShare;
     } else {
       const reserveShare = roundMoney((state.protectionCurrentAmount || 0) * 0.5);
       const piggyShare = (state.piggyBanks || []).reduce((sum, b) => {
-        const sharePct = b.coupleAgreement?.type === 'proportional' ? (b.coupleAgreement.partner2SharePct / 100) : 0.5;
+        const sharePct =
+          b.coupleAgreement?.type === 'proportional'
+            ? b.coupleAgreement.partner2SharePct / 100
+            : 0.5;
         return sum + roundMoney((b.currentAmount || 0) * sharePct);
       }, 0);
       protectedFunds = reserveShare + piggyShare;
     }
   }
   protectedFunds = roundMoney(protectedFunds);
-  const availableCash = hasCashReconciliation ? roundMoney(reconciledBankBalance - protectedFunds) : 0;
+  const availableCash = hasCashReconciliation
+    ? roundMoney(reconciledBankBalance - protectedFunds)
+    : 0;
 
   // 2. Generate Canonical Obligations for activeMonth
   const allObligations: CalendarObligation[] = [];
+  const { bills: canonicalBills } = selectCanonicalFixedBillsRegistry(state);
+  const normalizedBillTitles = new Set(
+    canonicalBills.map((b) => (b.title || '').trim().toLowerCase()).filter(Boolean)
+  );
 
-  // A) Fixed Bills
-  (state.coupleFixedBills || state.fixedBillAlerts || []).forEach(bill => {
-    if (bill.isDeleted) return;
-    if (viewMode === 'partner1' && bill.assignedPayer === 'partner2') return;
-    if (viewMode === 'partner2' && bill.assignedPayer === 'partner1') return;
-
+  // A) Canonical Fixed Bills (coupleFixedBills + fixedBillAlerts reconciled, R29-10, R29-11, R29-16, R29-18)
+  canonicalBills.forEach((bill) => {
     const hist = bill.history?.[activeMonth];
+    const paidExpense = (state.expenses || []).find((e) =>
+      doesExpenseMatchBillCompetence(e, bill.id, activeMonth)
+    );
+    const hasHistoryForMonth = Boolean(hist);
+    const isLegacySinglePaid =
+      !hasHistoryForMonth &&
+      ((bill.lastPaidMonth === activeMonth &&
+        bill.status !== 'pending' &&
+        (bill.status as string) !== 'estornado') ||
+        ((bill.status === 'paid' || (bill.status as string) === 'pago') &&
+          !bill.lastPaidMonth &&
+          bill.dueDate?.slice(0, 7) === activeMonth));
 
-    // Se a conta está desativada e não possui histórico para este mês, não gera ocorrência futura (Proof 3)
-    if (bill.active === false && !hist) {
+    const isPaid = hist?.status === 'paid' || Boolean(paidExpense) || isLegacySinglePaid;
+
+    if (!isFixedBillActiveInCompetence(bill, activeMonth, isPaid)) {
       return;
     }
+
+    const plannedCents = toSafeCents(bill.amount, bill.amountCents);
+    const effectiveCents = isPaid
+      ? paidExpense
+        ? toSafeCents(paidExpense.amount, paidExpense.amountCents)
+        : hist?.paidAmount !== undefined
+        ? toSafeCents(hist.paidAmount)
+        : plannedCents
+      : plannedCents;
+
+    const effectivePayer: PaidBy =
+      (paidExpense?.paidBy || hist?.paidBy || bill.assignedPayer || bill.assignedTo || 'both') as PaidBy;
+    const splitP1 = paidExpense?.splitPartner1Pct ?? bill.splitPartner1Pct;
+    const splitP2 = paidExpense?.splitPartner2Pct ?? bill.splitPartner2Pct;
+    const split = apportionCentsByScope(effectiveCents, viewMode, effectivePayer, splitP1, splitP2);
+    if (!split.isInScope) return;
 
     const originalDueDay = clampDayToMonth(year, month, bill.dueDay || 10);
     const standardDueDate = `${activeMonth}-${String(originalDueDay).padStart(2, '0')}`;
     const effectiveDueDate = options?.postponedObligations?.[`bill-${bill.id}`] || standardDueDate;
     const isPostponed = Boolean(options?.postponedObligations?.[`bill-${bill.id}`]);
 
-    const apportionedAmt = getApportionedAmount(bill.amount, viewMode, bill.assignedPayer, 50, 50);
-
-    // Canonical matching of paid bill in expenses
-    const paidExpense = (state.expenses || []).find(e =>
-      (e.linkedBillId === bill.id && (e.billCompetenceMonth === activeMonth || e.date.startsWith(activeMonth))) ||
-      e.id === `exp-fb-${bill.id}-${activeMonth}`
-    );
-
-    const isPaid =
-      hist?.status === 'paid' ||
-      Boolean(paidExpense) ||
-      (bill.lastPaidMonth === activeMonth && bill.status === 'paid');
-
     let status: ObligationStatus = 'previsto';
     if (isPaid) {
       status = 'pago';
-    } else if (effectiveDueDate < todayStr) {
+    } else if (hist?.status === 'overdue' || effectiveDueDate < todayStr) {
       status = 'vencido';
     }
 
@@ -229,38 +234,47 @@ export function calculateCalendarEngine(
       sourceId: bill.id,
       type: 'fixed_bill',
       title: bill.title,
-      category: bill.category,
-      amount: apportionedAmt,
-      originalAmount: bill.amount,
+      category: mapToCanonicalCategoryKey(bill.category),
+      amount: roundMoney(split.scopedCents / 100),
+      originalAmount: roundMoney(plannedCents / 100),
       dueDate: effectiveDueDate,
       dueDay: parseInt(effectiveDueDate.slice(8, 10), 10),
+      competenceMonth: activeMonth,
       status,
-      payer: bill.assignedPayer,
-      assignedToPartner: (bill.assignedPayer === 'both' || bill.assignedPayer === 'custom' || bill.assignedPayer === 'casal' || bill.assignedPayer === 'couple') ? 'couple' : bill.assignedPayer,
-      linkedExpenseId: paidExpense?.id,
+      payer: effectivePayer,
+      assignedToPartner:
+        effectivePayer === 'both' ||
+        effectivePayer === 'custom' ||
+        effectivePayer === 'casal' ||
+        effectivePayer === 'couple'
+          ? 'couple'
+          : effectivePayer,
+      linkedExpenseId: paidExpense?.id ?? hist?.linkedExpenseId,
       notes: bill.autoPay ? 'Débito automático' : undefined,
       isSimulatedPostponed: isPostponed,
       originalDueDate: isPostponed ? standardDueDate : undefined,
     });
   });
 
-  // B) Subscriptions
-  (state.detectedSubscriptions || []).forEach(sub => {
+  // B) Detected Subscriptions (advisory agenda items; never duplicated when already promoted to fixed bills)
+  (state.detectedSubscriptions || []).forEach((sub) => {
     if (sub.status === 'dismissed') return;
-    if (viewMode === 'partner1' && sub.payer === 'partner2') return;
-    if (viewMode === 'partner2' && sub.payer === 'partner1') return;
+    if (normalizedBillTitles.has((sub.merchant || '').trim().toLowerCase())) return;
+
+    const subCents = toSafeCents(sub.amount);
+    const split = apportionCentsByScope(subCents, viewMode, sub.payer || 'both');
+    if (!split.isInScope) return;
 
     const originalDueDay = clampDayToMonth(year, month, sub.dueDay || 15);
     const standardDueDate = `${activeMonth}-${String(originalDueDay).padStart(2, '0')}`;
     const effectiveDueDate = options?.postponedObligations?.[`sub-${sub.id}`] || standardDueDate;
     const isPostponed = Boolean(options?.postponedObligations?.[`sub-${sub.id}`]);
 
-    const apportionedAmt = getApportionedAmount(sub.amount, viewMode, sub.payer || 'both', 50, 50);
-
-    // Check if paid in expenses
-    const paidExpense = (state.expenses || []).find(e =>
-      (e.notes?.includes(sub.id) || e.description.toLowerCase().includes(sub.merchant.toLowerCase())) &&
-      e.date.startsWith(activeMonth)
+    const paidExpense = (state.expenses || []).find(
+      (e) =>
+        (e.notes?.includes(sub.id) ||
+          e.description.toLowerCase().includes(sub.merchant.toLowerCase())) &&
+        (e.billCompetenceMonth ? e.billCompetenceMonth === activeMonth : e.date.startsWith(activeMonth))
     );
 
     const isPaid = Boolean(paidExpense);
@@ -277,11 +291,12 @@ export function calculateCalendarEngine(
       sourceId: sub.id,
       type: 'subscription',
       title: sub.merchant,
-      category: sub.category,
-      amount: apportionedAmt,
-      originalAmount: sub.amount,
+      category: mapToCanonicalCategoryKey(sub.category),
+      amount: roundMoney(split.scopedCents / 100),
+      originalAmount: roundMoney(subCents / 100),
       dueDate: effectiveDueDate,
       dueDay: parseInt(effectiveDueDate.slice(8, 10), 10),
+      competenceMonth: activeMonth,
       status,
       payer: sub.payer || 'both',
       linkedExpenseId: paidExpense?.id,
@@ -291,44 +306,34 @@ export function calculateCalendarEngine(
     });
   });
 
-  // C) Active & Historical Installments in activeMonth
-  (state.installments || []).forEach(inst => {
-    // Check if installment is due in activeMonth using canonical engine
-    const activeMonthAmount = installmentInMonth(inst, activeMonth);
-    if (activeMonthAmount <= 0) return; // Not active in this competence month
+  // C) Active & Historical Installments in activeMonth (unified 08/17 + 28C projection)
+  const instOccurrences = projectInstallmentOccurrencesForCompetence(
+    state,
+    activeMonth,
+    viewMode,
+    todayStr
+  );
+  const instCountBySource = new Map<string, number>();
+  instOccurrences.forEach((o) => {
+    instCountBySource.set(o.installmentId, (instCountBySource.get(o.installmentId) || 0) + 1);
+  });
 
-    if (viewMode === 'partner1' && inst.paidBy === 'partner2') return;
-    if (viewMode === 'partner2' && inst.paidBy === 'partner1') return;
-
-    const schedule = buildInstallmentSchedule(inst, todayStr);
-    const occurrence = schedule.find(o => o.competenceMonth === activeMonth);
-    const currentNumber = occurrence
-      ? occurrence.installmentNumber
-      : (year - parseInt(inst.startMonth.slice(0, 4), 10)) * 12 + (month - parseInt(inst.startMonth.slice(5, 7), 10)) + 1;
-
-    const exactAmount = occurrence ? occurrence.amountR$ : activeMonthAmount;
-
-    const originalDueDay = clampDayToMonth(year, month, inst.dueDay || 10);
-    const standardDueDate = `${activeMonth}-${String(originalDueDay).padStart(2, '0')}`;
-    const effectiveDueDate = options?.postponedObligations?.[`inst-${inst.id}`] || standardDueDate;
-    const isPostponed = Boolean(options?.postponedObligations?.[`inst-${inst.id}`]);
-
-    const apportionedAmt = getApportionedAmount(
-      exactAmount,
-      viewMode,
-      inst.paidBy,
-      inst.splitPartner1Pct ?? 50,
-      inst.splitPartner2Pct ?? 50
+  instOccurrences.forEach((instOcc) => {
+    const baseKey = `inst-${instOcc.installmentId}`;
+    const oblId =
+      (instCountBySource.get(instOcc.installmentId) || 0) > 1
+        ? `${baseKey}-${instOcc.installmentNumber}`
+        : baseKey;
+    const standardDueDate = instOcc.dueDate;
+    const effectiveDueDate =
+      options?.postponedObligations?.[oblId] ||
+      options?.postponedObligations?.[baseKey] ||
+      standardDueDate;
+    const isPostponed = Boolean(
+      options?.postponedObligations?.[oblId] || options?.postponedObligations?.[baseKey]
     );
 
-    // Check if already in expenses or already paid/advanced in occurrence schedule
-    const paidExpense = (state.expenses || []).find(e =>
-      e.installmentId === inst.id &&
-      (e.date.startsWith(activeMonth) || e.installmentIndex === currentNumber)
-    );
-
-    const isPaid = (occurrence && (occurrence.status === 'pago' || occurrence.status === 'antecipado')) || Boolean(paidExpense);
-
+    const isPaid = instOcc.status === 'paid' || instOcc.status === 'advanced';
     let status: ObligationStatus = 'previsto';
     if (isPaid) {
       status = 'pago';
@@ -337,22 +342,23 @@ export function calculateCalendarEngine(
     }
 
     allObligations.push({
-      id: `inst-${inst.id}`,
-      sourceId: inst.id,
+      id: oblId,
+      sourceId: instOcc.installmentId,
       type: 'installment',
-      title: `${inst.title} (${currentNumber}/${inst.installmentsCount})`,
-      category: inst.category,
-      amount: apportionedAmt,
-      originalAmount: activeMonthAmount,
+      title: `${instOcc.title} (${instOcc.installmentNumber}/${instOcc.totalInstallments})`,
+      category: mapToCanonicalCategoryKey(instOcc.category),
+      amount: roundMoney(instOcc.scopedCents / 100),
+      originalAmount: roundMoney(instOcc.plannedCents / 100),
       dueDate: effectiveDueDate,
       dueDay: parseInt(effectiveDueDate.slice(8, 10), 10),
+      competenceMonth: activeMonth,
       status,
-      payer: inst.paidBy,
-      linkedExpenseId: paidExpense?.id,
+      payer: instOcc.paidBy,
+      linkedExpenseId: instOcc.linkedExpenseId,
       installmentInfo: {
-        currentNumber,
-        totalNumber: inst.installmentsCount,
-        bankName: inst.bankName,
+        currentNumber: instOcc.installmentNumber,
+        totalNumber: instOcc.totalInstallments,
+        bankName: instOcc.bankName,
       },
       isSimulatedPostponed: isPostponed,
       originalDueDate: isPostponed ? standardDueDate : undefined,
@@ -360,7 +366,7 @@ export function calculateCalendarEngine(
   });
 
   // D) Medical Shift Receivables for activeMonth
-  (state.medicalShifts || []).forEach(shift => {
+  (state.medicalShifts || []).forEach((shift) => {
     if (shift.executionStatus === 'cancelled' || shift.executionStatus === 'replaced') return;
     if (viewMode === 'partner1' && shift.partner === 'partner2') return;
     if (viewMode === 'partner2' && shift.partner === 'partner1') return;
@@ -381,7 +387,8 @@ export function calculateCalendarEngine(
       status = 'vencido';
     }
 
-    const displayAmount = balance.pendingAmount > 0 ? balance.pendingAmount : balance.expectedAmount;
+    const displayAmount =
+      balance.pendingAmount > 0 ? balance.pendingAmount : balance.expectedAmount;
 
     allObligations.push({
       id: `shift-rec-${shift.id}`,
@@ -393,6 +400,7 @@ export function calculateCalendarEngine(
       originalAmount: roundMoney(balance.expectedAmount),
       dueDate,
       dueDay,
+      competenceMonth: activeMonth,
       status,
       payer: shift.partner,
       notes: `${shift.hospitalName} (${shift.durationHours}h)`,
@@ -401,36 +409,40 @@ export function calculateCalendarEngine(
 
   // 3. Concentration of Commitments Analysis
   const concentrationAlerts: DayConcentrationAlert[] = [];
-  const dayCommitmentBuckets: Record<number, { amount: number; count: number; dateStr: string }> = {};
+  const dayCommitmentBuckets: Record<number, { amountCents: number; count: number; dateStr: string }> = {};
 
   allObligations
-    .filter(o => o.type !== 'medical_receivable')
-    .forEach(o => {
+    .filter((o) => o.type !== 'medical_receivable')
+    .forEach((o) => {
       if (!dayCommitmentBuckets[o.dueDay]) {
-        dayCommitmentBuckets[o.dueDay] = { amount: 0, count: 0, dateStr: o.dueDate };
+        dayCommitmentBuckets[o.dueDay] = { amountCents: 0, count: 0, dateStr: o.dueDate };
       }
-      dayCommitmentBuckets[o.dueDay].amount = roundMoney(dayCommitmentBuckets[o.dueDay].amount + o.amount);
+      dayCommitmentBuckets[o.dueDay].amountCents += toSafeCents(o.amount);
       dayCommitmentBuckets[o.dueDay].count += 1;
     });
 
-  const totalMonthCommitments = roundMoney(
-    allObligations.filter(o => o.type !== 'medical_receivable').reduce((sum, o) => sum + o.amount, 0)
-  );
+  const totalMonthCommitmentsCents = allObligations
+    .filter((o) => o.type !== 'medical_receivable')
+    .reduce((sum, o) => sum + toSafeCents(o.amount), 0);
+  const totalMonthCommitments = roundMoney(totalMonthCommitmentsCents / 100);
 
   Object.entries(dayCommitmentBuckets).forEach(([dayKey, bucket]) => {
     const dayNum = parseInt(dayKey, 10);
-    const isHeavyAmount = bucket.amount >= 1000 || (totalMonthCommitments > 0 && bucket.amount / totalMonthCommitments >= 0.35);
-    const isMultipleBills = bucket.count >= 3 && bucket.amount >= 400;
+    const bucketAmount = roundMoney(bucket.amountCents / 100);
+    const isHeavyAmount =
+      bucketAmount >= 1000 ||
+      (totalMonthCommitments > 0 && bucketAmount / totalMonthCommitments >= 0.35);
+    const isMultipleBills = bucket.count >= 3 && bucketAmount >= 400;
 
     if (isHeavyAmount || isMultipleBills) {
-      const severity: 'high' | 'medium' = bucket.amount >= 1500 ? 'high' : 'medium';
+      const severity: 'high' | 'medium' = bucketAmount >= 1500 ? 'high' : 'medium';
       concentrationAlerts.push({
         dateStr: bucket.dateStr,
         dayNum,
-        totalAmount: bucket.amount,
+        totalAmount: bucketAmount,
         obligationsCount: bucket.count,
         severity,
-        message: `Concentração no dia ${dayNum}: ${bucket.count} pagamentos totalizando R$ ${bucket.amount.toLocaleString('pt-BR')}`,
+        message: `Concentração no dia ${dayNum}: ${bucket.count} pagamentos totalizando R$ ${bucketAmount.toLocaleString('pt-BR')}`,
       });
     }
   });
@@ -443,8 +455,8 @@ export function calculateCalendarEngine(
 
   const days: CalendarDayCalculatedData[] = [];
 
-  let totalMonthIncome = 0;
-  let totalMonthExpense = 0;
+  let totalMonthIncomeCents = 0;
+  let totalMonthExpenseCents = 0;
 
   // Pad beginning with previous month days
   for (let i = firstDayOfWeek - 1; i >= 0; i--) {
@@ -468,58 +480,69 @@ export function calculateCalendarEngine(
     });
   }
 
-  // Current month days
+  const parentIdsWithSplits = new Set(
+    (state.expenses || [])
+      .filter((e) => e.splits && e.splits.length > 0)
+      .map((e) => e.id)
+  );
+
+  // Current month days (cash/execution date view for transactions + competence obligations on due date)
   for (let dayNum = 1; dayNum <= totalDays; dayNum++) {
     const dateStr = `${activeMonth}-${String(dayNum).padStart(2, '0')}`;
     const isToday = dateStr === todayStr;
 
-    // Real Expenses
-    const dayExpenses = (state.expenses || []).filter(e => e.date === dateStr);
-    const calculatedDayExpenses = dayExpenses
-      .filter(e => {
-        if (viewMode === 'partner1' && e.paidBy === 'partner2') return false;
-        if (viewMode === 'partner2' && e.paidBy === 'partner1') return false;
-        return true;
-      })
-      .map(e => ({
+    // Real Expenses on civil date (avoiding splitParentId duplicate rows)
+    const dayExpenses = (state.expenses || []).filter(
+      (e) => e.date === dateStr && !(e.splitParentId && parentIdsWithSplits.has(e.splitParentId))
+    );
+    const calculatedDayExpenses: { item: ExpenseItem; apportionedAmount: number; cents: number }[] = [];
+    for (const e of dayExpenses) {
+      const expCents = toSafeCents(e.amount, e.amountCents);
+      const split = apportionCentsByScope(
+        expCents,
+        viewMode,
+        e.paidBy,
+        e.splitPartner1Pct,
+        e.splitPartner2Pct,
+        e.assignedTo
+      );
+      if (!split.isInScope) continue;
+      calculatedDayExpenses.push({
         item: e,
-        apportionedAmount: getApportionedAmount(
-          e.amount,
-          viewMode,
-          e.paidBy,
-          e.splitPartner1Pct ?? 50,
-          e.splitPartner2Pct ?? (100 - (e.splitPartner1Pct ?? 50))
-        ),
-      }));
+        apportionedAmount: roundMoney(split.scopedCents / 100),
+        cents: split.scopedCents,
+      });
+    }
 
-    const dayExpSum = roundMoney(calculatedDayExpenses.reduce((sum, e) => sum + e.apportionedAmount, 0));
+    const dayExpCents = calculatedDayExpenses.reduce((sum, e) => sum + e.cents, 0);
+    const dayExpSum = roundMoney(dayExpCents / 100);
 
-    // Real Incomes
-    const dayIncomes = (state.incomes || []).filter(i => i.date === dateStr);
-    const calculatedDayIncomes = dayIncomes
-      .filter(i => {
-        if (viewMode === 'partner1' && i.recipient === 'partner2') return false;
-        if (viewMode === 'partner2' && i.recipient === 'partner1') return false;
-        return true;
-      })
-      .map(i => ({
-        item: i,
-        apportionedAmount:
-          viewMode !== 'couple' && i.recipient === 'both'
-            ? roundMoney(i.amount / 2)
-            : roundMoney(i.amount),
-      }));
+    // Real Incomes on civil date
+    const dayIncomes = (state.incomes || []).filter((i) => i.date === dateStr);
+    const calculatedDayIncomes: { item: IncomeItem; apportionedAmount: number; cents: number }[] = [];
+    for (const inc of dayIncomes) {
+      const incCents = toSafeCents(inc.amount);
+      const split = apportionCentsByScope(incCents, viewMode, inc.recipient);
+      if (!split.isInScope) continue;
+      calculatedDayIncomes.push({
+        item: inc,
+        apportionedAmount: roundMoney(split.scopedCents / 100),
+        cents: split.scopedCents,
+      });
+    }
 
-    const dayIncSum = roundMoney(calculatedDayIncomes.reduce((sum, i) => sum + i.apportionedAmount, 0));
+    const dayIncCents = calculatedDayIncomes.reduce((sum, i) => sum + i.cents, 0);
+    const dayIncSum = roundMoney(dayIncCents / 100);
 
     // Obligations on this date
-    const dayObligations = allObligations.filter(o => o.dueDate === dateStr);
-    const dayCommitmentsSum = roundMoney(
-      dayObligations.filter(o => o.type !== 'medical_receivable').reduce((sum, o) => sum + o.amount, 0)
-    );
+    const dayObligations = allObligations.filter((o) => o.dueDate === dateStr);
+    const dayCommitmentsCents = dayObligations
+      .filter((o) => o.type !== 'medical_receivable')
+      .reduce((sum, o) => sum + toSafeCents(o.amount), 0);
+    const dayCommitmentsSum = roundMoney(dayCommitmentsCents / 100);
 
     // Shifts worked on this day
-    const dayShiftsWorked = (state.medicalShifts || []).filter(s => {
+    const dayShiftsWorked = (state.medicalShifts || []).filter((s) => {
       if (s.dateWorked !== dateStr) return false;
       if (s.executionStatus === 'cancelled') return false;
       if (viewMode === 'partner1' && s.partner === 'partner2') return false;
@@ -527,22 +550,28 @@ export function calculateCalendarEngine(
       return true;
     });
 
-    totalMonthIncome = roundMoney(totalMonthIncome + dayIncSum);
-    totalMonthExpense = roundMoney(totalMonthExpense + dayExpSum);
+    totalMonthIncomeCents += dayIncCents;
+    totalMonthExpenseCents += dayExpCents;
 
     days.push({
       dateStr,
       dayNum,
       isCurrentMonth: true,
       isToday,
-      expenses: calculatedDayExpenses,
-      incomes: calculatedDayIncomes,
+      expenses: calculatedDayExpenses.map(({ item, apportionedAmount }) => ({
+        item,
+        apportionedAmount,
+      })),
+      incomes: calculatedDayIncomes.map(({ item, apportionedAmount }) => ({
+        item,
+        apportionedAmount,
+      })),
       obligations: dayObligations,
       medicalShiftsWorked: dayShiftsWorked,
       totalExpense: dayExpSum,
       totalIncome: dayIncSum,
       totalCommitments: dayCommitmentsSum,
-      net: roundMoney(dayIncSum - dayExpSum),
+      net: roundMoney((dayIncCents - dayExpCents) / 100),
     });
   }
 
@@ -570,20 +599,28 @@ export function calculateCalendarEngine(
 
   // 5. Agendas for Next 7 Days and Next 30 Days with Cash Reconciliation
   const todayDateObj = new Date(todayStr + 'T12:00:00Z');
-  const next7DaysEnd = new Date(todayDateObj.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
-  const next30DaysEnd = new Date(todayDateObj.getTime() + 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  const next7DaysEnd = new Date(todayDateObj.getTime() + 7 * 24 * 60 * 60 * 1000)
+    .toISOString()
+    .slice(0, 10);
+  const next30DaysEnd = new Date(todayDateObj.getTime() + 30 * 24 * 60 * 60 * 1000)
+    .toISOString()
+    .slice(0, 10);
 
   const filterAgendaObligations = (endDate: string) => {
     return allObligations
-      .filter(o => o.dueDate >= todayStr && o.dueDate <= endDate && o.type !== 'medical_receivable')
+      .filter((o) => o.dueDate >= todayStr && o.dueDate <= endDate && o.type !== 'medical_receivable')
       .sort((a, b) => a.dueDate.localeCompare(b.dueDate));
   };
 
   const obligations7Days = filterAgendaObligations(next7DaysEnd);
-  const totalCommitments7Days = roundMoney(obligations7Days.reduce((sum, o) => sum + o.amount, 0));
+  const totalCommitments7Days = roundMoney(
+    obligations7Days.reduce((sum, o) => sum + toSafeCents(o.amount), 0) / 100
+  );
 
   const obligations30Days = filterAgendaObligations(next30DaysEnd);
-  const totalCommitments30Days = roundMoney(obligations30Days.reduce((sum, o) => sum + o.amount, 0));
+  const totalCommitments30Days = roundMoney(
+    obligations30Days.reduce((sum, o) => sum + toSafeCents(o.amount), 0) / 100
+  );
 
   const agenda7Days: UpcomingAgendaSummary = {
     periodDays: 7,
@@ -592,8 +629,12 @@ export function calculateCalendarEngine(
     availableCash,
     hasCashReconciliation,
     isCashSufficient: !hasCashReconciliation || availableCash >= totalCommitments7Days,
-    cashDeficit: hasCashReconciliation ? Math.max(0, roundMoney(totalCommitments7Days - availableCash)) : 0,
-    concentrationAlerts: concentrationAlerts.filter(a => a.dateStr >= todayStr && a.dateStr <= next7DaysEnd),
+    cashDeficit: hasCashReconciliation
+      ? Math.max(0, roundMoney(totalCommitments7Days - availableCash))
+      : 0,
+    concentrationAlerts: concentrationAlerts.filter(
+      (a) => a.dateStr >= todayStr && a.dateStr <= next7DaysEnd
+    ),
   };
 
   const agenda30Days: UpcomingAgendaSummary = {
@@ -603,21 +644,28 @@ export function calculateCalendarEngine(
     availableCash,
     hasCashReconciliation,
     isCashSufficient: !hasCashReconciliation || availableCash >= totalCommitments30Days,
-    cashDeficit: hasCashReconciliation ? Math.max(0, roundMoney(totalCommitments30Days - availableCash)) : 0,
-    concentrationAlerts: concentrationAlerts.filter(a => a.dateStr >= todayStr && a.dateStr <= next30DaysEnd),
+    cashDeficit: hasCashReconciliation
+      ? Math.max(0, roundMoney(totalCommitments30Days - availableCash))
+      : 0,
+    concentrationAlerts: concentrationAlerts.filter(
+      (a) => a.dateStr >= todayStr && a.dateStr <= next30DaysEnd
+    ),
   };
 
   const commitmentsPaid = roundMoney(
     allObligations
-      .filter(o => o.status === 'pago' && o.type !== 'medical_receivable')
-      .reduce((sum, o) => sum + o.amount, 0)
+      .filter((o) => o.status === 'pago' && o.type !== 'medical_receivable')
+      .reduce((sum, o) => sum + toSafeCents(o.amount), 0) / 100
   );
 
   const commitmentsPending = roundMoney(
     allObligations
-      .filter(o => o.status !== 'pago' && o.type !== 'medical_receivable')
-      .reduce((sum, o) => sum + o.amount, 0)
+      .filter((o) => o.status !== 'pago' && o.type !== 'medical_receivable')
+      .reduce((sum, o) => sum + toSafeCents(o.amount), 0) / 100
   );
+
+  const totalMonthIncome = roundMoney(totalMonthIncomeCents / 100);
+  const totalMonthExpense = roundMoney(totalMonthExpenseCents / 100);
 
   return {
     activeMonth,
@@ -628,7 +676,7 @@ export function calculateCalendarEngine(
       commitmentsTotal: totalMonthCommitments,
       commitmentsPending,
       commitmentsPaid,
-      balance: roundMoney(totalMonthIncome - totalMonthExpense),
+      balance: roundMoney((totalMonthIncomeCents - totalMonthExpenseCents) / 100),
     },
     allMonthObligations: allObligations,
     concentrationAlerts,

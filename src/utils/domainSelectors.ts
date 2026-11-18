@@ -33,10 +33,23 @@ import {
   ReconciledInvestmentBlock,
   ReconciledCategoryRow,
   CategoryMatrixEntryCents,
+  CeilingState,
+  FixedBillRegistryConflict,
 } from '../types/finance';
 import {
   readOperationAmountCents,
 } from './financialCommands';
+import {
+  apportionCentsByScope,
+  CATEGORY_PRESENTATION_META,
+  projectCanonicalExpenseSlices,
+  projectInstallmentOccurrencesForCompetence,
+  projectSharedFixedOccurrences,
+  resolveExpenseCompetenceMonth,
+  selectCanonicalFixedBillsRegistry,
+  toSafeCents,
+  type ResolvedSliceNature,
+} from './occurrenceProjection';
 
 export {
   roundMoneyCentsCompatible,
@@ -160,28 +173,37 @@ export function selectCanonicalConsumptionExpenses(
 }
 
 /**
-  * Computes total consumption expenses for scope and month.
+  * Computes total consumption expenses for scope and month (in exact integer cents).
   */
 export function selectConsumptionExpensesTotal(
   state: AppState,
   scope: DomainScope = 'casal',
   monthKey?: string
 ): number {
-  const expenses = selectCanonicalConsumptionExpenses(state, 'casal', monthKey);
-  const total = expenses.reduce((sum, exp) => {
-    if (scope === 'casal') return sum + (exp.amount || 0);
-    if (exp.paidBy === scope) return sum + (exp.amount || 0);
-    if (exp.paidBy === 'both') {
-      const pct = scope === 'partner1' ? (exp.splitPartner1Pct ?? 50) : (exp.splitPartner2Pct ?? 50);
-      return sum + ((exp.amount || 0) * pct) / 100;
+  const expenses = state.expenses || [];
+  let totalCents = 0;
+  for (const exp of expenses) {
+    if (exp.isExcludedFromMonthlyBudget) continue;
+    const expComp = resolveExpenseCompetenceMonth(exp);
+    if (monthKey && expComp !== monthKey) continue;
+    const split = apportionCentsByScope(
+      toSafeCents(exp.amount, exp.amountCents),
+      scope,
+      exp.paidBy,
+      exp.splitPartner1Pct,
+      exp.splitPartner2Pct,
+      exp.assignedTo
+    );
+    if (split.isInScope) {
+      totalCents += split.scopedCents;
     }
-    return sum;
-  }, 0);
-  return roundMoney(total);
+  }
+  return roundMoney(totalCents / 100);
 }
 
 /**
   * Computes pending financial obligations (fixed bills + credit installments) due in monthKey not yet in expenses.
+  * Delegates to shared occurrence projections (reconciling coupleFixedBills + fixedBillAlerts and explicit competence).
   */
 export function selectPendingObligationsTotal(
   state: AppState,
@@ -189,37 +211,24 @@ export function selectPendingObligationsTotal(
   monthKey?: string
 ): number {
   if (!monthKey) return 0;
-  let total = 0;
+  let totalPendingCents = 0;
 
-  const currentMonthExpenses = (state.expenses || []).filter((e) => e.date && e.date.startsWith(monthKey));
-
-  // A) Pending fixed bills
-  (state.coupleFixedBills || []).forEach((bill) => {
-    if (bill.status === 'paid') return;
-    if (!isEntityInScope(bill.assignedPayer, scope)) return;
-
-    const dueDayStr = String(bill.dueDay).padStart(2, '0');
-    const fullDate = `${monthKey}-${dueDayStr}`;
-    const alreadyInExpenses = currentMonthExpenses.some(
-      (e) => e.description.toLowerCase().trim() === bill.title.toLowerCase().trim() && e.date === fullDate
-    );
-    if (!alreadyInExpenses) {
-      total += bill.amount || 0;
+  const { occurrences: fixedOccs } = projectSharedFixedOccurrences(state, monthKey, scope);
+  for (const occ of fixedOccs) {
+    if (occ.status !== 'paid') {
+      totalPendingCents += occ.apportionedAmountCents;
     }
-  });
+  }
 
-  // B) Pending active credit card installments
-  (state.installments || []).forEach((inst) => {
-    if (!inst.active) return;
-    if (!isEntityInScope(inst.paidBy, scope)) return;
-
-    const alreadyInExpenses = currentMonthExpenses.some((e) => e.installmentId === inst.id);
-    if (!alreadyInExpenses) {
-      total += inst.installmentAmount || 0;
+  const instOccs = projectInstallmentOccurrencesForCompetence(state, monthKey, scope);
+  for (const instOcc of instOccs) {
+    if (instOcc.isFixedNature) continue; // já incluído em fixedOccs
+    if (instOcc.status !== 'paid' && instOcc.status !== 'advanced') {
+      totalPendingCents += instOcc.scopedCents;
     }
-  });
+  }
 
-  return roundMoney(total);
+  return roundMoney(totalPendingCents / 100);
 }
 
 /**
@@ -1072,7 +1081,10 @@ export interface ProjectedExpenseSlice {
   category: CategoryKey;
   subcategory?: string;
   nature: ExpenseNature;
+  resolvedNature: ResolvedSliceNature;
+  hasReliableNature: boolean;
   priority: ExpensePriority;
+  isEssential: boolean;
   policyMacroGroup: PolicyMacroGroup;
   classificationOrigin: ClassificationOrigin;
   notes?: string;
@@ -1082,6 +1094,8 @@ export interface ProjectedExpenseSlice {
   isExcludedFromMonthlyBudget?: boolean;
   exclusionReason?: 'manual' | 'asset_funding' | 'goal_direct';
   date: string;
+  competenceMonth: string;
+  cashMonth: string;
   paidBy: PaidBy;
   assignedTo?: 'couple' | 'partner1' | 'partner2' | 'casal';
   paymentMethod?: 'pix' | 'debit' | 'credit' | 'cash';
@@ -1094,103 +1108,17 @@ export interface ProjectedExpenseSlice {
 }
 
 /**
- * 28B: Projeta as fatias de uma despesa.
- * Se a compra já possui grupos embutidos (splits), projeta cada fatia individualmente com seus centavos inteiros.
- * Se for uma compra simples, projeta uma fatia virtual com a totalidade sem reescrever histórico.
+ * 28B & 29B: Projeta as fatias de uma despesa preservando centavos inteiros,
+ * competência explícita e confiabilidade da natureza (sem inventar 'variavel' no desconhecido).
  */
-export function projectExpenseSplits(exp: ExpenseItem): ProjectedExpenseSlice[] {
-  if (exp.splits && exp.splits.length > 0) {
-    return exp.splits.map((s, idx) => {
-      const cents =
-        s.amountCents !== undefined && Number.isFinite(s.amountCents)
-          ? Math.round(s.amountCents)
-          : Math.round((s.amount || 0) * 100);
-      const nature: ExpenseNature = s.nature || exp.nature || 'variavel';
-      const priority: ExpensePriority = s.priority || exp.priority || 'essencial';
-      const policyMacroGroup: PolicyMacroGroup =
-        s.policyMacroGroup || (exp.policyMacroGroup ?? (nature === 'fixa' ? 'fixos' : 'variaveis'));
-      const classificationOrigin: ClassificationOrigin =
-        s.classificationOrigin || exp.classificationOrigin || 'manual_confirmed';
-      const fundingSource: FundingSourceType =
-        s.fundingSource || exp.fundingSource || 'month_budget';
-      const isExcluded =
-        exp.isExcludedFromMonthlyBudget || (fundingSource !== 'month_budget');
-
-      return {
-        splitId: s.id || `${exp.id}-split-${idx}`,
-        expenseId: exp.id,
-        parentExpenseId: exp.id,
-        parentExpense: exp,
-        amount: cents / 100,
-        amountCents: cents,
-        category: s.category || exp.category,
-        subcategory: s.subcategory || exp.subcategory,
-        nature,
-        priority,
-        policyMacroGroup,
-        classificationOrigin,
-        notes: s.notes || exp.notes,
-        fundingSource,
-        fundingGoalId: s.fundingGoalId || exp.fundingGoalId,
-        fundingGoalName: exp.fundingGoalName,
-        isExcludedFromMonthlyBudget: isExcluded,
-        exclusionReason: exp.exclusionReason,
-        date: exp.date,
-        paidBy: (s as any).paidBy || exp.paidBy,
-        assignedTo: (s as any).assignedTo || exp.assignedTo,
-        paymentMethod: exp.paymentMethod,
-        bankName: exp.bankName,
-        store: exp.store,
-        lineType: s.lineType || 'item',
-        targetDate: s.targetDate,
-        isPostponable: s.isPostponable,
-        isVirtualSingleSplit: false,
-      };
-    });
+export function projectExpenseSplits(
+  exp: ExpenseItem,
+  options?: {
+    keywordRules?: CategoryKeywordRule[];
+    installments?: InstallmentPurchase[];
   }
-
-  // Compra simples projeta uma fatia virtual única
-  const cents = Math.round((exp.amount || 0) * 100);
-  const nature: ExpenseNature = exp.nature || 'variavel';
-  const priority: ExpensePriority = exp.priority || 'essencial';
-  const policyMacroGroup: PolicyMacroGroup =
-    exp.policyMacroGroup || (nature === 'fixa' ? 'fixos' : 'variaveis');
-  const classificationOrigin: ClassificationOrigin =
-    exp.classificationOrigin || 'manual_confirmed';
-  const fundingSource: FundingSourceType = exp.fundingSource || 'month_budget';
-  const isExcluded =
-    exp.isExcludedFromMonthlyBudget || (fundingSource !== 'month_budget');
-
-  return [
-    {
-      splitId: `${exp.id}-virtual-split-0`,
-      expenseId: exp.id,
-      parentExpenseId: exp.id,
-      parentExpense: exp,
-      amount: exp.amount,
-      amountCents: cents,
-      category: exp.category,
-      subcategory: exp.subcategory,
-      nature,
-      priority,
-      policyMacroGroup,
-      classificationOrigin,
-      notes: exp.notes,
-      fundingSource,
-      fundingGoalId: exp.fundingGoalId,
-      fundingGoalName: exp.fundingGoalName,
-      isExcludedFromMonthlyBudget: isExcluded,
-      exclusionReason: exp.exclusionReason,
-      date: exp.date,
-      paidBy: exp.paidBy,
-      assignedTo: exp.assignedTo,
-      paymentMethod: exp.paymentMethod,
-      bankName: exp.bankName,
-      store: exp.store,
-      lineType: 'item',
-      isVirtualSingleSplit: true,
-    },
-  ];
+): ProjectedExpenseSlice[] {
+  return projectCanonicalExpenseSlices(exp, options);
 }
 
 /**
@@ -1320,7 +1248,11 @@ export function apportionDiscountOrFreight(
 export function selectExpenseSlices(
   expenses: ExpenseItem[],
   scope: DomainScope = 'casal',
-  monthKey?: string
+  monthKey?: string,
+  options?: {
+    keywordRules?: CategoryKeywordRule[];
+    installments?: InstallmentPurchase[];
+  }
 ): ProjectedExpenseSlice[] {
   if (!expenses || expenses.length === 0) return [];
 
@@ -1335,31 +1267,39 @@ export function selectExpenseSlices(
       continue;
     }
 
-    if (monthKey && exp.date && !exp.date.startsWith(monthKey)) {
-      continue;
+    const expSlices = projectExpenseSplits(exp, options);
+    for (const slice of expSlices) {
+      if (monthKey && slice.competenceMonth !== monthKey) {
+        continue;
+      }
+      const split = apportionCentsByScope(
+        slice.amountCents,
+        scope,
+        slice.paidBy,
+        exp.splitPartner1Pct,
+        exp.splitPartner2Pct,
+        slice.assignedTo
+      );
+      if (!split.isInScope) {
+        continue;
+      }
+      slices.push(slice);
     }
-
-    if (!isEntityInScope(exp.paidBy, scope)) {
-      continue;
-    }
-
-    const expSlices = projectExpenseSplits(exp);
-    slices.push(...expSlices);
   }
 
   return slices;
 }
 
 /**
- * 28B: Total gasto por categoria a partir das fatias projetadas.
- * Aloca exatamente a parcela de cada grupo à sua categoria correspondente. (C01, C44)
+ * 28B & 29B: Total gasto por categoria a partir das fatias projetadas em centavos inteiros.
+ * Aloca exatamente a parcela de cada grupo à sua categoria correspondente sem deriva de ponto flutuante. (C01, C44, R29-12, R29-16)
  */
 export function selectSplitsCategorySpending(
   state: AppState,
   scope: DomainScope = 'casal',
   monthKey?: string
 ): Record<CategoryKey, number> {
-  const res: Record<CategoryKey, number> = {
+  const centsByCat: Record<string, number> = {
     moradia: 0,
     transporte: 0,
     comida: 0,
@@ -1368,30 +1308,35 @@ export function selectSplitsCategorySpending(
     profissional: 0,
   };
 
-  const slices = selectExpenseSlices(state.expenses || [], scope, monthKey);
+  const slices = selectExpenseSlices(state.expenses || [], scope, monthKey, {
+    keywordRules: state.keywordRules,
+    installments: state.installments,
+  });
+
   for (const slice of slices) {
     if (slice.isExcludedFromMonthlyBudget || slice.fundingSource !== 'month_budget') {
       continue;
     }
     const cat = slice.category;
-    if ((res as any)[cat] === undefined) {
-      (res as any)[cat] = 0;
+    if (centsByCat[cat] === undefined) {
+      centsByCat[cat] = 0;
     }
-    let portion = slice.amount;
-    if (scope === 'partner1') {
-      const pct =
-        slice.parentExpense.splitPartner1Pct ??
-        (slice.paidBy === 'partner1' ? 100 : slice.paidBy === 'partner2' ? 0 : 50);
-      portion = (portion * pct) / 100;
-    } else if (scope === 'partner2') {
-      const pct =
-        slice.parentExpense.splitPartner2Pct ??
-        (slice.paidBy === 'partner2' ? 100 : slice.paidBy === 'partner1' ? 0 : 50);
-      portion = (portion * pct) / 100;
-    }
-    (res as any)[cat] = roundMoney((res as any)[cat] + portion);
+    const split = apportionCentsByScope(
+      slice.amountCents,
+      scope,
+      slice.paidBy,
+      slice.parentExpense.splitPartner1Pct,
+      slice.parentExpense.splitPartner2Pct,
+      slice.assignedTo
+    );
+    if (!split.isInScope) continue;
+    centsByCat[cat] += split.scopedCents;
   }
 
+  const res = {} as Record<CategoryKey, number>;
+  for (const [key, cents] of Object.entries(centsByCat)) {
+    (res as any)[key] = roundMoney(cents / 100);
+  }
   return res;
 }
 
@@ -1535,16 +1480,24 @@ export function selectPlannedNetIncome(
   scope: DomainScope = 'casal',
   monthKey?: string
 ): number {
-  if (monthKey && state.monthlyBudgetPlans?.[monthKey]?.plannedNetIncome !== undefined) {
-    const planIncome = state.monthlyBudgetPlans[monthKey].plannedNetIncome;
-    if (scope === 'casal') return planIncome;
-    return roundMoney(planIncome * 0.5);
+  const plan = monthKey ? state.monthlyBudgetPlans?.[monthKey] : undefined;
+  if (scope === 'casal') {
+    if (plan && typeof plan.plannedNetIncome === 'number' && Number.isFinite(plan.plannedNetIncome)) {
+      return Math.max(0, roundMoney(plan.plannedNetIncome));
+    }
+    const p1 = state.profile.partner1Income || 0;
+    const p2 = state.profile.partner2Income || 0;
+    return roundMoney(p1 + p2);
   }
-  const p1 = state.profile.partner1Income || 0;
-  const p2 = state.profile.partner2Income || 0;
-  if (scope === 'partner1') return p1;
-  if (scope === 'partner2') return p2;
-  return roundMoney(p1 + p2);
+
+  // 29B (R29-15): Um teto/plano individual ausente NUNCA é automaticamente metade arbitrária do plano do casal.
+  const partnerCeiling = plan?.partnerCeilings?.[scope];
+  if (partnerCeiling && typeof partnerCeiling.plannedNetIncome === 'number' && Number.isFinite(partnerCeiling.plannedNetIncome)) {
+    return Math.max(0, roundMoney(partnerCeiling.plannedNetIncome));
+  }
+  return scope === 'partner1'
+    ? roundMoney(state.profile.partner1Income || 0)
+    : roundMoney(state.profile.partner2Income || 0);
 }
 
 /**
@@ -1567,18 +1520,23 @@ export function selectGrossBankInflows(
     return isEntityInScope(recipientOwner, scope);
   });
 
-  const total = inflows.reduce((sum, inc) => {
-    if (scope === 'casal') return sum + (inc.amount || 0);
-    if (inc.recipient === scope) return sum + (inc.amount || 0);
-    if (inc.recipient === 'both') return sum + (inc.amount || 0) * 0.5;
-    return sum;
-  }, 0);
+  let totalCents = 0;
+  for (const inc of inflows) {
+    const split = apportionCentsByScope(
+      toSafeCents(inc.amount),
+      scope,
+      inc.recipient || 'both'
+    );
+    if (split.isInScope) {
+      totalCents += split.scopedCents;
+    }
+  }
 
-  return roundMoney(total);
+  return roundMoney(totalCents / 100);
 }
 
 /**
- * 26A: Consumo econômico que debita os tetos mensais das categorias.
+ * 26A & 29B: Consumo econômico que debita os tetos mensais das categorias (por competência, em centavos inteiros).
  * Exclui compras financiadas diretamente por caixinhas/metas (Path B).
  */
 export function selectCategoryConsumptionExpenses(
@@ -1586,37 +1544,34 @@ export function selectCategoryConsumptionExpenses(
   scope: DomainScope = 'casal',
   monthKey?: string
 ): number {
-  const expenses = state.expenses || [];
-  const total = expenses.reduce((sum, exp) => {
-    if (monthKey && exp.date && !exp.date.startsWith(monthKey)) return sum;
-    if (!isEntityInScope(exp.paidBy, scope)) return sum;
+  const slices = selectExpenseSlices(state.expenses || [], scope, monthKey, {
+    keywordRules: state.keywordRules,
+    installments: state.installments,
+  });
 
-    // Compras financiadas por caixinha ou excluídas do orçamento do mês não debitam o teto da categoria!
-    if (exp.fundingSource === 'piggy_bank' || exp.isExcludedFromMonthlyBudget) {
-      return sum;
+  let totalCents = 0;
+  for (const slice of slices) {
+    if (slice.isExcludedFromMonthlyBudget || slice.fundingSource !== 'month_budget') {
+      continue;
     }
-
-    let itemAmt = exp.amount || 0;
-    if (exp.splits && exp.splits.length > 0) {
-      itemAmt = exp.splits
-        .filter((s) => s.fundingSource !== 'piggy_bank')
-        .reduce((acc, s) => acc + s.amountCents / 100, 0);
+    const split = apportionCentsByScope(
+      slice.amountCents,
+      scope,
+      slice.paidBy,
+      slice.parentExpense.splitPartner1Pct,
+      slice.parentExpense.splitPartner2Pct,
+      slice.assignedTo
+    );
+    if (split.isInScope) {
+      totalCents += split.scopedCents;
     }
+  }
 
-    if (scope === 'casal') return sum + itemAmt;
-    if (exp.paidBy === scope) return sum + itemAmt;
-    if (exp.paidBy === 'both') {
-      const pct = scope === 'partner1' ? (exp.splitPartner1Pct ?? 50) : (exp.splitPartner2Pct ?? 50);
-      return sum + (itemAmt * pct) / 100;
-    }
-    return sum;
-  }, 0);
-
-  return roundMoney(total);
+  return roundMoney(totalCents / 100);
 }
 
 /**
- * 26A: Consumo financiado diretamente por objetivos/caixinhas (Path B).
+ * 26A & 29B: Consumo financiado diretamente por objetivos/caixinhas (Path B, em centavos inteiros).
  * Carrega a etiqueta analítica (ex: moradia/mobília), mas não debita o teto mensal da categoria.
  */
 export function selectGoalDirectConsumptionExpenses(
@@ -1625,31 +1580,39 @@ export function selectGoalDirectConsumptionExpenses(
   monthKey?: string
 ): number {
   const expenses = state.expenses || [];
-  const total = expenses.reduce((sum, exp) => {
-    if (monthKey && exp.date && !exp.date.startsWith(monthKey)) return sum;
-    if (!isEntityInScope(exp.paidBy, scope)) return sum;
+  const parentIdsWithSplits = new Set(
+    expenses.filter((e) => e.splits && e.splits.length > 0).map((e) => e.id)
+  );
 
-    let directGoalAmt = 0;
-    if (exp.fundingSource === 'piggy_bank' || (exp.isExcludedFromMonthlyBudget && exp.fundingGoalId)) {
-      directGoalAmt = exp.amount || 0;
-    } else if (exp.splits && exp.splits.length > 0) {
-      directGoalAmt = exp.splits
-        .filter((s) => s.fundingSource === 'piggy_bank' || s.fundingGoalId)
-        .reduce((acc, s) => acc + s.amountCents / 100, 0);
+  let totalCents = 0;
+  for (const exp of expenses) {
+    if (exp.splitParentId && parentIdsWithSplits.has(exp.splitParentId)) continue;
+    const slices = projectCanonicalExpenseSlices(exp, {
+      keywordRules: state.keywordRules,
+      installments: state.installments,
+    });
+    for (const slice of slices) {
+      if (monthKey && slice.competenceMonth !== monthKey) continue;
+      const isDirectGoal =
+        slice.fundingSource === 'piggy_bank' ||
+        Boolean(slice.isExcludedFromMonthlyBudget && slice.fundingGoalId);
+      if (!isDirectGoal) continue;
+
+      const split = apportionCentsByScope(
+        slice.amountCents,
+        scope,
+        slice.paidBy,
+        exp.splitPartner1Pct,
+        exp.splitPartner2Pct,
+        slice.assignedTo
+      );
+      if (split.isInScope) {
+        totalCents += split.scopedCents;
+      }
     }
+  }
 
-    if (directGoalAmt <= 0) return sum;
-
-    if (scope === 'casal') return sum + directGoalAmt;
-    if (exp.paidBy === scope) return sum + directGoalAmt;
-    if (exp.paidBy === 'both') {
-      const pct = scope === 'partner1' ? (exp.splitPartner1Pct ?? 50) : (exp.splitPartner2Pct ?? 50);
-      return sum + (directGoalAmt * pct) / 100;
-    }
-    return sum;
-  }, 0);
-
-  return roundMoney(total);
+  return roundMoney(totalCents / 100);
 }
 
 /**
@@ -1666,28 +1629,68 @@ export function selectTotalEconomicConsumption(
 }
 
 /**
- * 26A: Desembolso financeiro total (caixa efetivamente saído das contas operacionais).
- * Consumo econômico + aportes em caixinhas/metas.
+ * 26A & 29B: Desembolso financeiro total por DATA DE CAIXA (caixa efetivamente saído das contas operacionais no mês civil).
+ * Distingue estritamente data de pagamento (caixa) de competência orçamentária!
  */
 export function selectTotalCashDisbursements(
   state: AppState,
   scope: DomainScope = 'casal',
   monthKey?: string
 ): number {
-  const economicConsumption = selectTotalEconomicConsumption(state, scope, monthKey);
+  const expenses = state.expenses || [];
+  const parentIdsWithSplits = new Set(
+    expenses.filter((e) => e.splits && e.splits.length > 0).map((e) => e.id)
+  );
+
+  let cashExpenseCents = 0;
+  for (const exp of expenses) {
+    if (exp.splitParentId && parentIdsWithSplits.has(exp.splitParentId)) continue;
+    if (monthKey && (!exp.date || !exp.date.startsWith(monthKey))) continue;
+    if (exp.paymentMethod === 'credit') continue;
+
+    const slices = projectCanonicalExpenseSlices(exp, {
+      keywordRules: state.keywordRules,
+      installments: state.installments,
+    });
+    for (const slice of slices) {
+      const isRoutineOrGoal =
+        !slice.isExcludedFromMonthlyBudget ||
+        slice.fundingSource === 'month_budget' ||
+        slice.fundingSource === 'piggy_bank' ||
+        Boolean(slice.fundingGoalId);
+      if (!isRoutineOrGoal) continue;
+
+      const split = apportionCentsByScope(
+        slice.amountCents,
+        scope,
+        slice.paidBy,
+        exp.splitPartner1Pct,
+        exp.splitPartner2Pct,
+        slice.assignedTo
+      );
+      if (split.isInScope) {
+        cashExpenseCents += split.scopedCents;
+      }
+    }
+  }
+
   const ops = state.financialOperations || [];
-  const deposits = ops.filter((op) => {
-    if (op.type !== 'GOAL_DEPOSIT') return false;
-    if (monthKey && op.date && !op.date.startsWith(monthKey)) return false;
-    if (op.state === 'reverted' || op.state === 'estornado') return false;
+  let depositsCents = 0;
+  for (const op of ops) {
+    if (op.type !== 'GOAL_DEPOSIT') continue;
+    if (monthKey && op.date && !op.date.startsWith(monthKey)) continue;
+    if (op.state === 'reverted' || op.state === 'estornado') continue;
     const opScope =
       op.scope && op.scope !== 'couple' && op.scope !== 'casal'
         ? op.scope
         : (op.authorizedBy as any) || op.scope;
-    return isEntityInScope(opScope, scope);
-  });
-  const depositsTotal = deposits.reduce((sum, op) => sum + readOperationAmountCents(op) / 100, 0);
-  return roundMoney(economicConsumption + depositsTotal);
+    const split = apportionCentsByScope(readOperationAmountCents(op), scope, opScope);
+    if (split.isInScope) {
+      depositsCents += split.scopedCents;
+    }
+  }
+
+  return roundMoney((cashExpenseCents + depositsCents) / 100);
 }
 
 /**
@@ -1825,10 +1828,31 @@ export function selectConsolidatedAssetTotal(
   return roundMoney(unlinkedAccountBalances + totalProtected);
 }
 
+const CANONICAL_CATEGORY_ALIAS_MAP: Record<string, CategoryKey> = {
+  moradia: 'moradia',
+  casa: 'moradia',
+  limpeza: 'moradia',
+  transporte: 'transporte',
+  comida: 'comida',
+  alimentacao: 'comida',
+  lazer: 'lazer',
+  vestuario: 'lazer',
+  protecao: 'protecao',
+  saude: 'protecao',
+  farmacia: 'protecao',
+  profissional: 'profissional',
+};
+
+function mapToCanonicalMatrixCategory(rawCat?: string): CategoryKey {
+  if (!rawCat) return 'moradia';
+  return CANONICAL_CATEGORY_ALIAS_MAP[rawCat] || 'moradia';
+}
+
 /**
- * 28C: Seletor unificado para as Duas Visões Reconciliadas do Orçamento (Categorias vs Estrutura).
- * Reconcilia Plano Aprovado, Compromissos Pendentes (não baixados), Realizado Líquido, Comprometido Projetado,
- * Margem Assinada, Margem Variável não atribuída e Investimentos (Aporte 10%).
+ * 28C & 29B: Seletor unificado para as Duas Visões Reconciliadas do Orçamento (Categorias vs Estrutura).
+ * Reconcilia Plano Aprovado por Competência, Ocorrências Compartilhadas (coupleFixedBills + fixedBillAlerts),
+ * Fatias Classificadas (splits em centavos exatos), Natureza Desconhecida (pendente sem inventar variável),
+ * Teto Zero Explícito vs Ausência de Teto, Rateio Individual sem metade arbitrária e Aportes.
  */
 export function selectReconciledBudgetMatrix(
   state: AppState,
@@ -1839,7 +1863,6 @@ export function selectReconciledBudgetMatrix(
   const plannedNetIncome = selectPlannedNetIncome(state, scope, currentMonthKey);
   const receivedEligibleNetIncome = selectEligibleNetIncomeReceived(state, scope, currentMonthKey);
 
-  // Determina percentuais da política (ex: 40/50/10, 30/60/10, 60/30/10 ou 50/40/10)
   const plan = state.monthlyBudgetPlans?.[currentMonthKey];
   let fixedPct = plan?.macroGroups?.fixos?.percentage ?? 60;
   let varPct = plan?.macroGroups?.variaveis?.percentage ?? 30;
@@ -1847,143 +1870,246 @@ export function selectReconciledBudgetMatrix(
 
   if (!plan && state.categoryPercentages) {
     const p = state.categoryPercentages;
-    const f = (p.moradia || 0) + (p.protecao || 0);
-    const v = (p.comida || 0) + (p.lazer || 0) + (p.transporte || 0) + (p.profissional || 0);
-    const i = p.investimentos ?? 10;
+    const f = (p.moradia ?? 0) + (p.protecao ?? 0);
+    const v = (p.comida ?? 0) + (p.lazer ?? 0) + (p.transporte ?? 0) + (p.profissional ?? 0);
+    const i = p.investimentos ?? state.profile?.investmentsPercentage ?? 10;
     if (Math.abs(f + v + i - 100) < 1) {
       fixedPct = f;
       varPct = v;
       investPct = i;
     }
+  } else if (plan && !plan.macroGroups && plan.categoryPercentages) {
+    const p = plan.categoryPercentages;
+    fixedPct = (p.moradia ?? 0) + (p.protecao ?? 0);
+    varPct = (p.comida ?? 0) + (p.lazer ?? 0) + (p.transporte ?? 0) + (p.profissional ?? 0);
+    investPct = p.investimentos ?? 10;
   }
 
-  const fixedBudget = roundMoney((plannedNetIncome * fixedPct) / 100);
-  const varBudget = roundMoney((plannedNetIncome * varPct) / 100);
-  const investTarget = roundMoney((plannedNetIncome * investPct) / 100);
+  // 29B (R29-15): Teto explícito (positivo ou zero) vs ausência de teto, sem metade arbitrária para escopo individual
+  let hasExplicitCeiling = false;
+  let fixedBudget = 0;
+  let varBudget = 0;
+  let investTarget = 0;
 
-  // 1. Slices de despesas para a competência (somente orçamento rotineiro do mês)
-  const allSlices = selectExpenseSlices(state.expenses || [], scope, currentMonthKey);
-  const monthBudgetSlices = allSlices.filter(
-    (s) => !s.isExcludedFromMonthlyBudget && (!s.fundingSource || s.fundingSource === 'month_budget')
+  if (scope === 'casal') {
+    hasExplicitCeiling =
+      Boolean(plan) || Boolean(state.isCustomizedPercentages) || plannedNetIncome > 0;
+    if (hasExplicitCeiling) {
+      fixedBudget =
+        plan?.macroGroups?.fixos?.amountR$ !== undefined
+          ? roundMoney(plan.macroGroups.fixos.amountR$)
+          : roundMoney((plannedNetIncome * fixedPct) / 100);
+      varBudget =
+        plan?.macroGroups?.variaveis?.amountR$ !== undefined
+          ? roundMoney(plan.macroGroups.variaveis.amountR$)
+          : roundMoney((plannedNetIncome * varPct) / 100);
+      investTarget =
+        plan?.macroGroups?.investimentos?.amountR$ !== undefined
+          ? roundMoney(plan.macroGroups.investimentos.amountR$)
+          : roundMoney((plannedNetIncome * investPct) / 100);
+    }
+  } else {
+    const partnerCeiling = plan?.partnerCeilings?.[scope];
+    if (partnerCeiling) {
+      hasExplicitCeiling = true;
+      fixedBudget =
+        partnerCeiling.fixedCeilingR$ !== undefined
+          ? roundMoney(partnerCeiling.fixedCeilingR$)
+          : roundMoney((plannedNetIncome * fixedPct) / 100);
+      varBudget =
+        partnerCeiling.variableCeilingR$ !== undefined
+          ? roundMoney(partnerCeiling.variableCeilingR$)
+          : roundMoney((plannedNetIncome * varPct) / 100);
+      investTarget =
+        partnerCeiling.investTargetR$ !== undefined
+          ? roundMoney(partnerCeiling.investTargetR$)
+          : roundMoney((plannedNetIncome * investPct) / 100);
+    } else {
+      hasExplicitCeiling = false;
+      fixedBudget = 0;
+      varBudget = 0;
+      investTarget = 0;
+    }
+  }
+
+  const resolveCeilingState = (explicit: boolean, ceilingVal: number): CeilingState => {
+    if (!explicit) return 'absent';
+    return ceilingVal > 0 ? 'explicit_positive' : 'explicit_zero';
+  };
+
+  const overallCeilingState: CeilingState = resolveCeilingState(
+    hasExplicitCeiling,
+    roundMoney(fixedBudget + varBudget)
+  );
+  const fixedCeilingState: CeilingState = resolveCeilingState(hasExplicitCeiling, fixedBudget);
+  const varCeilingState: CeilingState = resolveCeilingState(hasExplicitCeiling, varBudget);
+
+  const catFixedCents: Record<CategoryKey, number> = {
+    moradia: 0, transporte: 0, comida: 0, lazer: 0, protecao: 0, profissional: 0,
+  };
+  const catVarCents: Record<CategoryKey, number> = {
+    moradia: 0, transporte: 0, comida: 0, lazer: 0, protecao: 0, profissional: 0,
+  };
+  const catUnclassifiedCents: Record<CategoryKey, number> = {
+    moradia: 0, transporte: 0, comida: 0, lazer: 0, protecao: 0, profissional: 0,
+  };
+  const catPendingFixedCents: Record<CategoryKey, number> = {
+    moradia: 0, transporte: 0, comida: 0, lazer: 0, protecao: 0, profissional: 0,
+  };
+  const catPendingVarCents: Record<CategoryKey, number> = {
+    moradia: 0, transporte: 0, comida: 0, lazer: 0, protecao: 0, profissional: 0,
+  };
+
+  // 1. Ocorrências fixas compartilhadas (contas fixas reconciliadas + fatias diretas fixas + parcelas fixas)
+  const { occurrences: fixedOccurrences, registryConflicts } = projectSharedFixedOccurrences(
+    state,
+    currentMonthKey,
+    scope
   );
 
-  const catSpentFixed: Record<CategoryKey, number> = {
-    moradia: 0, transporte: 0, comida: 0, lazer: 0, protecao: 0, profissional: 0
-  };
-  const catSpentVar: Record<CategoryKey, number> = {
-    moradia: 0, transporte: 0, comida: 0, lazer: 0, protecao: 0, profissional: 0
-  };
-
-  for (const s of monthBudgetSlices) {
-    const cat = s.category;
-    let amt = s.amount;
-    if (scope === 'partner1') {
-      const pct = s.parentExpense.splitPartner1Pct ?? (s.paidBy === 'partner1' ? 100 : s.paidBy === 'partner2' ? 0 : 50);
-      amt = (amt * pct) / 100;
-    } else if (scope === 'partner2') {
-      const pct = s.parentExpense.splitPartner2Pct ?? (s.paidBy === 'partner2' ? 100 : s.paidBy === 'partner1' ? 0 : 50);
-      amt = (amt * pct) / 100;
-    }
-
-    if (s.nature === 'fixo' || s.nature === 'fixa') {
-      catSpentFixed[cat] = roundMoney((catSpentFixed[cat] || 0) + amt);
+  for (const occ of fixedOccurrences) {
+    const cat = mapToCanonicalMatrixCategory(occ.categoryKey);
+    if (occ.status === 'paid') {
+      catFixedCents[cat] += occ.apportionedAmountCents;
     } else {
-      catSpentVar[cat] = roundMoney((catSpentVar[cat] || 0) + amt);
+      catPendingFixedCents[cat] += occ.apportionedAmountCents;
     }
   }
 
-  // 2. Compromissos pendentes não baixados
-  const catPending: Record<CategoryKey, number> = {
-    moradia: 0, transporte: 0, comida: 0, lazer: 0, protecao: 0, profissional: 0
-  };
-  let fixedPendingTotal = 0;
-  let varPendingTotal = 0;
+  // 2. Fatias de despesas variáveis / eventuais / natureza desconhecida (R29-12, R29-13, R29-14, R29-16)
+  const expenses = state.expenses || [];
+  const parentIdsWithSplits = new Set(
+    expenses.filter((e) => e.splits && e.splits.length > 0).map((e) => e.id)
+  );
+  const { bills: canonicalBills } = selectCanonicalFixedBillsRegistry(state);
+  const canonicalBillIds = new Set(canonicalBills.map((b) => b.id));
 
-  const bills = state.fixedBillAlerts || [];
-  for (const b of bills) {
-    if ((b.status as string) === 'pago' || (b.status as string) === 'estornado' || b.status === 'paid') continue;
-    if (currentMonthKey && b.dueDate && !b.dueDate.startsWith(currentMonthKey)) continue;
-    if (!isEntityInScope(b.assignedTo || 'both', scope)) continue;
+  let pendingClassificationCount = 0;
+  const pendingClassificationSliceIds: string[] = [];
 
-    let bAmt = b.amount || 0;
-    if (scope === 'partner1') {
-      bAmt = (bAmt * (b.splitPartner1Pct ?? 50)) / 100;
-    } else if (scope === 'partner2') {
-      bAmt = (bAmt * (b.splitPartner2Pct ?? 50)) / 100;
-    }
-    bAmt = roundMoney(bAmt);
+  for (const exp of expenses) {
+    if (!exp) continue;
+    if (exp.splitParentId && parentIdsWithSplits.has(exp.splitParentId)) continue;
+    // Se vinculada a conta fixa cadastrada ou parcela, já foi reconciliada nas projeções dedicadas sem duplicar
+    if (exp.linkedBillId && canonicalBillIds.has(exp.linkedBillId)) continue;
+    if (exp.installmentId) continue;
 
-    const cat = b.category || 'moradia';
-    catPending[cat] = roundMoney((catPending[cat] || 0) + bAmt);
-    fixedPendingTotal = roundMoney(fixedPendingTotal + bAmt);
-  }
+    const slices = projectCanonicalExpenseSlices(exp, {
+      keywordRules: state.keywordRules,
+      installments: state.installments,
+    });
 
-  const installments = state.installments || [];
-  for (const inst of installments) {
-    const occs = inst.occurrences || [];
-    for (const occ of occs) {
-      const matchMonth = occ.competenceMonth === currentMonthKey || (occ.dueDate && occ.dueDate.startsWith(currentMonthKey || ''));
-      if (matchMonth) {
-        if (!isEntityInScope(inst.paidBy || 'both', scope)) continue;
-        let instAmt = occ.amountR$ || (occ.amountCents ? occ.amountCents / 100 : (inst.installmentValue || 0));
-        if (scope === 'partner1') {
-          instAmt = (instAmt * (inst.splitPartner1Pct ?? 50)) / 100;
-        } else if (scope === 'partner2') {
-          instAmt = (instAmt * (inst.splitPartner2Pct ?? 50)) / 100;
-        }
-        instAmt = roundMoney(instAmt);
+    for (const slice of slices) {
+      if (slice.competenceMonth !== currentMonthKey) continue;
+      if (slice.isExcludedFromMonthlyBudget || slice.fundingSource !== 'month_budget') continue;
+      // Fatia direta de natureza fixa confiável já entrou em projectSharedFixedOccurrences
+      if (slice.hasReliableNature && slice.resolvedNature === 'fixa') continue;
 
-        const cat = inst.category || 'moradia';
-        const isFixa = inst.nature === 'fixo' || inst.nature === 'fixa';
+      const split = apportionCentsByScope(
+        slice.amountCents,
+        scope,
+        slice.paidBy,
+        exp.splitPartner1Pct,
+        exp.splitPartner2Pct,
+        slice.assignedTo
+      );
+      if (!split.isInScope) continue;
 
-        if (occ.status === 'paid' || occ.status === 'pago') {
-          if (isFixa) {
-            catSpentFixed[cat] = roundMoney((catSpentFixed[cat] || 0) + instAmt);
-          } else {
-            catSpentVar[cat] = roundMoney((catSpentVar[cat] || 0) + instAmt);
-          }
-        } else if (occ.status === 'pending' || occ.status === 'previsto') {
-          catPending[cat] = roundMoney((catPending[cat] || 0) + instAmt);
-          if (isFixa) {
-            fixedPendingTotal = roundMoney(fixedPendingTotal + instAmt);
-          } else {
-            varPendingTotal = roundMoney(varPendingTotal + instAmt);
-          }
-        }
+      const cat = mapToCanonicalMatrixCategory(slice.category);
+      if (slice.hasReliableNature) {
+        catVarCents[cat] += split.scopedCents;
+      } else {
+        catUnclassifiedCents[cat] += split.scopedCents;
+        pendingClassificationCount += 1;
+        pendingClassificationSliceIds.push(slice.splitId);
       }
     }
   }
 
-const CATEGORY_NAMES_MAP: Record<CategoryKey, { name: string; emoji: string }> = {
-  moradia: { name: 'Moradia', emoji: '🏠' },
-  comida: { name: 'Comida & Conveniência', emoji: '🍽️' },
-  lazer: { name: 'Lazer', emoji: '🎮' },
-  protecao: { name: 'Proteção', emoji: '🛡️' },
-  profissional: { name: 'Profissional', emoji: '📚' },
-  transporte: { name: 'Transporte & Mobilidade', emoji: '🚗' },
-};
+  // 3. Ocorrências de compras parceladas de consumo (natureza não fixa)
+  const instOccurrences = projectInstallmentOccurrencesForCompetence(
+    state,
+    currentMonthKey,
+    scope
+  );
+  for (const instOcc of instOccurrences) {
+    if (instOcc.isFixedNature) continue; // já incluída em fixedOccurrences
+    const cat = mapToCanonicalMatrixCategory(instOcc.category);
+    if (instOcc.status === 'paid' || instOcc.status === 'advanced') {
+      catVarCents[cat] += instOcc.scopedCents;
+    } else {
+      catPendingVarCents[cat] += instOcc.scopedCents;
+    }
+  }
 
-  // 3. Cálculo das Linhas por Categoria
-  const categoryKeys: CategoryKey[] = ['moradia', 'transporte', 'comida', 'lazer', 'protecao', 'profissional'];
+  const CATEGORY_NAMES_MAP: Record<CategoryKey, { name: string; emoji: string }> = {
+    moradia: { name: 'Moradia', emoji: '🏠' },
+    comida: { name: 'Comida & Conveniência', emoji: '🍽️' },
+    lazer: { name: 'Lazer', emoji: '🎮' },
+    protecao: { name: 'Proteção', emoji: '🛡️' },
+    profissional: { name: 'Profissional', emoji: '📚' },
+    transporte: { name: 'Transporte & Mobilidade', emoji: '🚗' },
+  };
+
+  // 4. Cálculo das Linhas por Categoria
+  const categoryKeys: CategoryKey[] = [
+    'moradia',
+    'transporte',
+    'comida',
+    'lazer',
+    'protecao',
+    'profissional',
+  ];
   const categoryPercentages = plan?.categoryPercentages || state.categoryPercentages || {
-    moradia: 30, transporte: 10, comida: 25, lazer: 15, protecao: 10, profissional: 0
+    moradia: 30,
+    transporte: 10,
+    comida: 25,
+    lazer: 15,
+    protecao: 10,
+    profissional: 0,
   };
 
   let totalAllocatedVarCatBudget = 0;
   const categories: ReconciledCategoryRow[] = categoryKeys.map((key) => {
     const catInfo = CATEGORY_NAMES_MAP[key] || { name: key, emoji: '🏷️' };
-    const pct = categoryPercentages[key] || 0;
-    const plannedBudget = roundMoney((plannedNetIncome * pct) / 100);
+    const pct = categoryPercentages[key] ?? 0;
 
-    const fixedSpent = catSpentFixed[key] || 0;
-    const variableSpent = catSpentVar[key] || 0;
-    const realizedLiquid = roundMoney(fixedSpent + variableSpent);
-    const pendingCommitments = catPending[key] || 0;
+    let plannedBudget = 0;
+    if (hasExplicitCeiling) {
+      if (scope === 'casal' && plan?.categoryAmountsR$?.[key] !== undefined) {
+        plannedBudget = roundMoney(plan.categoryAmountsR$[key]);
+      } else if (
+        scope !== 'casal' &&
+        plan?.partnerCeilings?.[scope]?.categoryAmountsR$?.[key] !== undefined
+      ) {
+        plannedBudget = roundMoney(plan.partnerCeilings[scope]!.categoryAmountsR$![key]!);
+      } else {
+        plannedBudget = roundMoney((plannedNetIncome * pct) / 100);
+      }
+    }
+
+    const catCeilingState = resolveCeilingState(hasExplicitCeiling, plannedBudget);
+    const fixedSpent = roundMoney(catFixedCents[key] / 100);
+    const variableSpent = roundMoney(catVarCents[key] / 100);
+    const unclassifiedSpent = roundMoney(catUnclassifiedCents[key] / 100);
+    const realizedLiquid = roundMoney(
+      (catFixedCents[key] + catVarCents[key] + catUnclassifiedCents[key]) / 100
+    );
+    const pendingCommitments = roundMoney(
+      (catPendingFixedCents[key] + catPendingVarCents[key]) / 100
+    );
     const projectedTotal = roundMoney(realizedLiquid + pendingCommitments);
     const signedMargin = roundMoney(plannedBudget - projectedTotal);
-    const isOverCeiling = projectedTotal > plannedBudget && plannedBudget > 0;
+    const isOverCeiling = hasExplicitCeiling && projectedTotal > plannedBudget;
     const overAmount = isOverCeiling ? roundMoney(projectedTotal - plannedBudget) : 0;
-    const percentageUsed = Math.min(100, Math.round((projectedTotal / (plannedBudget || 1)) * 100));
+    const percentageUsed =
+      !hasExplicitCeiling
+        ? 0
+        : plannedBudget > 0
+        ? Math.min(100, Math.round((projectedTotal / plannedBudget) * 100))
+        : projectedTotal > 0
+        ? 100
+        : 0;
 
     if (key !== 'moradia' && key !== 'protecao') {
       totalAllocatedVarCatBudget += plannedBudget;
@@ -1996,6 +2122,7 @@ const CATEGORY_NAMES_MAP: Record<CategoryKey, { name: string; emoji: string }> =
       plannedBudget,
       fixedSpent,
       variableSpent,
+      unclassifiedSpent,
       realizedLiquid,
       pendingCommitments,
       projectedTotal,
@@ -2003,12 +2130,26 @@ const CATEGORY_NAMES_MAP: Record<CategoryKey, { name: string; emoji: string }> =
       isOverCeiling,
       overAmount,
       percentageUsed,
+      hasExplicitCeiling,
+      ceilingState: catCeilingState,
     };
   });
 
-  // 4. Blocos de Estrutura
-  const totalFixedSpent = roundMoney(Object.values(catSpentFixed).reduce((s, v) => s + v, 0));
-  const totalVarSpent = roundMoney(Object.values(catSpentVar).reduce((s, v) => s + v, 0));
+  // 5. Blocos de Estrutura (Fixos, Variáveis e Pendentes de Classificação separados)
+  const totalFixedRealizedCents = Object.values(catFixedCents).reduce((s, v) => s + v, 0);
+  const totalVarRealizedCents = Object.values(catVarCents).reduce((s, v) => s + v, 0);
+  const totalUnclassifiedCents = Object.values(catUnclassifiedCents).reduce((s, v) => s + v, 0);
+  const totalPendingFixedCents = Object.values(catPendingFixedCents).reduce((s, v) => s + v, 0);
+  const totalPendingVarCents = Object.values(catPendingVarCents).reduce((s, v) => s + v, 0);
+
+  const totalFixedSpent = roundMoney(totalFixedRealizedCents / 100);
+  const totalVarSpent = roundMoney(totalVarRealizedCents / 100);
+  const totalUnclassifiedSpent = roundMoney(totalUnclassifiedCents / 100);
+  const fixedPendingTotal = roundMoney(totalPendingFixedCents / 100);
+  const varPendingTotal = roundMoney(totalPendingVarCents / 100);
+
+  const fixedProjectedTotal = roundMoney((totalFixedRealizedCents + totalPendingFixedCents) / 100);
+  const varProjectedTotal = roundMoney((totalVarRealizedCents + totalPendingVarCents) / 100);
 
   const fixosBlock: ReconciledStructureBlock = {
     key: 'fixos',
@@ -2016,14 +2157,32 @@ const CATEGORY_NAMES_MAP: Record<CategoryKey, { name: string; emoji: string }> =
     plannedBudget: fixedBudget,
     realizedLiquid: totalFixedSpent,
     pendingCommitments: fixedPendingTotal,
-    projectedTotal: roundMoney(totalFixedSpent + fixedPendingTotal),
-    signedMargin: roundMoney(fixedBudget - (totalFixedSpent + fixedPendingTotal)),
-    isOverCeiling: (totalFixedSpent + fixedPendingTotal) > fixedBudget && fixedBudget > 0,
-    overAmount: Math.max(0, roundMoney((totalFixedSpent + fixedPendingTotal) - fixedBudget)),
-    percentageUsed: Math.min(100, Math.round(((totalFixedSpent + fixedPendingTotal) / (fixedBudget || 1)) * 100)),
+    projectedTotal: fixedProjectedTotal,
+    signedMargin: roundMoney(fixedBudget - fixedProjectedTotal),
+    isOverCeiling: hasExplicitCeiling && fixedProjectedTotal > fixedBudget,
+    overAmount: hasExplicitCeiling ? Math.max(0, roundMoney(fixedProjectedTotal - fixedBudget)) : 0,
+    percentageUsed:
+      !hasExplicitCeiling
+        ? 0
+        : fixedBudget > 0
+        ? Math.min(100, Math.round((fixedProjectedTotal / fixedBudget) * 100))
+        : fixedProjectedTotal > 0
+        ? 100
+        : 0,
+    hasExplicitCeiling,
+    ceilingState: fixedCeilingState,
+    denominatorLabel:
+      fixedCeilingState === 'absent'
+        ? 'Sem teto fixo aprovado'
+        : fixedCeilingState === 'explicit_zero'
+        ? 'Teto fixo explícito R$ 0,00'
+        : `Teto fixo aprovado (${fixedPct}%)`,
   };
 
-  const unallocatedVariableMargin = Math.max(0, roundMoney(varBudget - totalAllocatedVarCatBudget));
+  const unallocatedVariableMargin = Math.max(
+    0,
+    roundMoney(varBudget - totalAllocatedVarCatBudget)
+  );
 
   const variaveisBlock: ReconciledStructureBlock = {
     key: 'variaveis',
@@ -2031,60 +2190,109 @@ const CATEGORY_NAMES_MAP: Record<CategoryKey, { name: string; emoji: string }> =
     plannedBudget: varBudget,
     realizedLiquid: totalVarSpent,
     pendingCommitments: varPendingTotal,
-    projectedTotal: roundMoney(totalVarSpent + varPendingTotal),
-    signedMargin: roundMoney(varBudget - (totalVarSpent + varPendingTotal)),
+    projectedTotal: varProjectedTotal,
+    signedMargin: roundMoney(varBudget - varProjectedTotal),
     unallocatedVariableMargin,
-    isOverCeiling: (totalVarSpent + varPendingTotal) > varBudget && varBudget > 0,
-    overAmount: Math.max(0, roundMoney((totalVarSpent + varPendingTotal) - varBudget)),
-    percentageUsed: Math.min(100, Math.round(((totalVarSpent + varPendingTotal) / (varBudget || 1)) * 100)),
+    isOverCeiling: hasExplicitCeiling && varProjectedTotal > varBudget,
+    overAmount: hasExplicitCeiling ? Math.max(0, roundMoney(varProjectedTotal - varBudget)) : 0,
+    percentageUsed:
+      !hasExplicitCeiling
+        ? 0
+        : varBudget > 0
+        ? Math.min(100, Math.round((varProjectedTotal / varBudget) * 100))
+        : varProjectedTotal > 0
+        ? 100
+        : 0,
+    hasExplicitCeiling,
+    ceilingState: varCeilingState,
+    denominatorLabel:
+      varCeilingState === 'absent'
+        ? 'Sem teto variável aprovado'
+        : varCeilingState === 'explicit_zero'
+        ? 'Teto variável explícito R$ 0,00'
+        : `Teto variável aprovado (${varPct}%)`,
   };
 
-  // 5. Bloco de Investimentos (Aporte de Longo Prazo 10%)
+  // 6. Bloco de Investimentos (Aporte de Longo Prazo)
   const ops = state.financialOperations || [];
-  const depositsInMonth = ops.filter((op) => {
-    if (op.type !== 'GOAL_DEPOSIT') return false;
-    if (currentMonthKey && op.date && !op.date.startsWith(currentMonthKey)) return false;
-    if (op.state === 'reverted' || op.state === 'estornado') return false;
+  let actualDepositedCents = 0;
+  for (const op of ops) {
+    if (op.type !== 'GOAL_DEPOSIT') continue;
+    if (currentMonthKey && op.date && !op.date.startsWith(currentMonthKey)) continue;
+    if (op.state === 'reverted' || op.state === 'estornado') continue;
     const opScope =
       op.scope && op.scope !== 'couple' && op.scope !== 'casal'
         ? op.scope
         : (op.authorizedBy as any) || op.scope;
-    return isEntityInScope(opScope, scope);
-  });
-  const actualDeposited = roundMoney(depositsInMonth.reduce((sum, op) => sum + readOperationAmountCents(op) / 100, 0));
+    const split = apportionCentsByScope(readOperationAmountCents(op), scope, opScope);
+    if (split.isInScope) {
+      actualDepositedCents += split.scopedCents;
+    }
+  }
+  const actualDeposited = roundMoney(actualDepositedCents / 100);
   const remainingTarget = Math.max(0, roundMoney(investTarget - actualDeposited));
 
   const investimentosBlock: ReconciledInvestmentBlock = {
     targetAmount: investTarget,
     actualDeposited,
     remainingTarget,
-    isGoalMet: actualDeposited >= investTarget,
-    percentageMet: Math.min(100, Math.round((actualDeposited / (investTarget || 1)) * 100)),
+    isGoalMet: investTarget > 0 ? actualDeposited >= investTarget : actualDeposited >= 0 && hasExplicitCeiling,
+    percentageMet:
+      investTarget > 0
+        ? Math.min(100, Math.round((actualDeposited / investTarget) * 100))
+        : 0,
   };
 
-  // 6. Path B: Consumo Direto de Caixinha / Reserva (C43)
+  // 7. Path B: Consumo Direto de Caixinha / Reserva (C43)
   const goalDirectConsumption = selectGoalDirectConsumptionExpenses(state, scope, currentMonthKey);
 
-  // 7. Saída Efetiva de Caixa (à vista: pix/débito/dinheiro)
-  const cashOutflowSpent = roundMoney(
-    monthBudgetSlices
-      .filter((s) => s.paymentMethod !== 'credit')
-      .reduce((sum, s) => sum + s.amount, 0)
-  );
+  // 8. Saída Efetiva de Caixa no Mês Civil (Pix / Débito / Dinheiro à vista por DATA DE CAIXA, não competência)
+  let cashOutflowCents = 0;
+  for (const exp of expenses) {
+    if (!exp) continue;
+    if (exp.splitParentId && parentIdsWithSplits.has(exp.splitParentId)) continue;
+    if (!exp.date || !exp.date.startsWith(currentMonthKey)) continue;
+    if (exp.paymentMethod === 'credit') continue;
 
-  // 8. Matriz em centavos para o contrato v2.0
+    const slices = projectCanonicalExpenseSlices(exp, {
+      keywordRules: state.keywordRules,
+      installments: state.installments,
+    });
+    for (const slice of slices) {
+      if (slice.isExcludedFromMonthlyBudget || slice.fundingSource !== 'month_budget') continue;
+      const split = apportionCentsByScope(
+        slice.amountCents,
+        scope,
+        slice.paidBy,
+        exp.splitPartner1Pct,
+        exp.splitPartner2Pct,
+        slice.assignedTo
+      );
+      if (split.isInScope) {
+        cashOutflowCents += split.scopedCents;
+      }
+    }
+  }
+  const cashOutflowSpent = roundMoney(cashOutflowCents / 100);
+
+  // 9. Matriz em centavos para o contrato v2.0
   const categoryMatrixCents: Record<CategoryKey, CategoryMatrixEntryCents> = {} as any;
-  for (const catRow of categories) {
-    categoryMatrixCents[catRow.key] = {
-      fixedCents: Math.round(catRow.fixedSpent * 100),
-      variableCents: Math.round(catRow.variableSpent * 100),
-      totalCents: Math.round(catRow.realizedLiquid * 100),
+  for (const key of categoryKeys) {
+    categoryMatrixCents[key] = {
+      fixedCents: catFixedCents[key],
+      variableCents: catVarCents[key],
+      unclassifiedCents: catUnclassifiedCents[key],
+      totalCents: catFixedCents[key] + catVarCents[key] + catUnclassifiedCents[key],
     };
   }
 
   const totalPlannedBudget = roundMoney(fixedBudget + varBudget);
-  const totalRealizedLiquid = roundMoney(totalFixedSpent + totalVarSpent);
-  const totalPendingCommitments = roundMoney(fixedPendingTotal + varPendingTotal);
+  const totalRealizedLiquid = roundMoney(
+    (totalFixedRealizedCents + totalVarRealizedCents + totalUnclassifiedCents) / 100
+  );
+  const totalPendingCommitments = roundMoney(
+    (totalPendingFixedCents + totalPendingVarCents) / 100
+  );
   const totalProjectedConsumption = roundMoney(totalRealizedLiquid + totalPendingCommitments);
   const totalSignedMargin = roundMoney(totalPlannedBudget - totalProjectedConsumption);
 
@@ -2094,6 +2302,8 @@ const CATEGORY_NAMES_MAP: Record<CategoryKey, { name: string; emoji: string }> =
     plannedNetIncome,
     receivedEligibleNetIncome,
     policyRatios: { fixedPct, varPct, investPct },
+    hasExplicitCeiling,
+    ceilingState: overallCeilingState,
     structureBlocks: {
       fixos: fixosBlock,
       variaveis: variaveisBlock,
@@ -2105,9 +2315,15 @@ const CATEGORY_NAMES_MAP: Record<CategoryKey, { name: string; emoji: string }> =
     totalPendingCommitments,
     totalProjectedConsumption,
     totalSignedMargin,
+    unclassifiedSpent: totalUnclassifiedSpent,
+    unclassifiedCents: totalUnclassifiedCents,
+    pendingClassificationCount,
+    pendingClassificationSliceIds,
+    registryConflicts,
     goalDirectConsumption,
     cashOutflowSpent,
     categoryMatrixCents,
     unassignedVariableMarginCents: Math.round(unallocatedVariableMargin * 100),
   };
 }
+

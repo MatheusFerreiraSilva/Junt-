@@ -139,6 +139,17 @@ import {
   executeGoalAdjustmentCommand,
   executeIntentConversionCommand,
 } from '../utils/domainSelectors';
+import {
+  apportionCentsByScope,
+  clampDayToMonth,
+  doesExpenseMatchBillCompetence,
+  mapToCanonicalCategoryKey,
+  projectCanonicalExpenseSlices,
+  projectInstallmentOccurrencesForCompetence,
+  resolveExpenseCompetenceMonth,
+  selectCanonicalFixedBillsRegistry,
+  toSafeCents,
+} from '../utils/occurrenceProjection';
 
 export const CATEGORIES_BASE: Record<CategoryKey, { name: string; emoji: string; description: string; colorHex: string; bgLight: string; borderHex: string }> = {
   moradia: {
@@ -1545,7 +1556,14 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
   }, [state.installments]);
 
   const currentMonthExpenses = useMemo(() => {
-    return state.expenses.filter(exp => exp.date.startsWith(state.currentMonth));
+    const parentIdsWithSplits = new Set(
+      state.expenses.filter(e => e.splits && e.splits.length > 0).map(e => e.id)
+    );
+    return state.expenses.filter(
+      exp =>
+        !(exp.splitParentId && parentIdsWithSplits.has(exp.splitParentId)) &&
+        resolveExpenseCompetenceMonth(exp) === state.currentMonth
+    );
   }, [state.expenses, state.currentMonth]);
 
   const categoriesSpending = useMemo(() => {
@@ -1556,6 +1574,14 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
       lazer: { spent: 0, budget: 0, remaining: 0, percentageUsed: 0, isOver: false },
       protecao: { spent: 0, budget: 0, remaining: 0, percentageUsed: 0, isOver: false },
       profissional: { spent: 0, budget: 0, remaining: 0, percentageUsed: 0, isOver: false },
+    };
+    const spentCentsByCat: Record<CategoryKey, number> = {
+      moradia: 0,
+      transporte: 0,
+      comida: 0,
+      lazer: 0,
+      protecao: 0,
+      profissional: 0,
     };
 
     (Object.keys(CATEGORIES_BASE) as CategoryKey[]).forEach(catKey => {
@@ -1570,45 +1596,45 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
       res[catKey].budget = budget;
     });
 
-    currentMonthExpenses.forEach(exp => {
-      // 28B: Compra única com divisão por finalidade
-      // Se a compra possui splits, cada grupo debita sua categoria correspondente.
-      // Se for compra simples sem splits, projeta a categoria única.
-      if (exp.splits && exp.splits.length > 0) {
-        exp.splits.forEach(s => {
-          const isExcluded = exp.isExcludedFromMonthlyBudget || (s.fundingSource && s.fundingSource !== 'month_budget');
-          if (res[s.category] && !isExcluded) {
-            const splitVal = s.amountCents !== undefined ? s.amountCents / 100 : s.amount;
-            res[s.category].spent += splitVal;
-          }
-        });
-      } else {
-        const isExcluded = exp.isExcludedFromMonthlyBudget || (exp.fundingSource && exp.fundingSource !== 'month_budget');
-        if (res[exp.category] && !isExcluded) {
-          res[exp.category].spent += exp.amount;
-        }
-      }
+    const parentIdsWithSplits = new Set(
+      state.expenses.filter(e => e.splits && e.splits.length > 0).map(e => e.id)
+    );
+
+    state.expenses.forEach(exp => {
+      if (!exp || (exp.splitParentId && parentIdsWithSplits.has(exp.splitParentId))) return;
+      const slices = projectCanonicalExpenseSlices(exp, {
+        keywordRules: state.keywordRules,
+        installments: state.installments,
+      });
+      slices.forEach(slice => {
+        if (slice.competenceMonth !== state.currentMonth) return;
+        if (slice.isExcludedFromMonthlyBudget || slice.fundingSource !== 'month_budget') return;
+        const catKey = mapToCanonicalCategoryKey(slice.category);
+        spentCentsByCat[catKey] += slice.amountCents;
+      });
     });
 
-    activeInstallments.forEach(inst => {
-      if (res[inst.category]) {
-        const alreadyInExpenses = currentMonthExpenses.some(e => e.installmentId === inst.id);
-        if (!alreadyInExpenses) {
-          res[inst.category].spent += installmentInMonth(inst, state.currentMonth);
-        }
-      }
+    const instOccurrences = projectInstallmentOccurrencesForCompetence(
+      { installments: activeInstallments, expenses: state.expenses },
+      state.currentMonth,
+      'couple'
+    );
+    instOccurrences.forEach(instOcc => {
+      if (instOcc.alreadyInExpenses) return;
+      const catKey = mapToCanonicalCategoryKey(instOcc.category);
+      spentCentsByCat[catKey] += instOcc.effectiveCents;
     });
 
     (Object.keys(CATEGORIES_BASE) as CategoryKey[]).forEach(catKey => {
       const cat = res[catKey];
-      cat.spent = roundMoney(cat.spent);
+      cat.spent = roundMoney(spentCentsByCat[catKey] / 100);
       cat.remaining = roundMoney(cat.budget - cat.spent);
       cat.percentageUsed = cat.budget > 0 ? Math.round((cat.spent / cat.budget) * 100) : 0;
       cat.isOver = cat.spent > cat.budget;
     });
 
     return res;
-  }, [state.categoryPercentages, totalIncome, currentMonthExpenses, activeInstallments, activeLifeTier, bonusShiftCalculation, state.currentMonth]);
+  }, [state.categoryPercentages, totalIncome, state.expenses, state.keywordRules, state.installments, activeInstallments, activeLifeTier, bonusShiftCalculation, state.currentMonth]);
 
   const blownCategories = useMemo(() => {
     return (Object.keys(categoriesSpending) as CategoryKey[]).filter(k => categoriesSpending[k].isOver);
@@ -1744,61 +1770,103 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
   }, [state.profile.partner1Name, state.profile.partner2Name]);
 
   const partner1ShareSpent = useMemo(() => {
-    return currentMonthExpenses.reduce((sum, exp) => {
-      const split = getExpenseSplit(exp.amount, exp.paidBy, exp.splitPartner1Pct, exp.splitPartner2Pct);
-      return sum + split.partner1Amount;
+    const cents = currentMonthExpenses.reduce((sum, exp) => {
+      const split = apportionCentsByScope(
+        toSafeCents(exp.amount, exp.amountCents),
+        'partner1',
+        exp.paidBy,
+        exp.splitPartner1Pct,
+        exp.splitPartner2Pct,
+        exp.assignedTo
+      );
+      return sum + split.partner1Cents;
     }, 0);
-  }, [currentMonthExpenses, getExpenseSplit]);
+    return roundMoney(cents / 100);
+  }, [currentMonthExpenses]);
 
   const partner2ShareSpent = useMemo(() => {
-    return currentMonthExpenses.reduce((sum, exp) => {
-      const split = getExpenseSplit(exp.amount, exp.paidBy, exp.splitPartner1Pct, exp.splitPartner2Pct);
-      return sum + split.partner2Amount;
+    const cents = currentMonthExpenses.reduce((sum, exp) => {
+      const split = apportionCentsByScope(
+        toSafeCents(exp.amount, exp.amountCents),
+        'partner2',
+        exp.paidBy,
+        exp.splitPartner1Pct,
+        exp.splitPartner2Pct,
+        exp.assignedTo
+      );
+      return sum + split.partner2Cents;
     }, 0);
-  }, [currentMonthExpenses, getExpenseSplit]);
+    return roundMoney(cents / 100);
+  }, [currentMonthExpenses]);
 
   const jointExpensesTotal = useMemo(() => {
-    return currentMonthExpenses
+    const cents = currentMonthExpenses
       .filter(exp => exp.paidBy === 'both' || exp.paidBy === 'custom')
-      .reduce((sum, exp) => sum + exp.amount, 0);
+      .reduce((sum, exp) => sum + toSafeCents(exp.amount, exp.amountCents), 0);
+    return roundMoney(cents / 100);
   }, [currentMonthExpenses]);
 
   const partner1SoleExpensesTotal = useMemo(() => {
-    return currentMonthExpenses
+    const cents = currentMonthExpenses
       .filter(exp => exp.paidBy === 'partner1')
-      .reduce((sum, exp) => sum + exp.amount, 0);
+      .reduce((sum, exp) => sum + toSafeCents(exp.amount, exp.amountCents), 0);
+    return roundMoney(cents / 100);
   }, [currentMonthExpenses]);
 
   const partner2SoleExpensesTotal = useMemo(() => {
-    return currentMonthExpenses
+    const cents = currentMonthExpenses
       .filter(exp => exp.paidBy === 'partner2')
-      .reduce((sum, exp) => sum + exp.amount, 0);
+      .reduce((sum, exp) => sum + toSafeCents(exp.amount, exp.amountCents), 0);
+    return roundMoney(cents / 100);
   }, [currentMonthExpenses]);
 
-  // Três Totais Canônicos: Econômico Total, Consumo do Orçamento Rotineiro e Saída de Caixa
+  // Três Totais Canônicos: Econômico Total (competência), Consumo do Orçamento Rotineiro (competência) e Saída de Caixa (data civil)
   const monthlySpendingTotals = useMemo(() => {
-    const totalManualExpenses = currentMonthExpenses.reduce((sum, e) => sum + e.amount, 0);
-    const totalInstallmentsUncounted = activeInstallments.reduce((sum, inst) => {
-      const alreadyIn = currentMonthExpenses.some(e => e.installmentId === inst.id);
-      return alreadyIn ? sum : sum + installmentInMonth(inst, state.currentMonth);
-    }, 0);
-    const totalEconomicSpent = totalManualExpenses + totalInstallmentsUncounted;
+    const parentIdsWithSplits = new Set(
+      state.expenses.filter(e => e.splits && e.splits.length > 0).map(e => e.id)
+    );
+    let totalManualCents = 0;
+    let routineManualCents = 0;
+    let cashOutflowCents = 0;
 
-    const routineManualSpent = currentMonthExpenses
-      .filter(e => !e.isExcludedFromMonthlyBudget && (!e.fundingSource || e.fundingSource === 'month_budget'))
-      .reduce((sum, e) => sum + e.amount, 0);
-    const budgetConsumedSpent = routineManualSpent + totalInstallmentsUncounted;
+    state.expenses.forEach(exp => {
+      if (!exp || (exp.splitParentId && parentIdsWithSplits.has(exp.splitParentId))) return;
+      const slices = projectCanonicalExpenseSlices(exp, {
+        keywordRules: state.keywordRules,
+        installments: state.installments,
+      });
+      slices.forEach(slice => {
+        if (slice.competenceMonth === state.currentMonth) {
+          totalManualCents += slice.amountCents;
+          if (!slice.isExcludedFromMonthlyBudget && slice.fundingSource === 'month_budget') {
+            routineManualCents += slice.amountCents;
+          }
+        }
+        if (
+          slice.cashMonth === state.currentMonth &&
+          (slice.paymentMethod === 'pix' || slice.paymentMethod === 'debit' || slice.paymentMethod === 'cash')
+        ) {
+          cashOutflowCents += slice.amountCents;
+        }
+      });
+    });
 
-    const cashOutflowSpent = currentMonthExpenses
-      .filter(e => e.paymentMethod === 'pix' || e.paymentMethod === 'debit' || e.paymentMethod === 'cash')
-      .reduce((sum, e) => sum + e.amount, 0);
+    const instOccurrences = projectInstallmentOccurrencesForCompetence(
+      { installments: activeInstallments, expenses: state.expenses },
+      state.currentMonth,
+      'couple'
+    );
+    const totalInstallmentsUncountedCents = instOccurrences.reduce(
+      (sum, instOcc) => (instOcc.alreadyInExpenses ? sum : sum + instOcc.effectiveCents),
+      0
+    );
 
     return {
-      totalEconomicSpent,
-      budgetConsumedSpent,
-      cashOutflowSpent,
+      totalEconomicSpent: roundMoney((totalManualCents + totalInstallmentsUncountedCents) / 100),
+      budgetConsumedSpent: roundMoney((routineManualCents + totalInstallmentsUncountedCents) / 100),
+      cashOutflowSpent: roundMoney(cashOutflowCents / 100),
     };
-  }, [currentMonthExpenses, activeInstallments, state.currentMonth]);
+  }, [state.expenses, state.keywordRules, state.installments, activeInstallments, state.currentMonth]);
 
   // Intelligent Couple Audit, Duplication Detection & Reconciliation
   const [settlementSplitMode, setSettlementSplitMode] = useState<'fifty_fifty' | 'proportional'>('fifty_fifty');
@@ -3318,13 +3386,21 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
   ) => {
     setState(prev => {
       const mKey = monthKey || prev.currentMonth;
-      const targetBill = (prev.coupleFixedBills || []).find(b => b.id === billId);
+      const { bills: canonicalBills } = selectCanonicalFixedBillsRegistry(prev);
+      const targetBill = canonicalBills.find(b => b.id === billId);
       if (!targetBill) return prev;
 
-      const safeDueDay = Math.min(Math.max(1, targetBill.dueDay || 10), 28);
+      const [yNum, mNum] = mKey.split('-').map(Number);
+      const safeDueDay = clampDayToMonth(yNum || 2026, mNum || 1, targetBill.dueDay || 10);
       const payDate = options?.actualDate || `${mKey}-${String(safeDueDay).padStart(2, '0')}`;
-      const payAmount = options?.actualAmount ?? targetBill.amount;
-      const payer = options?.paidBy || (targetBill.assignedPayer === 'both' ? 'both' : targetBill.assignedPayer);
+      const payAmountCents =
+        options?.actualAmount !== undefined
+          ? toSafeCents(options.actualAmount)
+          : toSafeCents(targetBill.amount, targetBill.amountCents);
+      const payAmount = roundMoney(payAmountCents / 100);
+      const payer =
+        options?.paidBy ||
+        (targetBill.assignedPayer === 'both' ? 'both' : targetBill.assignedPayer || 'both');
       const method = options?.paymentMethod || (targetBill.autoPay ? 'debit' : 'pix');
 
       const autoExpense: ExpenseItem = {
@@ -3333,16 +3409,25 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
         billCompetenceMonth: mKey,
         description: `[Conta Fixa] ${targetBill.title}`,
         amount: payAmount,
-        category: targetBill.category,
+        amountCents: payAmountCents,
+        category: mapToCanonicalCategoryKey(targetBill.category),
+        nature: targetBill.nature || 'fixa',
+        priority: targetBill.priority,
+        classificationOrigin: 'origin_link',
+        policyMacroGroup: 'fixos',
         date: payDate,
         paidBy: payer,
+        splitPartner1Pct: targetBill.splitPartner1Pct,
+        splitPartner2Pct: targetBill.splitPartner2Pct,
         notes: `Pagamento de conta fixa do mês de ${mKey} (Vencimento dia ${targetBill.dueDay})`,
         fundingSource: 'month_budget',
         assignedTo: 'couple',
         paymentMethod: method as any,
       };
 
-      const existingExpIndex = prev.expenses.findIndex(e => e.linkedBillId === billId && e.billCompetenceMonth === mKey);
+      const existingExpIndex = prev.expenses.findIndex(e =>
+        doesExpenseMatchBillCompetence(e, billId, mKey)
+      );
       let nextExpenses = [...prev.expenses];
       if (existingExpIndex >= 0) {
         nextExpenses[existingExpIndex] = autoExpense;
@@ -3363,13 +3448,26 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
         },
       };
 
-      const updatedBills = (prev.coupleFixedBills || []).map(b =>
-        b.id === billId ? { ...b, status: 'paid' as const, lastPaidMonth: mKey, history: updatedHistory } : b
-      );
+      const patchedBill: FixedBillAlert = {
+        ...targetBill,
+        status: 'paid',
+        lastPaidMonth: mKey,
+        history: updatedHistory,
+      };
+
+      const existingInPrimary = (prev.coupleFixedBills || []).some(b => b.id === billId);
+      const updatedBills = existingInPrimary
+        ? (prev.coupleFixedBills || []).map(b => (b.id === billId ? patchedBill : b))
+        : [...(prev.coupleFixedBills || []), patchedBill];
+
+      const updatedLegacyAlerts = Array.isArray(prev.fixedBillAlerts)
+        ? prev.fixedBillAlerts.map(b => (b.id === billId ? patchedBill : b))
+        : prev.fixedBillAlerts;
 
       return {
         ...prev,
         coupleFixedBills: updatedBills,
+        ...(updatedLegacyAlerts !== undefined ? { fixedBillAlerts: updatedLegacyAlerts } : {}),
         expenses: nextExpenses,
       };
     });
@@ -3378,21 +3476,48 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
   const unpayFixedBill = (billId: string, monthKey?: string) => {
     setState(prev => {
       const mKey = monthKey || prev.currentMonth;
-      const targetBill = (prev.coupleFixedBills || []).find(b => b.id === billId);
+      const { bills: canonicalBills } = selectCanonicalFixedBillsRegistry(prev);
+      const targetBill = canonicalBills.find(b => b.id === billId);
       if (!targetBill) return prev;
 
       const billHistory = { ...(targetBill.history || {}) };
       delete billHistory[mKey];
 
-      const updatedBills = (prev.coupleFixedBills || []).map(b =>
-        b.id === billId ? { ...b, status: 'pending' as const, history: billHistory } : b
-      );
+      const remainingPaidMonths = Object.entries(billHistory)
+        .filter(([, h]) => h?.status === 'paid')
+        .map(([k]) => k)
+        .sort();
+      const nextLastPaidMonth =
+        remainingPaidMonths.length > 0
+          ? remainingPaidMonths[remainingPaidMonths.length - 1]
+          : targetBill.lastPaidMonth === mKey
+          ? undefined
+          : targetBill.lastPaidMonth;
+      const nextStatus: 'paid' | 'pending' = remainingPaidMonths.length > 0 ? 'paid' : 'pending';
 
-      const updatedExpenses = prev.expenses.filter(e => !(e.linkedBillId === billId && e.billCompetenceMonth === mKey));
+      const reopenBill = (b: FixedBillAlert): FixedBillAlert =>
+        b.id === billId
+          ? {
+              ...b,
+              status: nextStatus,
+              lastPaidMonth: nextLastPaidMonth,
+              history: billHistory,
+            }
+          : b;
+
+      const updatedBills = (prev.coupleFixedBills || []).map(reopenBill);
+      const updatedLegacyAlerts = Array.isArray(prev.fixedBillAlerts)
+        ? prev.fixedBillAlerts.map(reopenBill)
+        : prev.fixedBillAlerts;
+
+      const updatedExpenses = prev.expenses.filter(
+        e => !doesExpenseMatchBillCompetence(e, billId, mKey)
+      );
 
       return {
         ...prev,
         coupleFixedBills: updatedBills,
+        ...(updatedLegacyAlerts !== undefined ? { fixedBillAlerts: updatedLegacyAlerts } : {}),
         expenses: updatedExpenses,
       };
     });
@@ -3400,12 +3525,15 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
 
   const addFixedBill = (bill: Omit<FixedBillAlert, 'id'>): FixedBillAlert => {
     const id = `bill-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    const amountCents = toSafeCents(bill.amount, bill.amountCents);
     const newBill: FixedBillAlert = {
       ...bill,
       id,
+      amount: roundMoney(amountCents / 100),
+      amountCents,
       active: bill.active ?? true,
       status: bill.status || 'pending',
-      history: {},
+      history: bill.history || {},
     };
     setState(prev => ({
       ...prev,
@@ -3415,16 +3543,42 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
   };
 
   const updateFixedBill = (id: string, updates: Partial<FixedBillAlert>) => {
-    setState(prev => ({
-      ...prev,
-      coupleFixedBills: (prev.coupleFixedBills || []).map(b => b.id === id ? { ...b, ...updates } : b),
-    }));
+    setState(prev => {
+      const normalizedUpdates =
+        updates.amount !== undefined || updates.amountCents !== undefined
+          ? {
+              ...updates,
+              amountCents: toSafeCents(updates.amount, updates.amountCents),
+              amount: roundMoney(toSafeCents(updates.amount, updates.amountCents) / 100),
+            }
+          : updates;
+      const existingInPrimary = (prev.coupleFixedBills || []).some(b => b.id === id);
+      const { bills: canonicalBills } = selectCanonicalFixedBillsRegistry(prev);
+      const fallbackTarget = !existingInPrimary ? canonicalBills.find(b => b.id === id) : undefined;
+      const nextPrimary = existingInPrimary
+        ? (prev.coupleFixedBills || []).map(b => (b.id === id ? { ...b, ...normalizedUpdates } : b))
+        : fallbackTarget
+        ? [...(prev.coupleFixedBills || []), { ...fallbackTarget, ...normalizedUpdates }]
+        : prev.coupleFixedBills || [];
+      const nextLegacy = Array.isArray(prev.fixedBillAlerts)
+        ? prev.fixedBillAlerts.map(b => (b.id === id ? { ...b, ...normalizedUpdates } : b))
+        : prev.fixedBillAlerts;
+
+      return {
+        ...prev,
+        coupleFixedBills: nextPrimary,
+        ...(nextLegacy !== undefined ? { fixedBillAlerts: nextLegacy } : {}),
+      };
+    });
   };
 
   const deleteFixedBill = (id: string) => {
     setState(prev => ({
       ...prev,
       coupleFixedBills: (prev.coupleFixedBills || []).filter(b => b.id !== id),
+      ...(Array.isArray(prev.fixedBillAlerts)
+        ? { fixedBillAlerts: prev.fixedBillAlerts.filter(b => b.id !== id) }
+        : {}),
     }));
   };
 
@@ -5332,8 +5486,10 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
   };
 
   const reconciledBudgetMatrix = useMemo(() => {
-    return selectReconciledBudgetMatrix(state, 'casal', state.currentMonth);
-  }, [state]);
+    const matrixScope =
+      viewMode === 'partner1' ? 'partner1' : viewMode === 'partner2' ? 'partner2' : 'casal';
+    return selectReconciledBudgetMatrix(state, matrixScope, state.currentMonth);
+  }, [state, viewMode]);
 
   return (
     <FinanceContext.Provider
