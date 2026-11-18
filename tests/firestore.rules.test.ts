@@ -119,7 +119,7 @@ describe.skipIf(!enabled)('Firestore couple isolation (emulator only)', () => {
 
     const first = await commitCoupleHeaderPatchTransaction(alice, 'profile13', {},
       { expectedYieldAnnual: 0, emergencyReserveMonthsTarget: 9 }, { authoredByUid: 'profile-alice' });
-    expect(first.status).toBe('success');
+    expect(first.status, first.message).toBe('success');
     expect((await getDoc(doc(bob, 'couples/profile13'))).data()).toMatchObject({
       expectedYieldAnnual: 0, emergencyReserveMonthsTarget: 9, lastUpdatedBy: 'profile-alice',
     });
@@ -132,7 +132,7 @@ describe.skipIf(!enabled)('Firestore couple isolation (emulator only)', () => {
     const second = await commitCoupleHeaderPatchTransaction(bob, 'profile13',
       { expectedYieldAnnual: 0, emergencyReserveMonthsTarget: 9 },
       { emergencyReserveMonthsTarget: 12 }, { authoredByUid: 'profile-bob' });
-    expect(second.status).toBe('success');
+    expect(second.status, second.message).toBe('success');
     expect((await getDoc(doc(alice, 'couples/profile13'))).data()).toMatchObject({
       expectedYieldAnnual: 0, emergencyReserveMonthsTarget: 12, lastUpdatedBy: 'profile-bob',
     });

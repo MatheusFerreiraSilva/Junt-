@@ -678,15 +678,15 @@ export async function commitCoupleHeaderPatchTransaction(
 
   const isActive = options.isActive || (() => true);
   const runTx = options.runTransactionFn || (runTransaction as CommitCoupleHeaderPatchOptions['runTransactionFn'])!;
-  const coupleRef = db && typeof (db as any) === 'object' && 'type' in (db as any)
-    ? doc(db, 'couples', coupleId)
-    : ({ path: `couples/${coupleId}` } as any);
 
   let conflictFieldsFound: CoupleHeaderSyncKey[] = [];
   let remoteSnapOut: CoupleHeaderSnapshot | undefined;
   let wasReplay = false;
 
   try {
+    const coupleRef = options.runTransactionFn
+      ? { path: `couples/${coupleId}` }
+      : doc(db, 'couples', coupleId);
     await runTx(db, async (tx: any) => {
       if (!isActive()) {
         throw new Error('Sessão alterada antes de confirmar as alterações.');
