@@ -69,6 +69,7 @@ export const CoupleHubScreen: React.FC = () => {
     convertDreamToGoal,
     setGoalCoupleAgreement,
     monthlyFixedExpensesAvg,
+    previewWithdrawal,
   } = useFinance();
 
   const [activeTab, setActiveTab] = useState<SubTab>('goals');
@@ -82,6 +83,14 @@ export const CoupleHubScreen: React.FC = () => {
   const [selectedGoalId, setSelectedGoalId] = useState<string | null>(null);
   const [contributionType, setContributionType] = useState<'deposit' | 'withdrawal'>('deposit');
   const [contributionError, setContributionError] = useState<string>('');
+  const [needsCompletedConfirmation, setNeedsCompletedConfirmation] = useState(false);
+  const [confirmedCompletedContribution, setConfirmedCompletedContribution] = useState(false);
+  const [withdrawalChannel, setWithdrawalChannel] = useState<'asset_redemption' | 'virtual_reallocation'>('asset_redemption');
+  const [withdrawalStage, setWithdrawalStage] = useState<'pending_settlement' | 'occurred_manual'>('occurred_manual');
+  const [withdrawalNetAmount, setWithdrawalNetAmount] = useState('');
+  const [withdrawalDestAccountId, setWithdrawalDestAccountId] = useState('');
+  const [withdrawalOverrideDivergence, setWithdrawalOverrideDivergence] = useState(false);
+  const [pendingDeleteGoal, setPendingDeleteGoal] = useState<CoupleGoal | null>(null);
   const [hubError, setHubError] = useState<string>('');
 
   const [isWishlistModalOpen, setIsWishlistModalOpen] = useState(false);
@@ -104,6 +113,7 @@ export const CoupleHubScreen: React.FC = () => {
     targetAmount: '',
     monthlyPlannedDeposit: '',
     deadlineDate: '',
+    isFireEligible: false,
   });
 
   const [contributionForm, setContributionForm] = useState({
@@ -185,8 +195,18 @@ export const CoupleHubScreen: React.FC = () => {
           monthlyPlannedDeposit: pb.monthlyDeposit ?? existing.monthlyPlannedDeposit,
           isCompleted: pb.completed || pb.currentAmount >= pb.targetAmount,
           archived: pb.archived ?? existing.archived ?? false,
+          isFireEligible: pb.isFireEligible ?? existing.isFireEligible ?? false,
+          totalInvested: pb.totalInvested ?? existing.totalInvested,
+          yieldAccumulated: pb.yieldAccumulated ?? existing.yieldAccumulated,
+          coupleAgreement: pb.coupleAgreement ?? existing.coupleAgreement,
         });
       } else {
+        const agreedP1 = pb.coupleAgreement
+          ? Math.round((pb.currentAmount * (pb.coupleAgreement.partner1SharePct || 0))) / 100
+          : 0;
+        const agreedP2 = pb.coupleAgreement
+          ? Math.round((pb.currentAmount * (pb.coupleAgreement.partner2SharePct || 0))) / 100
+          : 0;
         unifiedMap.set(pb.id, {
           id: pb.id,
           title: pb.name,
@@ -194,13 +214,17 @@ export const CoupleHubScreen: React.FC = () => {
           emoji: pb.emoji || '🎯',
           targetAmount: pb.targetAmount,
           currentAmount: pb.currentAmount,
-          partner1Contribution: pb.currentAmount / 2,
-          partner2Contribution: pb.currentAmount / 2,
+          partner1Contribution: agreedP1,
+          partner2Contribution: agreedP2,
           monthlyPlannedDeposit: pb.monthlyDeposit || 0,
           isCompleted: pb.completed || pb.currentAmount >= pb.targetAmount,
           history: [],
           createdAt: new Date().toISOString().split('T')[0],
           archived: pb.archived ?? false,
+          isFireEligible: Boolean(pb.isFireEligible),
+          totalInvested: pb.totalInvested,
+          yieldAccumulated: pb.yieldAccumulated,
+          coupleAgreement: pb.coupleAgreement,
         });
       }
     });
@@ -303,6 +327,7 @@ export const CoupleHubScreen: React.FC = () => {
       targetAmount: '',
       monthlyPlannedDeposit: '',
       deadlineDate: '',
+      isFireEligible: false,
     });
     setIsGoalModalOpen(true);
   };
@@ -316,6 +341,7 @@ export const CoupleHubScreen: React.FC = () => {
       targetAmount: goal.targetAmount.toString(),
       monthlyPlannedDeposit: (goal.monthlyPlannedDeposit || 0).toString(),
       deadlineDate: goal.deadlineDate || '',
+      isFireEligible: Boolean(goal.isFireEligible),
     });
     setIsGoalModalOpen(true);
   };
@@ -337,6 +363,7 @@ export const CoupleHubScreen: React.FC = () => {
         monthlyDeposit: monthlyVal,
         monthlyPlannedDeposit: monthlyVal,
         deadlineDate: goalForm.deadlineDate || undefined,
+        isFireEligible: goalForm.isFireEligible,
       });
     } else {
       addPiggyBank({
@@ -348,6 +375,7 @@ export const CoupleHubScreen: React.FC = () => {
         currentAmount: 0,
         completed: false,
         archived: false,
+        isFireEligible: goalForm.isFireEligible,
       });
     }
 
@@ -360,19 +388,17 @@ export const CoupleHubScreen: React.FC = () => {
   };
 
   const handleDeleteGoalAttempt = (goal: CoupleGoal) => {
-    if (goal.currentAmount > 0) {
-      if (
-        window.confirm(
-          `A meta "${goal.title}" possui R$ ${goal.currentAmount.toLocaleString('pt-BR')} guardados. Deseja arquivá-la para preservar o patrimônio do casal?`
-        )
-      ) {
-        archivePiggyBank(goal.id, true);
-      }
+    setPendingDeleteGoal(goal);
+  };
+
+  const handleConfirmPendingDeleteGoal = () => {
+    if (!pendingDeleteGoal) return;
+    if (pendingDeleteGoal.currentAmount > 0) {
+      archivePiggyBank(pendingDeleteGoal.id, true);
     } else {
-      if (window.confirm(`Tem certeza que deseja excluir o rascunho da meta "${goal.title}"?`)) {
-        deletePiggyBank(goal.id, true);
-      }
+      deletePiggyBank(pendingDeleteGoal.id, true);
     }
+    setPendingDeleteGoal(null);
   };
 
   const handleSaveContribution = (e: React.FormEvent) => {
@@ -388,16 +414,41 @@ export const CoupleHubScreen: React.FC = () => {
     try {
       setContributionError('');
       if (contributionType === 'deposit') {
-        depositToPiggyBank(selectedGoalId, numVal, contributionForm.contributor, contributionForm.note);
+        depositToPiggyBank(selectedGoalId, numVal, contributionForm.contributor, contributionForm.note, {
+          completedGoalContributionConfirmed: confirmedCompletedContribution,
+        });
       } else {
-        withdrawFromPiggyBank(selectedGoalId, numVal);
+        const finalNet = withdrawalNetAmount.trim()
+          ? parseFloat(withdrawalNetAmount.replace(',', '.'))
+          : numVal;
+        if (!Number.isFinite(finalNet) || finalNet <= 0) {
+          setContributionError('Informe um valor líquido válido maior que zero.');
+          return;
+        }
+        withdrawFromPiggyBank(selectedGoalId, numVal, {
+          withdrawalChannel,
+          executionMode: withdrawalStage,
+          grossAmountR$: numVal,
+          netAmountR$: finalNet,
+          destinationAccountId: withdrawalDestAccountId || undefined,
+          overrideInsufficientPlanning: withdrawalOverrideDivergence,
+          note: contributionForm.note || undefined,
+        });
       }
 
       setIsContributionModalOpen(false);
       setSelectedGoalId(null);
+      setNeedsCompletedConfirmation(false);
+      setConfirmedCompletedContribution(false);
+      setWithdrawalNetAmount('');
+      setWithdrawalOverrideDivergence(false);
       setContributionForm({ amount: '', contributor: 'both', note: '' });
     } catch (err: any) {
-      setContributionError(err?.message || 'Não foi possível concluir a movimentação na caixinha.');
+      const msg = err?.message || 'Não foi possível concluir a movimentação na caixinha.';
+      if (err?.code === 'CONFIRMATION_REQUIRED' || /CONFIRMATION_REQUIRED|conclu[ií]d/i.test(msg)) {
+        setNeedsCompletedConfirmation(true);
+      }
+      setContributionError(msg);
     }
   };
 
@@ -935,11 +986,17 @@ export const CoupleHubScreen: React.FC = () => {
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
               {displayedGoals.map((goal) => {
-                const progressPct = Math.min(100, Math.round((goal.currentAmount / goal.targetAmount) * 100));
+                const progressPct = goal.targetAmount > 0 ? Math.min(100, Math.round((goal.currentAmount / goal.targetAmount) * 100)) : 0;
                 const p1Contrib = goal.partner1Contribution || 0;
                 const p2Contrib = goal.partner2Contribution || 0;
-                const hasKnownContrib = p1Contrib > 0 || p2Contrib > 0;
-                const p1Pct = hasKnownContrib && goal.currentAmount > 0 ? Math.round((p1Contrib / goal.currentAmount) * 100) : 50;
+                const contribTotal = p1Contrib + p2Contrib;
+                const hasKnownContrib = contribTotal > 0;
+                const p1Pct = hasKnownContrib
+                  ? Math.round((p1Contrib / contribTotal) * 100)
+                  : goal.coupleAgreement?.partner1SharePct ?? null;
+                const recentOps = (state.financialOperations || [])
+                  .filter((op) => op.targetRef?.id === goal.id || op.sourceRef?.id === goal.id)
+                  .slice(0, 2);
 
                 return (
                   <div
@@ -956,9 +1013,16 @@ export const CoupleHubScreen: React.FC = () => {
                           {goal.emoji || '🎯'}
                         </span>
                         <div>
-                          <h4 className="font-black text-base text-[#111318] dark:text-white leading-snug">
-                            {goal.title}
-                          </h4>
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <h4 className="font-black text-base text-[#111318] dark:text-white leading-snug">
+                              {goal.title}
+                            </h4>
+                            {goal.isFireEligible === true && (
+                              <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300 font-black uppercase">
+                                FIRE
+                              </span>
+                            )}
+                          </div>
                           <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">
                             Meta: R$ {goal.targetAmount.toLocaleString('pt-BR')}
                           </span>
@@ -1011,7 +1075,7 @@ export const CoupleHubScreen: React.FC = () => {
                       <div className="flex items-center justify-between font-bold text-slate-700 dark:text-slate-300 text-[11px]">
                         <span>Divisão de Aportes:</span>
                         <span className="text-slate-500 font-mono">
-                          {hasKnownContrib ? `${p1Pct}% ${p1Name} · ${100 - p1Pct}% ${p2Name}` : 'Não informada'}
+                          {p1Pct !== null ? `${p1Pct}% ${p1Name} · ${100 - p1Pct}% ${p2Name}` : 'Não informada'}
                         </span>
                       </div>
 
@@ -1033,12 +1097,33 @@ export const CoupleHubScreen: React.FC = () => {
                       )}
                     </div>
 
+                    {recentOps.length > 0 && (
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        {recentOps.map((op) => (
+                          <span
+                            key={op.id}
+                            title={`Operação rastreável ${op.id}`}
+                            className={`text-[10px] font-mono px-2 py-0.5 rounded-full border ${
+                              op.state === 'reverted' || op.state === 'estornado'
+                                ? 'bg-slate-100 dark:bg-slate-800 text-slate-500 line-through border-slate-300 dark:border-slate-700'
+                                : 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800'
+                            }`}
+                          >
+                            {op.id}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+
                     {/* Actions */}
                     <div className="grid grid-cols-2 gap-2 pt-1">
                       <button
                         onClick={() => {
                           setSelectedGoalId(goal.id);
                           setContributionType('deposit');
+                          setContributionError('');
+                          setNeedsCompletedConfirmation(false);
+                          setConfirmedCompletedContribution(false);
                           setIsContributionModalOpen(true);
                         }}
                         className="flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-2xl bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-900 dark:text-emerald-200 border border-emerald-300 dark:border-emerald-700 text-xs font-black transition-all cursor-pointer"
@@ -1051,6 +1136,9 @@ export const CoupleHubScreen: React.FC = () => {
                         onClick={() => {
                           setSelectedGoalId(goal.id);
                           setContributionType('withdrawal');
+                          setContributionError('');
+                          setNeedsCompletedConfirmation(false);
+                          setConfirmedCompletedContribution(false);
                           setIsContributionModalOpen(true);
                         }}
                         className="flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-2xl bg-amber-500/20 hover:bg-amber-500/30 text-amber-900 dark:text-amber-200 border border-amber-300 dark:border-amber-700 text-xs font-black transition-all cursor-pointer"
@@ -1095,6 +1183,7 @@ export const CoupleHubScreen: React.FC = () => {
                   targetAmount: '8000',
                   monthlyPlannedDeposit: '1000',
                   deadlineDate: '',
+                  isFireEligible: false,
                 });
                 setIsGoalModalOpen(true);
               }}
@@ -1724,6 +1813,16 @@ export const CoupleHubScreen: React.FC = () => {
                 </div>
               </div>
 
+              <label className="flex items-center gap-2 text-xs font-bold text-slate-700 dark:text-slate-300 cursor-pointer pt-1">
+                <input
+                  type="checkbox"
+                  checked={goalForm.isFireEligible}
+                  onChange={(e) => setGoalForm({ ...goalForm, isFireEligible: e.target.checked })}
+                  className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+                />
+                <span>Elegível ao patrimônio FIRE (Independência Financeira)</span>
+              </label>
+
               <div className="pt-3 flex gap-2">
                 <button
                   type="button"
@@ -1747,99 +1846,306 @@ export const CoupleHubScreen: React.FC = () => {
       {/* ========================================================================= */}
       {/* MODAL: CONTRIBUTION MODAL (+ GUARDAR / - USAR)                            */}
       {/* ========================================================================= */}
-      {isContributionModalOpen && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-slate-900 rounded-3xl p-6 max-w-md w-full border border-slate-200 dark:border-slate-800 shadow-2xl space-y-4 animate-in zoom-in-95">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
-              <h3 className="text-lg font-black text-slate-900 dark:text-white font-display">
-                {contributionType === 'deposit' ? 'Guardar em Caixinha (+)' : 'Usar Saldo de Caixinha (-)'}
-              </h3>
-              <button
-                type="button"
-                onClick={() => {
-                  setIsContributionModalOpen(false);
-                  setContributionError('');
-                }}
-                className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
+      {isContributionModalOpen && (() => {
+        const targetGoal = state.piggyBanks.find(p => p.id === selectedGoalId);
+        const grossVal = parseFloat(contributionForm.amount.replace(',', '.')) || 0;
+        const parsedNet = withdrawalNetAmount.trim()
+          ? parseFloat(withdrawalNetAmount.replace(',', '.'))
+          : grossVal;
+        const netVal = Number.isFinite(parsedNet) && parsedNet > 0 ? parsedNet : grossVal;
+        const checkingAccounts = (state.linkedAccounts || []).filter(
+          a => a.accountType === 'corrente' || a.accountType === 'poupanca'
+        );
+        const withdrawalPreview =
+          contributionType === 'withdrawal' && selectedGoalId && grossVal > 0
+            ? previewWithdrawal({
+                goalId: selectedGoalId,
+                sourceType: 'piggy_bank',
+                grossAmountR$: grossVal,
+                netAmountR$: netVal,
+                withdrawalChannel,
+                executionMode: withdrawalStage,
+                destinationAccountId: withdrawalDestAccountId || undefined,
+                overrideInsufficientPlanning: withdrawalOverrideDivergence,
+              })
+            : null;
+        const diffR$ = withdrawalPreview
+          ? withdrawalPreview.differenceToReviewCents / 100
+          : Math.max(0, grossVal - netVal);
 
-            <form onSubmit={handleSaveContribution} className="space-y-3.5">
-              {contributionError && (
-                <p
-                  role="alert"
-                  className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-800 text-xs font-semibold text-rose-800 dark:text-rose-200"
-                >
-                  {contributionError}
-                </p>
-              )}
-
-              <div>
-                <label className="text-xs font-bold text-slate-600 dark:text-slate-400 block mb-1">
-                  Valor (R$)
-                </label>
-                <input
-                  type="text"
-                  required
-                  value={contributionForm.amount}
-                  onChange={(e) => {
-                    setContributionForm({ ...contributionForm, amount: e.target.value });
-                    if (contributionError) setContributionError('');
-                  }}
-                  placeholder="500,00"
-                  className="w-full px-3.5 py-2.5 text-sm font-black rounded-2xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white"
-                />
-              </div>
-
-              <div>
-                <label className="text-xs font-bold text-slate-600 dark:text-slate-400 block mb-1">
-                  Quem {contributionType === 'deposit' ? 'aportou' : 'utilizou'}?
-                </label>
-                <select
-                  value={contributionForm.contributor}
-                  onChange={(e) => setContributionForm({ ...contributionForm, contributor: e.target.value as any })}
-                  className="w-full px-3.5 py-2.5 text-xs font-bold rounded-2xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white"
-                >
-                  <option value="both">Casal (50/50)</option>
-                  <option value="partner1">{p1Name}</option>
-                  <option value="partner2">{p2Name}</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="text-xs font-bold text-slate-600 dark:text-slate-400 block mb-1">
-                  Observação / Nota
-                </label>
-                <input
-                  type="text"
-                  value={contributionForm.note}
-                  onChange={(e) => setContributionForm({ ...contributionForm, note: e.target.value })}
-                  placeholder="Ex: Aporte do plantão extra, parcela da viagem..."
-                  className="w-full px-3.5 py-2.5 text-xs font-bold rounded-2xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white"
-                />
-              </div>
-
-              <div className="pt-3 flex gap-2">
+        return (
+          <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+            <div className="bg-white dark:bg-slate-900 rounded-3xl p-6 max-w-md w-full border border-slate-200 dark:border-slate-800 shadow-2xl space-y-4 animate-in zoom-in-95 max-h-[90vh] overflow-y-auto">
+              <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
+                <h3 className="text-lg font-black text-slate-900 dark:text-white font-display">
+                  {contributionType === 'deposit' ? 'Guardar em Caixinha (+)' : 'Usar Saldo de Caixinha (-)'}
+                </h3>
                 <button
                   type="button"
                   onClick={() => {
                     setIsContributionModalOpen(false);
                     setContributionError('');
+                    setWithdrawalNetAmount('');
+                    setWithdrawalOverrideDivergence(false);
+                    setNeedsCompletedConfirmation(false);
+                    setConfirmedCompletedContribution(false);
                   }}
-                  className="flex-1 py-2.5 rounded-2xl border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 text-xs font-bold hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+                  className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
                 >
-                  Cancelar
-                </button>
-                <button
-                  type="submit"
-                  className="flex-1 py-2.5 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black shadow-md transition-colors cursor-pointer"
-                >
-                  Confirmar
+                  <X className="w-5 h-5" />
                 </button>
               </div>
-            </form>
+
+              <form onSubmit={handleSaveContribution} className="space-y-3.5">
+                {contributionError && (
+                  <p
+                    role="alert"
+                    className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-800 text-xs font-semibold text-rose-800 dark:text-rose-200"
+                  >
+                    {contributionError}
+                  </p>
+                )}
+
+                {needsCompletedConfirmation && contributionType === 'deposit' && (
+                  <label className="flex items-start gap-2.5 p-3 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-xs font-semibold text-amber-900 dark:text-amber-200 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={confirmedCompletedContribution}
+                      onChange={(e) => setConfirmedCompletedContribution(e.target.checked)}
+                      className="mt-0.5 rounded border-amber-400 text-amber-600 focus:ring-amber-500"
+                    />
+                    <span>Confirmo que desejo aportar manualmente nesta meta já concluída e utilizada.</span>
+                  </label>
+                )}
+
+                <div>
+                  <label className="text-xs font-bold text-slate-600 dark:text-slate-400 block mb-1">
+                    {contributionType === 'withdrawal' ? 'Valor Bruto (R$)' : 'Valor (R$)'}
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={contributionForm.amount}
+                    onChange={(e) => {
+                      setContributionForm({ ...contributionForm, amount: e.target.value });
+                      if (contributionError) setContributionError('');
+                    }}
+                    placeholder="500,00"
+                    className="w-full px-3.5 py-2.5 text-sm font-black rounded-2xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white"
+                  />
+                </div>
+
+                {contributionType === 'withdrawal' && (
+                  <div className="space-y-2.5 p-3 rounded-2xl bg-slate-50 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700 text-xs">
+                    <div className="grid grid-cols-2 gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => setWithdrawalChannel('asset_redemption')}
+                        className={`py-2 px-2 rounded-xl text-[11px] font-bold border ${
+                          withdrawalChannel === 'asset_redemption'
+                            ? 'bg-slate-900 dark:bg-white text-white dark:text-slate-900 border-slate-900 dark:border-white'
+                            : 'bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700'
+                        }`}
+                      >
+                        Resgate real de ativo
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setWithdrawalChannel('virtual_reallocation')}
+                        className={`py-2 px-2 rounded-xl text-[11px] font-bold border ${
+                          withdrawalChannel === 'virtual_reallocation'
+                            ? 'bg-slate-900 dark:bg-white text-white dark:text-slate-900 border-slate-900 dark:border-white'
+                            : 'bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700'
+                        }`}
+                      >
+                        Realocação virtual (mesma conta)
+                      </button>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => setWithdrawalStage('pending_settlement')}
+                        className={`py-2 px-2 rounded-xl text-[11px] font-bold border ${
+                          withdrawalStage === 'pending_settlement'
+                            ? 'bg-amber-600 text-white border-amber-600'
+                            : 'bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700'
+                        }`}
+                      >
+                        Solicitar / Planejar (em liquidação)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setWithdrawalStage('occurred_manual')}
+                        className={`py-2 px-2 rounded-xl text-[11px] font-bold border ${
+                          withdrawalStage === 'occurred_manual'
+                            ? 'bg-emerald-600 text-white border-emerald-600'
+                            : 'bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700'
+                        }`}
+                      >
+                        Registrar que ocorreu no banco
+                      </button>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      <div>
+                        <label className="text-[11px] font-bold text-slate-600 dark:text-slate-300 block mb-1">
+                          Valor líquido recebido (R$)
+                        </label>
+                        <input
+                          type="text"
+                          value={withdrawalNetAmount}
+                          onChange={(e) => setWithdrawalNetAmount(e.target.value)}
+                          placeholder={contributionForm.amount || 'Mesmo do bruto'}
+                          className="w-full px-3 py-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 font-bold text-xs"
+                        />
+                      </div>
+
+                      {withdrawalChannel === 'asset_redemption' && checkingAccounts.length > 0 && (
+                        <div>
+                          <label className="text-[11px] font-bold text-slate-600 dark:text-slate-300 block mb-1">
+                            Conta corrente destino
+                          </label>
+                          <select
+                            value={withdrawalDestAccountId}
+                            onChange={(e) => setWithdrawalDestAccountId(e.target.value)}
+                            className="w-full px-2.5 py-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 font-bold text-xs"
+                          >
+                            <option value="">Selecionar conta</option>
+                            {checkingAccounts.map((acc) => (
+                              <option key={acc.id} value={acc.canonicalAccountId || acc.id}>
+                                {acc.bankName} ({acc.accountType})
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      )}
+                    </div>
+
+                    {diffR$ > 0 && (
+                      <div className="p-2 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-[11px] font-semibold text-amber-900 dark:text-amber-200">
+                        Diferença a revisar: <strong>R$ {diffR$.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</strong>
+                      </div>
+                    )}
+
+                    {targetGoal && grossVal > targetGoal.currentAmount && (
+                      <label className="flex items-start gap-2 p-2 rounded-xl bg-rose-50 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-800 cursor-pointer text-[11px]">
+                        <input
+                          type="checkbox"
+                          checked={withdrawalOverrideDivergence}
+                          onChange={(e) => setWithdrawalOverrideDivergence(e.target.checked)}
+                          className="mt-0.5 rounded border-rose-400 text-rose-600 focus:ring-rose-500"
+                        />
+                        <span className="font-bold text-rose-900 dark:text-rose-200">
+                          Registrar divergência ocorrida no banco (saldo planejado insuficiente)
+                        </span>
+                      </label>
+                    )}
+
+                    {withdrawalPreview && (
+                      <div className="p-2.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 space-y-1">
+                        <div className="flex items-center justify-between text-[11px] font-extrabold">
+                          <span>Prévia da Operação</span>
+                          <span className="text-emerald-700 dark:text-emerald-300">Renda nova gerada: R$ 0,00</span>
+                        </div>
+                        <div className="text-[11px] text-slate-500 dark:text-slate-400 flex flex-wrap gap-x-2">
+                          <span>Bruto: R$ {(withdrawalPreview.grossAmountCents / 100).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                          <span>Líquido: R$ {(withdrawalPreview.netAmountCents / 100).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                <div>
+                  <label className="text-xs font-bold text-slate-600 dark:text-slate-400 block mb-1">
+                    Quem {contributionType === 'deposit' ? 'aportou' : 'utilizou'}?
+                  </label>
+                  <select
+                    value={contributionForm.contributor}
+                    onChange={(e) => setContributionForm({ ...contributionForm, contributor: e.target.value as any })}
+                    className="w-full px-3.5 py-2.5 text-xs font-bold rounded-2xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white"
+                  >
+                    <option value="both">Casal (50/50)</option>
+                    <option value="partner1">{p1Name}</option>
+                    <option value="partner2">{p2Name}</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="text-xs font-bold text-slate-600 dark:text-slate-400 block mb-1">
+                    Observação / Nota
+                  </label>
+                  <input
+                    type="text"
+                    value={contributionForm.note}
+                    onChange={(e) => setContributionForm({ ...contributionForm, note: e.target.value })}
+                    placeholder="Ex: Aporte do plantão extra, parcela da viagem..."
+                    className="w-full px-3.5 py-2.5 text-xs font-bold rounded-2xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white"
+                  />
+                </div>
+
+                <div className="pt-3 flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsContributionModalOpen(false);
+                      setContributionError('');
+                      setWithdrawalNetAmount('');
+                      setWithdrawalOverrideDivergence(false);
+                      setNeedsCompletedConfirmation(false);
+                      setConfirmedCompletedContribution(false);
+                    }}
+                    className="flex-1 py-2.5 rounded-2xl border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 text-xs font-bold hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="submit"
+                    className="flex-1 py-2.5 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black shadow-md transition-colors cursor-pointer"
+                  >
+                    {contributionType === 'withdrawal' && withdrawalStage === 'pending_settlement'
+                      ? 'Solicitar / Planejar'
+                      : 'Confirmar'}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        );
+      })()}
+
+      {pendingDeleteGoal && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-slate-900 rounded-3xl p-6 max-w-md w-full border border-slate-200 dark:border-slate-800 shadow-2xl space-y-4">
+            <h3 className="text-base font-black text-slate-900 dark:text-white font-display">
+              {pendingDeleteGoal.currentAmount > 0 ? 'Arquivar meta com saldo?' : 'Excluir rascunho de meta?'}
+            </h3>
+            <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
+              {pendingDeleteGoal.currentAmount > 0
+                ? `A meta "${pendingDeleteGoal.title}" possui R$ ${pendingDeleteGoal.currentAmount.toLocaleString('pt-BR')} guardados. Deseja arquivá-la para preservar o patrimônio do casal?`
+                : `Tem certeza que deseja excluir o rascunho da meta "${pendingDeleteGoal.title}"?`}
+            </p>
+            <div className="flex gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setPendingDeleteGoal(null)}
+                className="flex-1 py-2.5 rounded-2xl border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 text-xs font-bold hover:bg-slate-50 dark:hover:bg-slate-800 cursor-pointer"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmPendingDeleteGoal}
+                className={`flex-1 py-2.5 rounded-2xl text-white text-xs font-black shadow-md cursor-pointer ${
+                  pendingDeleteGoal.currentAmount > 0
+                    ? 'bg-amber-600 hover:bg-amber-700'
+                    : 'bg-rose-600 hover:bg-rose-700'
+                }`}
+              >
+                {pendingDeleteGoal.currentAmount > 0 ? 'Arquivar Meta' : 'Excluir Rascunho'}
+              </button>
+            </div>
           </div>
         </div>
       )}

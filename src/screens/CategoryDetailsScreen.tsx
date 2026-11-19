@@ -23,6 +23,8 @@ import { formatCurrency } from '../utils/formatters';
 import { MonthSelector } from '../components/MonthSelector';
 import { FoodPacingWeeklyCard } from '../components/FoodPacingWeeklyCard';
 import { BudgetRebalanceModal } from '../components/modals/BudgetRebalanceModal';
+import { ReinforcementProvenanceBar } from '../components/ReinforcementProvenanceBar';
+import { CategoryReinforcementModal } from '../components/modals/CategoryReinforcementModal';
 
 interface CategoryDetailsScreenProps {
   initialCategory?: CategoryKey;
@@ -56,6 +58,7 @@ export const CategoryDetailsScreen: React.FC<CategoryDetailsScreenProps> = ({
   const [editingExpense, setEditingExpense] = useState<ExpenseItem | null>(null);
   const [editError, setEditError] = useState<string>('');
   const [isSimulatingCeiling, setIsSimulatingCeiling] = useState(false);
+  const [isReinforcementModalOpen, setIsReinforcementModalOpen] = useState(false);
 
   // Ceiling simulation state initialized from current percentages
   const [simulatedPercentages, setSimulatedPercentages] = useState<Record<CategoryKey, number>>(() => ({
@@ -386,17 +389,19 @@ export const CategoryDetailsScreen: React.FC<CategoryDetailsScreenProps> = ({
                   </div>
                 </div>
 
-                <div className="h-2.5 w-full bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden p-0.5">
-                  <div
-                    className={`h-full rounded-full transition-all duration-700 ${
-                      spend?.isOver ? 'bg-rose-500' : 'bg-accent-primary'
-                    }`}
-                    style={{
-                      width: `${pct}%`,
-                      backgroundColor: !spend?.isOver ? cat.colorHex : undefined,
-                    }}
-                  />
-                </div>
+                <ReinforcementProvenanceBar
+                  compact
+                  spent={spend?.spent || 0}
+                  baseBudget={spend?.baseBudget ?? spend?.budget ?? 0}
+                  effectiveBudget={spend?.budget || 0}
+                  reinforcementAmount={spend?.reinforcementAmount || 0}
+                  reallocationNetAmount={spend?.reallocationNetAmount || 0}
+                  sources={spend?.reinforcementSources || []}
+                  categoryName={cat.name}
+                  competence={state.currentMonth}
+                  fillClassName={spend?.isOver ? 'bg-rose-500' : 'bg-accent-primary'}
+                  fillColorHex={!spend?.isOver ? cat.colorHex : undefined}
+                />
               </div>
             );
           })}
@@ -426,23 +431,41 @@ export const CategoryDetailsScreen: React.FC<CategoryDetailsScreenProps> = ({
               </div>
             </div>
 
-            <button
-              onClick={() => onOpenExpenseModal((selectedCategory in CATEGORIES_BASE) ? (selectedCategory as CategoryKey) : undefined)}
-              className="btn-primary-accent flex items-center gap-1.5 px-4 py-2 rounded-xl text-white text-xs font-bold shadow-xs transition-colors"
-            >
-              <Plus className="w-4 h-4" />
-              Adicionar Gasto Aqui
-            </button>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setIsReinforcementModalOpen(true)}
+                className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-sky-100 hover:bg-sky-200 dark:bg-sky-950/70 dark:hover:bg-sky-900 text-blue-800 dark:text-sky-200 border border-blue-300 dark:border-sky-700 text-xs font-black shadow-xs transition-colors cursor-pointer"
+              >
+                <Sparkles className="w-3.5 h-3.5" />
+                Reforçar Categoria
+              </button>
+
+              <button
+                onClick={() => onOpenExpenseModal((selectedCategory in CATEGORIES_BASE) ? (selectedCategory as CategoryKey) : undefined)}
+                className="btn-primary-accent flex items-center gap-1.5 px-4 py-2 rounded-xl text-white text-xs font-bold shadow-xs transition-colors"
+              >
+                <Plus className="w-4 h-4" />
+                Adicionar Gasto Aqui
+              </button>
+            </div>
           </div>
 
           {/* Metric Bar */}
           {currentCategorySpend && (
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2">
               <div className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/60 dark:border-slate-700">
-                <span className="text-xs text-slate-500 dark:text-slate-400 font-medium">Combinado do mês</span>
+                <span className="text-xs text-slate-500 dark:text-slate-400 font-medium">
+                  {(currentCategorySpend.reinforcementAmount || 0) > 0 ? 'Orçamento efetivo do mês' : 'Combinado do mês'}
+                </span>
                 <div className="text-lg font-extrabold text-slate-900 dark:text-white tabular-nums">
                   {formatCurrency(currentCategorySpend.budget)}
                 </div>
+                {(currentCategorySpend.reinforcementAmount || 0) > 0 && (
+                  <span className="text-[11px] font-bold text-blue-700 dark:text-sky-300 block mt-0.5">
+                    Meta habitual {formatCurrency(currentCategorySpend.baseBudget ?? currentCategorySpend.budget)} + Reforço +{formatCurrency(currentCategorySpend.reinforcementAmount || 0)}
+                  </span>
+                )}
               </div>
 
               <div className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/60 dark:border-slate-700">
@@ -460,10 +483,12 @@ export const CategoryDetailsScreen: React.FC<CategoryDetailsScreenProps> = ({
                 }`}
               >
                 <span className="text-xs font-medium opacity-90">
-                  {currentCategorySpend.isOver ? '⚠️ Passou do combinado' : 'Ainda podem gastar'}
+                  {currentCategorySpend.isOver ? '⚠️ Saldo nominal negativo (passou)' : 'Saldo nominal disponível'}
                 </span>
                 <div className="text-lg font-extrabold tabular-nums">
-                  {formatCurrency(Math.abs(currentCategorySpend.remaining))}
+                  {currentCategorySpend.remaining < 0
+                    ? `-${formatCurrency(Math.abs(currentCategorySpend.remaining))}`
+                    : formatCurrency(currentCategorySpend.remaining)}
                 </div>
               </div>
             </div>
@@ -1276,6 +1301,13 @@ export const CategoryDetailsScreen: React.FC<CategoryDetailsScreenProps> = ({
       <BudgetRebalanceModal
         isOpen={isSimulatingCeiling}
         onClose={() => setIsSimulatingCeiling(false)}
+      />
+
+      {/* Modal de Reforço Temporário de Orçamento */}
+      <CategoryReinforcementModal
+        isOpen={isReinforcementModalOpen}
+        onClose={() => setIsReinforcementModalOpen(false)}
+        initialCategory={selectedCategory !== 'all' && selectedCategory in CATEGORIES_BASE ? (selectedCategory as CategoryKey) : undefined}
       />
     </div>
   );

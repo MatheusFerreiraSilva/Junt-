@@ -29,6 +29,8 @@ import {
   Flame,
   CheckCircle2,
   HelpCircle,
+  ArrowLeftRight,
+  RotateCcw,
 } from 'lucide-react';
 import { useFinance, CATEGORIES_BASE } from '../context/FinanceContext';
 import { SavingsPiggyBank } from '../types/finance';
@@ -40,6 +42,7 @@ import { ReallocateReserveExcessModal } from '../components/ReallocateReserveExc
 import { ClaymorphicIcon, ClayIconType } from '../components/ClaymorphicIcon';
 import { PixDiscountComparatorModal } from '../components/modals/PixDiscountComparatorModal';
 import { StrategicSpendingIntentModal } from '../components/modals/StrategicSpendingIntentModal';
+import { CategoryReinforcementModal } from '../components/modals/CategoryReinforcementModal';
 import { FundingSourceType } from '../types/finance';
 
 interface GoalsScreenProps {
@@ -74,8 +77,11 @@ export const GoalsScreen: React.FC<GoalsScreenProps> = () => {
     getMonthlyDepositGuide,
     executeMonthlyDeposit,
     resetMonthlyDeposit,
+    transferBetweenBlocks,
+    reverseFinancialOperation,
     strategicIntents,
     deleteStrategicIntent,
+    previewWithdrawal,
   } = useFinance();
 
   // Top Page Sub-Tabs
@@ -85,6 +91,8 @@ export const GoalsScreen: React.FC<GoalsScreenProps> = () => {
   const [isIntentModalOpen, setIsIntentModalOpen] = useState(false);
   const [selectedIntentSource, setSelectedIntentSource] = useState<FundingSourceType>('reserve_excess');
   const [selectedIntentGoalId, setSelectedIntentGoalId] = useState<string | undefined>(undefined);
+  const [reinforceSourceGoalId, setReinforceSourceGoalId] = useState<string | undefined>(undefined);
+  const [isReinforceModalOpen, setIsReinforceModalOpen] = useState(false);
 
   // Modals state - Create Goal
   const [isCreatingGoal, setIsCreatingGoal] = useState(false);
@@ -94,6 +102,7 @@ export const GoalsScreen: React.FC<GoalsScreenProps> = () => {
   const [goalTarget, setGoalTarget] = useState('');
   const [goalMonthly, setGoalMonthly] = useState('');
   const [goalImageUrl, setGoalImageUrl] = useState('');
+  const [goalIsFireEligible, setGoalIsFireEligible] = useState(false);
 
   // Edit Goal Modal (Name, Target with Market Variations, Monthly, Purpose, Emoji, Photo)
   const [editingGoal, setEditingGoal] = useState<SavingsPiggyBank | null>(null);
@@ -104,6 +113,7 @@ export const GoalsScreen: React.FC<GoalsScreenProps> = () => {
   const [editGoalPurpose, setEditGoalPurpose] = useState('');
   const [editGoalImageUrl, setEditGoalImageUrl] = useState('');
   const [editGoalDeadline, setEditGoalDeadline] = useState('');
+  const [editGoalIsFireEligible, setEditGoalIsFireEligible] = useState(false);
 
   // Photo Selector Modal for existing Goal
   const [photoTargetGoal, setPhotoTargetGoal] = useState<SavingsPiggyBank | null>(null);
@@ -125,17 +135,42 @@ export const GoalsScreen: React.FC<GoalsScreenProps> = () => {
   // Protection deposit modal
   const [isProtectionModalOpen, setIsProtectionModalOpen] = useState(false);
   const [protectionDepositAmount, setProtectionDepositAmount] = useState('');
+  const [protectionModalError, setProtectionModalError] = useState('');
 
   // Freedom deposit modal
   const [isFreedomModalOpen, setIsFreedomModalOpen] = useState(false);
   const [freedomDepositAmount, setFreedomDepositAmount] = useState('');
+  const [freedomModalError, setFreedomModalError] = useState('');
 
   // Goal deposit modal
   const [selectedGoalId, setSelectedGoalId] = useState<string | null>(null);
   const [goalDepositAmount, setGoalDepositAmount] = useState('');
+  const [goalNetAmount, setGoalNetAmount] = useState('');
+  const [goalWithdrawalChannel, setGoalWithdrawalChannel] = useState<'asset_redemption' | 'virtual_reallocation'>('asset_redemption');
+  const [goalExecutionMode, setGoalExecutionMode] = useState<'pending_settlement' | 'occurred_manual'>('occurred_manual');
+  const [goalDestinationAccountId, setGoalDestinationAccountId] = useState('');
+  const [goalOverrideDivergence, setGoalOverrideDivergence] = useState(false);
   const [goalDepositPayer, setGoalDepositPayer] = useState<'partner1' | 'partner2' | 'both'>('both');
   const [goalDepositAction, setGoalDepositAction] = useState<'deposit' | 'withdraw'>('deposit');
   const [goalDepositError, setGoalDepositError] = useState<string>('');
+  const [goalNeedsConfirmation, setGoalNeedsConfirmation] = useState(false);
+  const [goalConfirmedCompleted, setGoalConfirmedCompleted] = useState(false);
+
+  // Guide inline feedback
+  const [guideError, setGuideError] = useState<string>('');
+  const [patrimonialOpError, setPatrimonialOpError] = useState<string>('');
+
+  // Block Transfer modal
+  const [isBlockTransferModalOpen, setIsBlockTransferModalOpen] = useState(false);
+  const [transferSourceBlock, setTransferSourceBlock] = useState<'protection' | 'piggy_bank' | 'freedom'>('protection');
+  const [transferTargetBlock, setTransferTargetBlock] = useState<'protection' | 'piggy_bank' | 'freedom'>('piggy_bank');
+  const [transferSourceGoalId, setTransferSourceGoalId] = useState<string>('');
+  const [transferTargetGoalId, setTransferTargetGoalId] = useState<string>('');
+  const [transferAmountInput, setTransferAmountInput] = useState<string>('');
+  const [transferNoteInput, setTransferNoteInput] = useState<string>('');
+  const [transferError, setTransferError] = useState<string>('');
+  const [transferNeedsConfirm, setTransferNeedsConfirm] = useState(false);
+  const [transferConfirmedCompleted, setTransferConfirmedCompleted] = useState(false);
 
   // ==========================================
   // BANK BALANCE & YIELD UPDATE MODALS (AUTORIZAÇÃO DO BANCO)
@@ -144,16 +179,19 @@ export const GoalsScreen: React.FC<GoalsScreenProps> = () => {
   const [isProtectionBankModalOpen, setIsProtectionBankModalOpen] = useState(false);
   const [protInvestedInput, setProtInvestedInput] = useState('');
   const [protBankTotalInput, setProtBankTotalInput] = useState('');
+  const [protBankError, setProtBankError] = useState('');
 
   // Freedom Bank Balance Editor Modal
   const [isFreedomBankModalOpen, setIsFreedomBankModalOpen] = useState(false);
   const [freeInvestedInput, setFreeInvestedInput] = useState('');
   const [freeBankTotalInput, setFreeBankTotalInput] = useState('');
+  const [freeBankError, setFreeBankError] = useState('');
 
   // Goal Bank Balance Editor Modal
   const [editingGoalBankId, setEditingGoalBankId] = useState<string | null>(null);
   const [goalInvestedInput, setGoalInvestedInput] = useState('');
   const [goalBankTotalInput, setGoalBankTotalInput] = useState('');
+  const [goalBankError, setGoalBankError] = useState('');
 
   // PIX vs CDI Comparator Modal
   const [comparingPixGoal, setComparingPixGoal] = useState<SavingsPiggyBank | null>(null);
@@ -215,6 +253,9 @@ export const GoalsScreen: React.FC<GoalsScreenProps> = () => {
     }, 8000);
   };
 
+  const formatSignedYield = (val: number) =>
+    val < 0 ? `-${formatCurrency(Math.abs(val))}` : `+${formatCurrency(val)}`;
+
   // Handlers
   const handleToggleProtectionComplete = () => {
     const nextState = !state.isProtectionComplete;
@@ -228,29 +269,43 @@ export const GoalsScreen: React.FC<GoalsScreenProps> = () => {
 
   const handleDepositProtection = (e: React.FormEvent) => {
     e.preventDefault();
-    const val = parseFloat(protectionDepositAmount.replace(',', '.')) || 0;
-    if (val > 0) {
+    const val = parseFloat(protectionDepositAmount.replace(',', '.'));
+    if (!Number.isFinite(val) || val <= 0) {
+      setProtectionModalError('Informe um valor válido maior que zero.');
+      return;
+    }
+    try {
+      setProtectionModalError('');
       depositToProtection(val);
       setIsProtectionModalOpen(false);
       setProtectionDepositAmount('');
       showToast(`Aporte de ${formatCurrency(val)} realizado na Reserva de Proteção com sucesso! 🛡️`);
+    } catch (err: any) {
+      setProtectionModalError(err?.message || 'Não foi possível registrar o aporte na Proteção.');
     }
   };
 
   const handleDepositFreedom = (e: React.FormEvent) => {
     e.preventDefault();
-    const val = parseFloat(freedomDepositAmount.replace(',', '.')) || 0;
-    if (val > 0) {
+    const val = parseFloat(freedomDepositAmount.replace(',', '.'));
+    if (!Number.isFinite(val) || val <= 0) {
+      setFreedomModalError('Informe um valor válido maior que zero.');
+      return;
+    }
+    try {
+      setFreedomModalError('');
       depositToFreedom(val);
       setIsFreedomModalOpen(false);
       setFreedomDepositAmount('');
       showToast(`Aporte de ${formatCurrency(val)} adicionado ao bloco Liberdade! 🔓`);
+    } catch (err: any) {
+      setFreedomModalError(err?.message || 'Não foi possível registrar o aporte na Liberdade.');
     }
   };
 
   const handleDepositGoal = (e: React.FormEvent) => {
     e.preventDefault();
-    const val = parseFloat(goalDepositAmount.replace(',', '.')) || 0;
+    const val = parseFloat(goalDepositAmount.replace(',', '.'));
     if (!Number.isFinite(val) || val <= 0 || !selectedGoalId) {
       setGoalDepositError('Informe um valor válido maior que zero.');
       return;
@@ -260,61 +315,174 @@ export const GoalsScreen: React.FC<GoalsScreenProps> = () => {
     try {
       setGoalDepositError('');
       if (goalDepositAction === 'withdraw') {
-        withdrawFromGoal(selectedGoalId, val);
-        showToast(`Resgate de ${formatCurrency(val)} realizado do objetivo "${targetGoal?.name || 'Objetivo'}"! 💸`);
+        const finalNet = goalNetAmount.trim() ? parseFloat(goalNetAmount.replace(',', '.')) : val;
+        if (!Number.isFinite(finalNet) || finalNet <= 0) {
+          setGoalDepositError('Informe um valor líquido válido maior que zero.');
+          return;
+        }
+        withdrawFromGoal(selectedGoalId, val, {
+          withdrawalChannel: goalWithdrawalChannel,
+          executionMode: goalExecutionMode,
+          grossAmountR$: val,
+          netAmountR$: finalNet,
+          destinationAccountId: goalDestinationAccountId || undefined,
+          overrideInsufficientPlanning: goalOverrideDivergence,
+        });
+        showToast(
+          goalExecutionMode === 'pending_settlement'
+            ? `Solicitação de resgate de ${formatCurrency(val)} registrada em liquidação (${targetGoal?.name || 'Objetivo'})! ⏳`
+            : `Resgate de ${formatCurrency(finalNet)} realizado do objetivo "${targetGoal?.name || 'Objetivo'}"! 💸`
+        );
       } else {
-        depositToGoal(selectedGoalId, val);
+        depositToGoal(selectedGoalId, val, {
+          completedGoalContributionConfirmed: goalConfirmedCompleted,
+        });
         showToast(`Aporte de ${formatCurrency(val)} realizado em "${targetGoal?.name || 'Objetivo'}"! 🎯`);
       }
       setSelectedGoalId(null);
       setGoalDepositAmount('');
+      setGoalNetAmount('');
+      setGoalOverrideDivergence(false);
       setGoalDepositAction('deposit');
+      setGoalNeedsConfirmation(false);
+      setGoalConfirmedCompleted(false);
     } catch (err: any) {
-      setGoalDepositError(err?.message || 'Não foi possível concluir a movimentação no objetivo.');
+      const msg = err?.message || 'Não foi possível concluir a movimentação no objetivo.';
+      setGoalDepositError(msg);
+      if (msg.includes('concluída') || msg.includes('CONFIRMATION_REQUIRED')) {
+        setGoalNeedsConfirmation(true);
+      }
+    }
+  };
+
+  const handleBlockTransferSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const amountR$ = parseFloat(transferAmountInput.replace(',', '.'));
+    if (!Number.isFinite(amountR$) || amountR$ <= 0) {
+      setTransferError('Informe um valor válido maior que zero para transferir.');
+      return;
+    }
+    const buildRef = (
+      block: 'protection' | 'piggy_bank' | 'freedom',
+      goalId: string
+    ) => {
+      if (block === 'protection') {
+        return { type: 'protection' as const, id: 'protection', name: 'Proteção (Reserva)' };
+      }
+      if (block === 'freedom') {
+        return { type: 'freedom' as const, id: 'freedom', name: 'Liberdade Financeira' };
+      }
+      const g = state.piggyBanks.find((p) => p.id === goalId) || state.piggyBanks[0];
+      return { type: 'piggy_bank' as const, id: g?.id || goalId, name: g?.name || 'Objetivo' };
+    };
+    const sourceRef = buildRef(transferSourceBlock, transferSourceGoalId);
+    const targetRef = buildRef(transferTargetBlock, transferTargetGoalId);
+    if (!sourceRef.id || !targetRef.id) {
+      setTransferError('Selecione origem e destino válidos.');
+      return;
+    }
+    if (sourceRef.type === targetRef.type && sourceRef.id === targetRef.id) {
+      setTransferError('Origem e destino precisam ser diferentes.');
+      return;
+    }
+    try {
+      setTransferError('');
+      const res = transferBetweenBlocks({
+        sourceType: sourceRef.type,
+        sourceId: sourceRef.id,
+        sourceName: sourceRef.name,
+        targetType: targetRef.type,
+        targetId: targetRef.id,
+        targetName: targetRef.name,
+        amount: amountR$,
+        note: transferNoteInput.trim() || undefined,
+        completedGoalContributionConfirmed: transferConfirmedCompleted,
+      });
+      setIsBlockTransferModalOpen(false);
+      setTransferAmountInput('');
+      setTransferNoteInput('');
+      setTransferNeedsConfirm(false);
+      setTransferConfirmedCompleted(false);
+      showToast(
+        `Transferência de ${formatCurrency(amountR$)} entre blocos registrada (${res.operation?.id || 'confirmada'}) sem alterar renda ou orçamento! 🔁`
+      );
+    } catch (err: any) {
+      const msg = err?.message || 'Não foi possível realizar a transferência entre blocos.';
+      setTransferError(msg);
+      if (msg.includes('concluída') || msg.includes('CONFIRMATION_REQUIRED')) {
+        setTransferNeedsConfirm(true);
+      }
     }
   };
 
   // Handlers for Updating Bank Yield & Balances
   const handleSaveProtectionBankBalance = (e: React.FormEvent) => {
     e.preventDefault();
-    const invested = parseFloat(protInvestedInput.replace(',', '.')) || 0;
-    const bankTotal = parseFloat(protBankTotalInput.replace(',', '.')) || 0;
-    updateProtectionBankBalance(invested, bankTotal);
-    setIsProtectionBankModalOpen(false);
+    const invested = parseFloat(protInvestedInput.replace(',', '.'));
+    const bankTotal = parseFloat(protBankTotalInput.replace(',', '.'));
+    if (!Number.isFinite(invested) || !Number.isFinite(bankTotal) || invested < 0 || bankTotal < 0) {
+      setProtBankError('Informe valores válidos não negativos.');
+      return;
+    }
+    try {
+      setProtBankError('');
+      updateProtectionBankBalance(invested, bankTotal);
+      setIsProtectionBankModalOpen(false);
 
-    const rendimento = Math.max(0, bankTotal - invested);
-    showToast(
-      `Saldo da Proteção atualizado! Aportado: ${formatCurrency(invested)} · Rendimento: ${formatCurrency(rendimento)} (Economia em juros)! 🛡️`
-    );
+      const rendimento = bankTotal - invested;
+      showToast(
+        `Saldo da Proteção atualizado! Aportado: ${formatCurrency(invested)} · Variação/Rendimento: ${formatSignedYield(rendimento)}! 🛡️`
+      );
+    } catch (err: any) {
+      setProtBankError(err?.message || 'Erro ao atualizar saldo bancário da Proteção.');
+    }
   };
 
   const handleSaveFreedomBankBalance = (e: React.FormEvent) => {
     e.preventDefault();
-    const invested = parseFloat(freeInvestedInput.replace(',', '.')) || 0;
-    const bankTotal = parseFloat(freeBankTotalInput.replace(',', '.')) || 0;
-    updateFreedomBankBalance(invested, bankTotal);
-    setIsFreedomBankModalOpen(false);
+    const invested = parseFloat(freeInvestedInput.replace(',', '.'));
+    const bankTotal = parseFloat(freeBankTotalInput.replace(',', '.'));
+    if (!Number.isFinite(invested) || !Number.isFinite(bankTotal) || invested < 0 || bankTotal < 0) {
+      setFreeBankError('Informe valores válidos não negativos.');
+      return;
+    }
+    try {
+      setFreeBankError('');
+      updateFreedomBankBalance(invested, bankTotal);
+      setIsFreedomBankModalOpen(false);
 
-    const rendimento = Math.max(0, bankTotal - invested);
-    showToast(
-      `Saldo da Liberdade atualizado! Aportes: ${formatCurrency(invested)} · Rendimento: ${formatCurrency(rendimento)}! 🔓`
-    );
+      const rendimento = bankTotal - invested;
+      showToast(
+        `Saldo da Liberdade atualizado! Aportes: ${formatCurrency(invested)} · Variação/Rendimento: ${formatSignedYield(rendimento)}! 🔓`
+      );
+    } catch (err: any) {
+      setFreeBankError(err?.message || 'Erro ao atualizar saldo bancário da Liberdade.');
+    }
   };
 
   const handleSaveGoalBankBalance = (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingGoalBankId) return;
-    const invested = parseFloat(goalInvestedInput.replace(',', '.')) || 0;
-    const bankTotal = parseFloat(goalBankTotalInput.replace(',', '.')) || 0;
-    updateGoalBankBalance(editingGoalBankId, invested, bankTotal);
+    const invested = parseFloat(goalInvestedInput.replace(',', '.'));
+    const bankTotal = parseFloat(goalBankTotalInput.replace(',', '.'));
+    if (!Number.isFinite(invested) || !Number.isFinite(bankTotal) || invested < 0 || bankTotal < 0) {
+      setGoalBankError('Informe valores válidos não negativos.');
+      return;
+    }
+    try {
+      setGoalBankError('');
+      updateGoalBankBalance(editingGoalBankId, invested, bankTotal);
 
-    const targetGoal = state.piggyBanks.find(g => g.id === editingGoalBankId);
-    setEditingGoalBankId(null);
+      const targetGoal = state.piggyBanks.find(g => g.id === editingGoalBankId);
+      setEditingGoalBankId(null);
 
-    const rendimento = Math.max(0, bankTotal - invested);
-    showToast(
-      `Saldo de "${targetGoal?.name || 'Objetivo'}" atualizado! Investido: ${formatCurrency(invested)} · Rendimento: ${formatCurrency(rendimento)}! 🎯`
-    );
+      const rendimento = bankTotal - invested;
+      showToast(
+        `Saldo de "${targetGoal?.name || 'Objetivo'}" atualizado! Investido: ${formatCurrency(invested)} · Variação/Rendimento: ${formatSignedYield(rendimento)}! 🎯`
+      );
+    } catch (err: any) {
+      setGoalBankError(err?.message || 'Erro ao atualizar saldo bancário do objetivo.');
+    }
   };
 
   const handleToggleGoalComplete = (goal: SavingsPiggyBank) => {
@@ -335,6 +503,7 @@ export const GoalsScreen: React.FC<GoalsScreenProps> = () => {
     setEditGoalPurpose(goal.purpose || '');
     setEditGoalImageUrl(goal.imageUrl || '');
     setEditGoalDeadline(goal.deadlineDate || '');
+    setEditGoalIsFireEligible(goal.isFireEligible === true);
   };
 
   const handleSaveEditGoal = (e: React.FormEvent) => {
@@ -354,6 +523,7 @@ export const GoalsScreen: React.FC<GoalsScreenProps> = () => {
       purpose: editGoalPurpose.trim() || 'Conquista planejada do casal',
       imageUrl: editGoalImageUrl.trim() || undefined,
       deadlineDate: editGoalDeadline || undefined,
+      isFireEligible: editGoalIsFireEligible,
     });
 
     setEditingGoal(null);
@@ -404,6 +574,7 @@ export const GoalsScreen: React.FC<GoalsScreenProps> = () => {
       totalInvested: 0,
       yieldAccumulated: 0,
       completed: false,
+      isFireEligible: goalIsFireEligible,
     });
 
     setIsCreatingGoal(false);
@@ -412,6 +583,7 @@ export const GoalsScreen: React.FC<GoalsScreenProps> = () => {
     setGoalMonthly('');
     setGoalPurpose('');
     setGoalImageUrl('');
+    setGoalIsFireEligible(false);
     showToast('Novo objetivo criado com sucesso! 🎯');
   };
 
@@ -425,9 +597,9 @@ export const GoalsScreen: React.FC<GoalsScreenProps> = () => {
 
   // Global Totals Across All Investments
   const globalTotalInvested = useMemo(() => {
-    const protInv = state.protectionTotalInvested || state.protectionCurrentAmount * 0.85;
+    const protInv = state.protectionTotalInvested ?? state.protectionCurrentAmount;
     const goalsInv = state.piggyBanks.reduce(
-      (sum, g) => sum + (g.totalInvested || g.currentAmount * 0.85),
+      (sum, g) => sum + (g.totalInvested ?? g.currentAmount),
       0
     );
     const freeInv = state.freedomTotalInvested;
@@ -441,7 +613,7 @@ export const GoalsScreen: React.FC<GoalsScreenProps> = () => {
     return protBal + goalsBal + freeBal;
   }, [state.protectionCurrentAmount, state.piggyBanks, freedomPatrimonyToday]);
 
-  const globalYieldAccumulated = Math.max(0, globalTotalBalance - globalTotalInvested);
+  const globalYieldAccumulated = globalTotalBalance - globalTotalInvested;
   const globalYieldPercentage = globalTotalInvested > 0 ? (globalYieldAccumulated / globalTotalInvested) * 100 : 0;
 
   // Functional & Reactive Line Chart Projection Points for Bloco 3 (Liberdade)
@@ -465,7 +637,7 @@ export const GoalsScreen: React.FC<GoalsScreenProps> = () => {
 
     for (let year = 0; year <= freedomHorizonYears; year++) {
       if (year === 0) {
-        const yieldVal = Math.max(0, runningTotal - runningInvested);
+        const yieldVal = runningTotal - runningInvested;
         const passM = Math.round((runningTotal * 0.04) / 12);
         points.push({
           year: 0,
@@ -481,7 +653,7 @@ export const GoalsScreen: React.FC<GoalsScreenProps> = () => {
           runningInvested += effectiveMonthlyFreedom;
         }
 
-        const yieldVal = Math.max(0, runningTotal - runningInvested);
+        const yieldVal = runningTotal - runningInvested;
         const passM = Math.round((runningTotal * 0.04) / 12);
 
         let milestoneStr: string | undefined = undefined;
@@ -763,12 +935,31 @@ export const GoalsScreen: React.FC<GoalsScreenProps> = () => {
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
                 <h3 className="text-base font-bold text-slate-900 dark:text-white font-display">
-                  Distribuição do Patrimônio e Investimentos
+                  Distribuição dos Ativos Guardados e Investimentos
                 </h3>
                 <p className="text-xs text-slate-500 dark:text-slate-400">
-                  Visão proporcional entre Reserva de Proteção, Cofrinhos de Metas e Liberdade Financeira
+                  Visão proporcional entre Reserva de Proteção, Cofrinhos de Metas e Liberdade Financeira (sem passivos modelados)
                 </p>
               </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setTransferError('');
+                  setTransferNeedsConfirm(false);
+                  setTransferConfirmedCompleted(false);
+                  if (!transferTargetGoalId && state.piggyBanks[0]) {
+                    setTransferTargetGoalId(state.piggyBanks[0].id);
+                  }
+                  if (!transferSourceGoalId && state.piggyBanks[0]) {
+                    setTransferSourceGoalId(state.piggyBanks[0].id);
+                  }
+                  setIsBlockTransferModalOpen(true);
+                }}
+                className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-indigo-50 dark:bg-indigo-950/60 hover:bg-indigo-100 text-indigo-800 dark:text-indigo-200 border border-indigo-200 dark:border-indigo-800 text-xs font-extrabold transition-colors cursor-pointer"
+              >
+                <ArrowLeftRight className="w-3.5 h-3.5" />
+                <span>Transferir entre Blocos</span>
+              </button>
             </div>
 
             <div className="flex justify-center py-2">
@@ -792,8 +983,8 @@ export const GoalsScreen: React.FC<GoalsScreenProps> = () => {
                 ]}
                 size={240}
                 thickness={42}
-                centerTitle="Patrimônio Total"
-                centerSubtitle="Acumulado"
+                centerTitle="Ativos Guardados"
+                centerSubtitle="Sem passivos"
               />
             </div>
           </div>
@@ -894,7 +1085,14 @@ export const GoalsScreen: React.FC<GoalsScreenProps> = () => {
 
                     <button
                       type="button"
-                      onClick={() => executeMonthlyDeposit(state.currentMonth)}
+                      onClick={() => {
+                        try {
+                          setGuideError('');
+                          executeMonthlyDeposit(state.currentMonth);
+                        } catch (err: any) {
+                          setGuideError(err?.message || 'Não foi possível concluir os aportes do mês.');
+                        }
+                      }}
                       className="px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-black text-xs shadow-md shadow-emerald-600/25 flex items-center gap-2 transition-all cursor-pointer"
                     >
                       <Check className="w-4 h-4 stroke-[3]" />
@@ -902,6 +1100,15 @@ export const GoalsScreen: React.FC<GoalsScreenProps> = () => {
                     </button>
                   </div>
                 </div>
+
+                {guideError && (
+                  <p
+                    role="alert"
+                    className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-800 text-xs font-semibold text-rose-800 dark:text-rose-200"
+                  >
+                    {guideError}
+                  </p>
+                )}
 
                 {/* Didactic cards showing exactly what to transfer in external bank apps */}
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
@@ -1008,9 +1215,10 @@ export const GoalsScreen: React.FC<GoalsScreenProps> = () => {
                   type="button"
                   onClick={() => {
                     setProtInvestedInput(
-                      (state.protectionTotalInvested || state.protectionCurrentAmount * 0.85).toString()
+                      (state.protectionTotalInvested ?? state.protectionCurrentAmount).toString()
                     );
                     setProtBankTotalInput(state.protectionCurrentAmount.toString());
+                    setProtBankError('');
                     setIsProtectionBankModalOpen(true);
                   }}
                   className="px-2.5 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-slate-700 dark:text-slate-300 text-xs font-bold transition-all cursor-pointer flex items-center gap-1"
@@ -1023,6 +1231,7 @@ export const GoalsScreen: React.FC<GoalsScreenProps> = () => {
                   onClick={() => {
                     setFreeInvestedInput(state.freedomTotalInvested.toString());
                     setFreeBankTotalInput(freedomPatrimonyToday.toString());
+                    setFreeBankError('');
                     setIsFreedomBankModalOpen(true);
                   }}
                   className="px-2.5 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-slate-700 dark:text-slate-300 text-xs font-bold transition-all cursor-pointer flex items-center gap-1"
@@ -1043,7 +1252,7 @@ export const GoalsScreen: React.FC<GoalsScreenProps> = () => {
                   {formatCurrency(globalTotalInvested)}
                 </span>
                 <span className="text-[11px] text-slate-500 dark:text-slate-400">
-                  Total enviado do orçamento do casal
+                  Custo base acumulado
                 </span>
               </div>
 
@@ -1055,18 +1264,42 @@ export const GoalsScreen: React.FC<GoalsScreenProps> = () => {
                   {formatCurrency(globalTotalBalance)}
                 </span>
                 <span className="text-[11px] text-indigo-800 dark:text-indigo-300 font-medium">
-                  Saldo atualizado com rendimentos
+                  Saldo atualizado no mercado
                 </span>
               </div>
 
-              <div className="p-4 rounded-2xl bg-emerald-50/80 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800">
-                <span className="text-[10px] text-emerald-800 dark:text-emerald-300 font-bold uppercase tracking-wider block">
-                  3. Lucro em Reais (Juros)
+              <div
+                className={`p-4 rounded-2xl border ${
+                  globalYieldAccumulated < 0
+                    ? 'bg-rose-50/80 dark:bg-rose-950/40 border-rose-200 dark:border-rose-800'
+                    : 'bg-emerald-50/80 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-800'
+                }`}
+              >
+                <span
+                  className={`text-[10px] font-bold uppercase tracking-wider block ${
+                    globalYieldAccumulated < 0
+                      ? 'text-rose-800 dark:text-rose-300'
+                      : 'text-emerald-800 dark:text-emerald-300'
+                  }`}
+                >
+                  {globalYieldAccumulated < 0 ? '3. Variação Negativa (Mercado)' : '3. Lucro em Reais (Juros)'}
                 </span>
-                <span className="text-lg sm:text-2xl font-black text-emerald-600 dark:text-emerald-400 tabular-nums font-display my-1 block">
-                  +{formatCurrency(globalYieldAccumulated)}
+                <span
+                  className={`text-lg sm:text-2xl font-black tabular-nums font-display my-1 block ${
+                    globalYieldAccumulated < 0
+                      ? 'text-rose-600 dark:text-rose-400'
+                      : 'text-emerald-600 dark:text-emerald-400'
+                  }`}
+                >
+                  {formatSignedYield(globalYieldAccumulated)}
                 </span>
-                <span className="text-[11px] text-emerald-800 dark:text-emerald-300 font-medium">
+                <span
+                  className={`text-[11px] font-medium ${
+                    globalYieldAccumulated < 0
+                      ? 'text-rose-800 dark:text-rose-300'
+                      : 'text-emerald-800 dark:text-emerald-300'
+                  }`}
+                >
                   Diferença exata: Valorizado - Aportado
                 </span>
               </div>
@@ -1075,11 +1308,18 @@ export const GoalsScreen: React.FC<GoalsScreenProps> = () => {
                 <span className="text-[10px] text-amber-800 dark:text-amber-300 font-bold uppercase tracking-wider block">
                   4. Rentabilidade Total (%)
                 </span>
-                <span className="text-lg sm:text-2xl font-black text-amber-600 dark:text-amber-400 tabular-nums font-display my-1 block">
-                  +{globalYieldPercentage.toFixed(1).replace('.', ',')}%
+                <span
+                  className={`text-lg sm:text-2xl font-black tabular-nums font-display my-1 block ${
+                    globalYieldPercentage < 0
+                      ? 'text-rose-600 dark:text-rose-400'
+                      : 'text-amber-600 dark:text-amber-400'
+                  }`}
+                >
+                  {globalYieldPercentage >= 0 ? '+' : ''}
+                  {globalYieldPercentage.toFixed(1).replace('.', ',')}%
                 </span>
                 <span className="text-[11px] text-amber-800 dark:text-amber-300 font-medium">
-                  Ganho percentual acumulado
+                  Retorno percentual acumulado
                 </span>
               </div>
             </div>
@@ -1088,7 +1328,10 @@ export const GoalsScreen: React.FC<GoalsScreenProps> = () => {
             <div className="p-3.5 rounded-2xl bg-gradient-to-r from-emerald-500/10 via-emerald-500/5 to-transparent border border-emerald-500/30 text-xs font-semibold text-emerald-950 dark:text-emerald-200 flex items-center gap-2.5">
               <Sparkles className="w-5 h-5 text-emerald-500 shrink-0" />
               <span>
-                💡 <strong>Rendimento Acumulado:</strong> O dinheiro investido rendeu <strong>+{formatCurrency(globalYieldAccumulated)}</strong> (+{globalYieldPercentage.toFixed(1).replace('.', ',')}%), economizando aportes do casal e acelerando suas metas!
+                💡 <strong>Variação Acumulada:</strong> Os ativos acumulam variação de{' '}
+                <strong>{formatSignedYield(globalYieldAccumulated)}</strong> (
+                {globalYieldPercentage >= 0 ? '+' : ''}
+                {globalYieldPercentage.toFixed(1).replace('.', ',')}%).
               </span>
             </div>
           </div>
@@ -1121,9 +1364,10 @@ export const GoalsScreen: React.FC<GoalsScreenProps> = () => {
                 <button
                   onClick={() => {
                     setProtInvestedInput(
-                      (state.protectionTotalInvested || state.protectionCurrentAmount * 0.85).toString()
+                      (state.protectionTotalInvested ?? state.protectionCurrentAmount).toString()
                     );
                     setProtBankTotalInput(state.protectionCurrentAmount.toString());
+                    setProtBankError('');
                     setIsProtectionBankModalOpen(true);
                   }}
                   className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-slate-700 dark:text-slate-300 text-xs font-bold transition-all"
@@ -1472,11 +1716,11 @@ export const GoalsScreen: React.FC<GoalsScreenProps> = () => {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
                 {state.piggyBanks.map(bank => {
                   const pct = Math.min(100, Math.round((bank.currentAmount / Math.max(1, bank.targetAmount)) * 100));
-                  const totalInvested = bank.totalInvested !== undefined ? bank.totalInvested : Math.round(bank.currentAmount * 0.88);
+                  const totalInvested = bank.totalInvested ?? bank.currentAmount;
                   const yieldAccum =
                     bank.yieldAccumulated !== undefined
                       ? bank.yieldAccumulated
-                      : Math.max(0, bank.currentAmount - totalInvested);
+                      : bank.currentAmount - totalInvested;
                   const goalYieldPct = totalInvested > 0 ? (yieldAccum / totalInvested) * 100 : 0;
                   const remainingAmount = Math.max(0, bank.targetAmount - bank.currentAmount);
 
@@ -1617,14 +1861,25 @@ export const GoalsScreen: React.FC<GoalsScreenProps> = () => {
                           </div>
                           <div>
                             <span className="text-[10px] text-slate-400 font-bold uppercase block">
-                              Rendimento
+                              {yieldAccum < 0 ? 'Variação' : 'Rendimento'}
                             </span>
-                            <span className="text-xs sm:text-sm font-black text-emerald-600 dark:text-emerald-400 tabular-nums">
-                              +{formatCurrency(yieldAccum)}
+                            <span
+                              className={`text-xs sm:text-sm font-black tabular-nums ${
+                                yieldAccum < 0
+                                  ? 'text-rose-600 dark:text-rose-400'
+                                  : 'text-emerald-600 dark:text-emerald-400'
+                              }`}
+                            >
+                              {formatSignedYield(yieldAccum)}
                             </span>
-                            {goalYieldPct > 0 && (
-                              <span className="text-[10px] text-emerald-600 font-bold block">
-                                (+{goalYieldPct.toFixed(1)}%)
+                            {goalYieldPct !== 0 && (
+                              <span
+                                className={`text-[10px] font-bold block ${
+                                  goalYieldPct < 0 ? 'text-rose-600' : 'text-emerald-600'
+                                }`}
+                              >
+                                ({goalYieldPct >= 0 ? '+' : ''}
+                                {goalYieldPct.toFixed(1)}%)
                               </span>
                             )}
                           </div>
@@ -1740,6 +1995,21 @@ export const GoalsScreen: React.FC<GoalsScreenProps> = () => {
                               <Building className="w-3.5 h-3.5 text-slate-500" />
                               <span className="hidden sm:inline">Banco</span>
                             </button>
+
+                            {bank.currentAmount > 0 && !bank.archived && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setReinforceSourceGoalId(bank.id);
+                                  setIsReinforceModalOpen(true);
+                                }}
+                                className="px-2.5 py-1.5 rounded-xl bg-sky-100 hover:bg-sky-200 dark:bg-sky-950/70 dark:hover:bg-sky-900 text-blue-800 dark:text-sky-200 border border-blue-300 dark:border-sky-700 font-black transition-all flex items-center gap-1 cursor-pointer"
+                                title="Usar saldo deste objetivo para reforçar uma categoria neste mês"
+                              >
+                                <Sparkles className="w-3.5 h-3.5" />
+                                <span className="hidden sm:inline">Reforçar</span>
+                              </button>
+                            )}
                           </div>
 
                           <div className="flex items-center gap-1">
@@ -1842,20 +2112,42 @@ export const GoalsScreen: React.FC<GoalsScreenProps> = () => {
               </div>
 
               <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-800">
-                <span className="text-[11px] font-bold text-emerald-600 dark:text-emerald-400 uppercase tracking-wider block">
-                  2. Quanto Está Rendendo (Juros)
+                <span
+                  className={`text-[11px] font-bold uppercase tracking-wider block ${
+                    state.freedomYieldAccumulated < 0
+                      ? 'text-rose-600 dark:text-rose-400'
+                      : 'text-emerald-600 dark:text-emerald-400'
+                  }`}
+                >
+                  {state.freedomYieldAccumulated < 0
+                    ? '2. Variação Negativa (Mercado)'
+                    : '2. Quanto Está Rendendo (Juros)'}
                 </span>
-                <span className="text-2xl sm:text-3xl font-black text-emerald-600 dark:text-emerald-400 tabular-nums font-display my-1 block">
-                  +{formatCurrency(state.freedomYieldAccumulated)}
+                <span
+                  className={`text-2xl sm:text-3xl font-black tabular-nums font-display my-1 block ${
+                    state.freedomYieldAccumulated < 0
+                      ? 'text-rose-600 dark:text-rose-400'
+                      : 'text-emerald-600 dark:text-emerald-400'
+                  }`}
+                >
+                  {formatSignedYield(state.freedomYieldAccumulated)}
                 </span>
-                <span className="text-[11px] text-emerald-700 dark:text-emerald-300 font-medium">
-                  Efeito dos juros compostos
+                <span
+                  className={`text-[11px] font-medium ${
+                    state.freedomYieldAccumulated < 0
+                      ? 'text-rose-700 dark:text-rose-300'
+                      : 'text-emerald-700 dark:text-emerald-300'
+                  }`}
+                >
+                  {state.freedomYieldAccumulated < 0
+                    ? 'Desvalorização registrada sem afetar aportes'
+                    : 'Efeito dos juros compostos'}
                 </span>
               </div>
 
               <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-800">
                 <span className="text-[11px] font-bold text-amber-600 dark:text-amber-400 uppercase tracking-wider block">
-                  3. Total Hoje (Patrimônio no Banco)
+                  3. Total Hoje (Ativos no Banco)
                 </span>
                 <span className="text-2xl sm:text-3xl font-black text-amber-600 dark:text-amber-400 tabular-nums font-display my-1 block">
                   {formatCurrency(freedomPatrimonyToday)}
@@ -2638,6 +2930,14 @@ export const GoalsScreen: React.FC<GoalsScreenProps> = () => {
             </div>
 
             <form onSubmit={handleSaveProtectionBankBalance} className="space-y-4 text-xs">
+              {protBankError && (
+                <p
+                  role="alert"
+                  className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-800 text-xs font-semibold text-rose-800 dark:text-rose-200"
+                >
+                  {protBankError}
+                </p>
+              )}
               <div>
                 <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">
                   1. Quanto vocês colocaram do bolso de fato? (Aportes)
@@ -2670,21 +2970,47 @@ export const GoalsScreen: React.FC<GoalsScreenProps> = () => {
               {(() => {
                 const inv = parseFloat(protInvestedInput.replace(',', '.')) || 0;
                 const tot = parseFloat(protBankTotalInput.replace(',', '.')) || 0;
-                const rend = Math.max(0, tot - inv);
+                const rend = tot - inv;
 
                 return (
-                  <div className="p-3.5 rounded-2xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800/60 space-y-1.5">
-                    <span className="text-[10px] uppercase font-bold text-emerald-800 dark:text-emerald-300 block">
-                      Cálculo Automático de Juros Ganho
+                  <div
+                    className={`p-3.5 rounded-2xl border space-y-1.5 ${
+                      rend < 0
+                        ? 'bg-rose-50 dark:bg-rose-950/40 border-rose-200 dark:border-rose-800/60'
+                        : 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-800/60'
+                    }`}
+                  >
+                    <span
+                      className={`text-[10px] uppercase font-bold block ${
+                        rend < 0
+                          ? 'text-rose-800 dark:text-rose-300'
+                          : 'text-emerald-800 dark:text-emerald-300'
+                      }`}
+                    >
+                      {rend < 0 ? 'Variação Negativa de Mercado' : 'Cálculo Automático de Juros Ganho'}
                     </span>
                     <div className="flex items-center justify-between text-xs font-bold text-slate-800 dark:text-slate-200">
                       <span>Rendimento do Banco:</span>
-                      <span className="text-emerald-600 dark:text-emerald-400 font-extrabold text-sm">
-                        +{formatCurrency(rend)}
+                      <span
+                        className={`font-extrabold text-sm ${
+                          rend < 0
+                            ? 'text-rose-600 dark:text-rose-400'
+                            : 'text-emerald-600 dark:text-emerald-400'
+                        }`}
+                      >
+                        {formatSignedYield(rend)}
                       </span>
                     </div>
-                    <p className="text-[11px] text-emerald-900 dark:text-emerald-200 leading-snug">
-                      💡 Vocês economizaram <strong>{formatCurrency(rend)}</strong> de ter que tirar do bolso graças aos juros do banco!
+                    <p
+                      className={`text-[11px] leading-snug ${
+                        rend < 0
+                          ? 'text-rose-900 dark:text-rose-200'
+                          : 'text-emerald-900 dark:text-emerald-200'
+                      }`}
+                    >
+                      {rend < 0
+                        ? '📉 Ajuste negativo registrado como marcação a mercado (não conta como resgate, gasto nem renda).'
+                        : `💡 Vocês economizaram ${formatCurrency(rend)} graças aos juros do banco!`}
                     </p>
                   </div>
                 );
@@ -2729,6 +3055,14 @@ export const GoalsScreen: React.FC<GoalsScreenProps> = () => {
             </div>
 
             <form onSubmit={handleSaveFreedomBankBalance} className="space-y-4 text-xs">
+              {freeBankError && (
+                <p
+                  role="alert"
+                  className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-800 text-xs font-semibold text-rose-800 dark:text-rose-200"
+                >
+                  {freeBankError}
+                </p>
+              )}
               <div>
                 <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">
                   1. Quanto vocês investiram do bolso de fato? (Aportes Totais)
@@ -2745,7 +3079,7 @@ export const GoalsScreen: React.FC<GoalsScreenProps> = () => {
 
               <div>
                 <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">
-                  2. Patrimônio Total Atual na Corretora / Banco? (Com Rendimentos)
+                  2. Saldo Total Atual na Corretora / Banco? (Ativos com Rendimentos)
                 </label>
                 <input
                   type="text"
@@ -2761,22 +3095,40 @@ export const GoalsScreen: React.FC<GoalsScreenProps> = () => {
               {(() => {
                 const inv = parseFloat(freeInvestedInput.replace(',', '.')) || 0;
                 const tot = parseFloat(freeBankTotalInput.replace(',', '.')) || 0;
-                const rend = Math.max(0, tot - inv);
+                const rend = tot - inv;
                 const passInc = Math.round((tot * 0.04) / 12);
 
                 return (
-                  <div className="p-3.5 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800/60 space-y-1.5">
-                    <span className="text-[10px] uppercase font-bold text-amber-800 dark:text-amber-300 block">
-                      Juros Compostos da Liberdade
+                  <div
+                    className={`p-3.5 rounded-2xl border space-y-1.5 ${
+                      rend < 0
+                        ? 'bg-rose-50 dark:bg-rose-950/40 border-rose-200 dark:border-rose-800/60'
+                        : 'bg-amber-50 dark:bg-amber-950/40 border-amber-200 dark:border-amber-800/60'
+                    }`}
+                  >
+                    <span
+                      className={`text-[10px] uppercase font-bold block ${
+                        rend < 0
+                          ? 'text-rose-800 dark:text-rose-300'
+                          : 'text-amber-800 dark:text-amber-300'
+                      }`}
+                    >
+                      {rend < 0 ? 'Variação Negativa (Marcação a Mercado)' : 'Juros Compostos da Liberdade'}
                     </span>
                     <div className="flex items-center justify-between text-xs font-bold text-slate-800 dark:text-slate-200">
                       <span>Rendimento do Banco:</span>
-                      <span className="text-emerald-600 dark:text-emerald-400 font-extrabold text-sm">
-                        +{formatCurrency(rend)}
+                      <span
+                        className={`font-extrabold text-sm ${
+                          rend < 0
+                            ? 'text-rose-600 dark:text-rose-400'
+                            : 'text-emerald-600 dark:text-emerald-400'
+                        }`}
+                      >
+                        {formatSignedYield(rend)}
                       </span>
                     </div>
                     <p className="text-[11px] text-amber-950 dark:text-amber-200 leading-snug">
-                      📈 Renda passiva perpétua gerada: <strong>{formatCurrency(passInc)}/mês</strong>!
+                      📈 Renda passiva perpétua estimada: <strong>{formatCurrency(passInc)}/mês</strong>
                     </p>
                   </div>
                 );
@@ -2821,6 +3173,14 @@ export const GoalsScreen: React.FC<GoalsScreenProps> = () => {
             </div>
 
             <form onSubmit={handleSaveGoalBankBalance} className="space-y-4 text-xs">
+              {goalBankError && (
+                <p
+                  role="alert"
+                  className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-800 text-xs font-semibold text-rose-800 dark:text-rose-200"
+                >
+                  {goalBankError}
+                </p>
+              )}
               <div>
                 <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">
                   1. Quanto vocês colocaram do bolso até hoje neste objetivo?
@@ -2853,22 +3213,37 @@ export const GoalsScreen: React.FC<GoalsScreenProps> = () => {
               {(() => {
                 const inv = parseFloat(goalInvestedInput.replace(',', '.')) || 0;
                 const tot = parseFloat(goalBankTotalInput.replace(',', '.')) || 0;
-                const rend = Math.max(0, tot - inv);
+                const rend = tot - inv;
 
                 return (
-                  <div className="p-3.5 rounded-2xl bg-sky-50 dark:bg-sky-950/40 border border-sky-200 dark:border-sky-800/60 space-y-1.5">
-                    <span className="text-[10px] uppercase font-bold text-sky-800 dark:text-sky-300 block">
-                      Rendimento Ganho Sem Esforço
+                  <div
+                    className={`p-3.5 rounded-2xl border space-y-1.5 ${
+                      rend < 0
+                        ? 'bg-rose-50 dark:bg-rose-950/40 border-rose-200 dark:border-rose-800/60'
+                        : 'bg-sky-50 dark:bg-sky-950/40 border-sky-200 dark:border-sky-800/60'
+                    }`}
+                  >
+                    <span
+                      className={`text-[10px] uppercase font-bold block ${
+                        rend < 0
+                          ? 'text-rose-800 dark:text-rose-300'
+                          : 'text-sky-800 dark:text-sky-300'
+                      }`}
+                    >
+                      {rend < 0 ? 'Variação Negativa (Mercado)' : 'Rendimento Ganho Sem Esforço'}
                     </span>
                     <div className="flex items-center justify-between text-xs font-bold text-slate-800 dark:text-slate-200">
                       <span>Rendimento do Banco:</span>
-                      <span className="text-emerald-600 dark:text-emerald-400 font-extrabold text-sm">
-                        +{formatCurrency(rend)}
+                      <span
+                        className={`font-extrabold text-sm ${
+                          rend < 0
+                            ? 'text-rose-600 dark:text-rose-400'
+                            : 'text-emerald-600 dark:text-emerald-400'
+                        }`}
+                      >
+                        {formatSignedYield(rend)}
                       </span>
                     </div>
-                    <p className="text-[11px] text-sky-950 dark:text-sky-200 leading-snug">
-                      💡 Vocês economizaram <strong>{formatCurrency(rend)}</strong> que entraram direto na meta sem sair da renda do casal!
-                    </p>
                   </div>
                 );
               })()}
@@ -2979,6 +3354,18 @@ export const GoalsScreen: React.FC<GoalsScreenProps> = () => {
                 />
               </div>
 
+              <label className="flex items-center gap-2 p-2.5 rounded-xl bg-amber-50/70 dark:bg-amber-950/30 border border-amber-200/70 dark:border-amber-800/60 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={goalIsFireEligible}
+                  onChange={e => setGoalIsFireEligible(e.target.checked)}
+                  className="rounded border-amber-400 text-amber-600 focus:ring-amber-500"
+                />
+                <span className="text-[11px] font-bold text-slate-700 dark:text-slate-200">
+                  Incluir este objetivo no cálculo de Liberdade Financeira (FIRE)
+                </span>
+              </label>
+
               <div className="pt-2 flex justify-end gap-2">
                 <button
                   type="button"
@@ -3018,6 +3405,14 @@ export const GoalsScreen: React.FC<GoalsScreenProps> = () => {
             </div>
 
             <form onSubmit={handleDepositProtection} className="space-y-4 text-xs">
+              {protectionModalError && (
+                <p
+                  role="alert"
+                  className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-800 text-xs font-semibold text-rose-800 dark:text-rose-200"
+                >
+                  {protectionModalError}
+                </p>
+              )}
               <div>
                 <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">
                   Valor a Guardar (R$)
@@ -3026,7 +3421,10 @@ export const GoalsScreen: React.FC<GoalsScreenProps> = () => {
                   type="text"
                   placeholder="2500"
                   value={protectionDepositAmount}
-                  onChange={e => setProtectionDepositAmount(e.target.value)}
+                  onChange={e => {
+                    setProtectionDepositAmount(e.target.value);
+                    if (protectionModalError) setProtectionModalError('');
+                  }}
                   className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white font-bold text-base"
                   required
                 />
@@ -3035,7 +3433,10 @@ export const GoalsScreen: React.FC<GoalsScreenProps> = () => {
               <div className="pt-2 flex justify-end gap-2">
                 <button
                   type="button"
-                  onClick={() => setIsProtectionModalOpen(false)}
+                  onClick={() => {
+                    setIsProtectionModalOpen(false);
+                    setProtectionModalError('');
+                  }}
                   className="px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 font-bold"
                 >
                   Cancelar
@@ -3063,7 +3464,10 @@ export const GoalsScreen: React.FC<GoalsScreenProps> = () => {
                 <span>🔓 Aportar no Bloco Liberdade</span>
               </h3>
               <button
-                onClick={() => setIsFreedomModalOpen(false)}
+                onClick={() => {
+                  setIsFreedomModalOpen(false);
+                  setFreedomModalError('');
+                }}
                 className="p-1.5 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400"
               >
                 <X className="w-5 h-5" />
@@ -3071,6 +3475,14 @@ export const GoalsScreen: React.FC<GoalsScreenProps> = () => {
             </div>
 
             <form onSubmit={handleDepositFreedom} className="space-y-4 text-xs">
+              {freedomModalError && (
+                <p
+                  role="alert"
+                  className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-800 text-xs font-semibold text-rose-800 dark:text-rose-200"
+                >
+                  {freedomModalError}
+                </p>
+              )}
               <div>
                 <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">
                   Valor a Investir (R$)
@@ -3079,7 +3491,10 @@ export const GoalsScreen: React.FC<GoalsScreenProps> = () => {
                   type="text"
                   placeholder="3000"
                   value={freedomDepositAmount}
-                  onChange={e => setFreedomDepositAmount(e.target.value)}
+                  onChange={e => {
+                    setFreedomDepositAmount(e.target.value);
+                    if (freedomModalError) setFreedomModalError('');
+                  }}
                   className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white font-bold text-base"
                   required
                 />
@@ -3088,7 +3503,10 @@ export const GoalsScreen: React.FC<GoalsScreenProps> = () => {
               <div className="pt-2 flex justify-end gap-2">
                 <button
                   type="button"
-                  onClick={() => setIsFreedomModalOpen(false)}
+                  onClick={() => {
+                    setIsFreedomModalOpen(false);
+                    setFreedomModalError('');
+                  }}
                   className="px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 font-bold"
                 >
                   Cancelar
@@ -3108,107 +3526,282 @@ export const GoalsScreen: React.FC<GoalsScreenProps> = () => {
       {/* ========================================================================= */}
       {/* MODAL: APORTE OU RESGATE EM OBJETIVO ESPECÍFICO */}
       {/* ========================================================================= */}
-      {selectedGoalId && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-sm animate-in fade-in duration-200">
-          <div className="relative w-full max-w-sm bg-white dark:bg-slate-900 rounded-3xl shadow-2xl border border-slate-200 dark:border-slate-800 p-6 space-y-4">
-            <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
-              <h3 className="text-base font-bold text-slate-900 dark:text-white font-display flex items-center gap-2">
-                <span>{goalDepositAction === 'withdraw' ? '💸 Resgatar do Objetivo' : '🎯 Aportar no Objetivo'}</span>
-              </h3>
-              <button
-                onClick={() => {
-                  setSelectedGoalId(null);
-                  setGoalDepositError('');
-                }}
-                className="p-1.5 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
+      {selectedGoalId && (() => {
+        const selectedGoalObj = state.piggyBanks.find(g => g.id === selectedGoalId);
+        const grossVal = parseFloat(goalDepositAmount.replace(',', '.')) || 0;
+        const parsedNet = goalNetAmount.trim() ? parseFloat(goalNetAmount.replace(',', '.')) : grossVal;
+        const netVal = Number.isFinite(parsedNet) && parsedNet > 0 ? parsedNet : grossVal;
+        const checkingAccounts = (state.linkedAccounts || []).filter(
+          a => a.accountType === 'corrente' || a.accountType === 'poupanca'
+        );
+        const preview =
+          goalDepositAction === 'withdraw' && grossVal > 0
+            ? previewWithdrawal({
+                goalId: selectedGoalId,
+                sourceType: 'piggy_bank',
+                grossAmountR$: grossVal,
+                netAmountR$: netVal,
+                withdrawalChannel: goalWithdrawalChannel,
+                executionMode: goalExecutionMode,
+                destinationAccountId: goalDestinationAccountId || undefined,
+                overrideInsufficientPlanning: goalOverrideDivergence,
+              })
+            : null;
+        const diffR$ = preview ? preview.differenceToReviewCents / 100 : Math.max(0, grossVal - netVal);
 
-            <form onSubmit={handleDepositGoal} className="space-y-4 text-xs">
-              {goalDepositError && (
-                <p
-                  role="alert"
-                  className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-800 text-xs font-semibold text-rose-800 dark:text-rose-200"
-                >
-                  {goalDepositError}
-                </p>
-              )}
-
-              {/* Toggle Deposit / Withdraw */}
-              <div className="flex p-1 bg-slate-100 dark:bg-slate-800 rounded-xl">
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-sm animate-in fade-in duration-200">
+            <div className="relative w-full max-w-md bg-white dark:bg-slate-900 rounded-3xl shadow-2xl border border-slate-200 dark:border-slate-800 p-6 space-y-4 max-h-[90vh] overflow-y-auto">
+              <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
+                <h3 className="text-base font-bold text-slate-900 dark:text-white font-display flex items-center gap-2">
+                  <span>{goalDepositAction === 'withdraw' ? '💸 Resgatar do Objetivo' : '🎯 Aportar no Objetivo'}</span>
+                </h3>
                 <button
-                  type="button"
-                  onClick={() => {
-                    setGoalDepositAction('deposit');
-                    setGoalDepositError('');
-                  }}
-                  className={`flex-1 py-1.5 rounded-lg font-bold text-xs transition-all ${
-                    goalDepositAction === 'deposit'
-                      ? 'bg-sky-600 text-white shadow-xs'
-                      : 'text-slate-600 dark:text-slate-400'
-                  }`}
-                >
-                  + Aportar
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setGoalDepositAction('withdraw');
-                    setGoalDepositError('');
-                  }}
-                  className={`flex-1 py-1.5 rounded-lg font-bold text-xs transition-all ${
-                    goalDepositAction === 'withdraw'
-                      ? 'bg-rose-600 text-white shadow-xs'
-                      : 'text-slate-600 dark:text-slate-400'
-                  }`}
-                >
-                  - Resgatar
-                </button>
-              </div>
-
-              <div>
-                <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">
-                  {goalDepositAction === 'withdraw' ? 'Valor a Resgatar (R$)' : 'Valor a Guardar (R$)'}
-                </label>
-                <input
-                  type="text"
-                  placeholder="1000"
-                  value={goalDepositAmount}
-                  onChange={e => {
-                    setGoalDepositAmount(e.target.value);
-                    if (goalDepositError) setGoalDepositError('');
-                  }}
-                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white font-bold text-base"
-                  required
-                />
-              </div>
-
-              <div className="pt-2 flex justify-end gap-2">
-                <button
-                  type="button"
                   onClick={() => {
                     setSelectedGoalId(null);
                     setGoalDepositError('');
+                    setGoalNetAmount('');
+                    setGoalOverrideDivergence(false);
+                    setGoalNeedsConfirmation(false);
+                    setGoalConfirmedCompleted(false);
                   }}
-                  className="px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 font-bold"
+                  className="p-1.5 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400"
                 >
-                  Cancelar
-                </button>
-                <button
-                  type="submit"
-                  className={`px-5 py-2 rounded-xl text-white font-extrabold shadow-sm ${
-                    goalDepositAction === 'withdraw' ? 'bg-rose-600 hover:bg-rose-700' : 'bg-sky-600 hover:bg-sky-700'
-                  }`}
-                >
-                  {goalDepositAction === 'withdraw' ? 'Confirmar Resgate' : 'Confirmar Aporte'}
+                  <X className="w-5 h-5" />
                 </button>
               </div>
-            </form>
+
+              <form onSubmit={handleDepositGoal} className="space-y-4 text-xs">
+                {goalDepositError && (
+                  <p
+                    role="alert"
+                    className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-800 text-xs font-semibold text-rose-800 dark:text-rose-200"
+                  >
+                    {goalDepositError}
+                  </p>
+                )}
+
+                {goalNeedsConfirmation && goalDepositAction === 'deposit' && (
+                  <label className="flex items-center gap-2 p-3 rounded-xl bg-amber-50 dark:bg-amber-950/50 border border-amber-300 dark:border-amber-700 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={goalConfirmedCompleted}
+                      onChange={e => setGoalConfirmedCompleted(e.target.checked)}
+                      className="rounded border-amber-400 text-amber-600 focus:ring-amber-500"
+                    />
+                    <span className="text-[11px] font-bold text-amber-900 dark:text-amber-200">
+                      Confirmar aporte extra nesta meta já concluída e integralmente utilizada
+                    </span>
+                  </label>
+                )}
+
+                {/* Toggle Deposit / Withdraw */}
+                <div className="flex p-1 bg-slate-100 dark:bg-slate-800 rounded-xl">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setGoalDepositAction('deposit');
+                      setGoalDepositError('');
+                    }}
+                    className={`flex-1 py-1.5 rounded-lg font-bold text-xs transition-all ${
+                      goalDepositAction === 'deposit'
+                        ? 'bg-sky-600 text-white shadow-xs'
+                        : 'text-slate-600 dark:text-slate-400'
+                    }`}
+                  >
+                    + Aportar
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setGoalDepositAction('withdraw');
+                      setGoalDepositError('');
+                      setGoalNeedsConfirmation(false);
+                      setGoalConfirmedCompleted(false);
+                    }}
+                    className={`flex-1 py-1.5 rounded-lg font-bold text-xs transition-all ${
+                      goalDepositAction === 'withdraw'
+                        ? 'bg-rose-600 text-white shadow-xs'
+                        : 'text-slate-600 dark:text-slate-400'
+                    }`}
+                  >
+                    - Resgatar
+                  </button>
+                </div>
+
+                <div>
+                  <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">
+                    {goalDepositAction === 'withdraw' ? 'Valor Bruto a Resgatar (R$)' : 'Valor a Guardar (R$)'}
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="1000"
+                    value={goalDepositAmount}
+                    onChange={e => {
+                      setGoalDepositAmount(e.target.value);
+                      if (goalDepositError) setGoalDepositError('');
+                    }}
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white font-bold text-base"
+                    required
+                  />
+                </div>
+
+                {goalDepositAction === 'withdraw' && (
+                  <div className="space-y-3 p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700">
+                    <div className="grid grid-cols-2 gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => setGoalWithdrawalChannel('asset_redemption')}
+                        className={`py-2 px-2 rounded-xl text-[11px] font-bold border ${
+                          goalWithdrawalChannel === 'asset_redemption'
+                            ? 'bg-slate-900 dark:bg-white text-white dark:text-slate-900 border-slate-900 dark:border-white'
+                            : 'bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700'
+                        }`}
+                      >
+                        Resgate real de ativo
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setGoalWithdrawalChannel('virtual_reallocation')}
+                        className={`py-2 px-2 rounded-xl text-[11px] font-bold border ${
+                          goalWithdrawalChannel === 'virtual_reallocation'
+                            ? 'bg-slate-900 dark:bg-white text-white dark:text-slate-900 border-slate-900 dark:border-white'
+                            : 'bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700'
+                        }`}
+                      >
+                        Realocação virtual (mesma conta)
+                      </button>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => setGoalExecutionMode('pending_settlement')}
+                        className={`py-2 px-2 rounded-xl text-[11px] font-bold border ${
+                          goalExecutionMode === 'pending_settlement'
+                            ? 'bg-amber-600 text-white border-amber-600'
+                            : 'bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700'
+                        }`}
+                      >
+                        Solicitar / Planejar (em liquidação)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setGoalExecutionMode('occurred_manual')}
+                        className={`py-2 px-2 rounded-xl text-[11px] font-bold border ${
+                          goalExecutionMode === 'occurred_manual'
+                            ? 'bg-emerald-600 text-white border-emerald-600'
+                            : 'bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700'
+                        }`}
+                      >
+                        Registrar que ocorreu no banco
+                      </button>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      <div>
+                        <label className="text-[11px] font-bold text-slate-600 dark:text-slate-300 block mb-1">
+                          Valor líquido recebido (R$)
+                        </label>
+                        <input
+                          type="text"
+                          value={goalNetAmount}
+                          onChange={e => setGoalNetAmount(e.target.value)}
+                          placeholder={goalDepositAmount || 'Mesmo do bruto'}
+                          className="w-full px-3 py-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 font-bold text-xs"
+                        />
+                      </div>
+
+                      {goalWithdrawalChannel === 'asset_redemption' && checkingAccounts.length > 0 && (
+                        <div>
+                          <label className="text-[11px] font-bold text-slate-600 dark:text-slate-300 block mb-1">
+                            Conta corrente destino
+                          </label>
+                          <select
+                            value={goalDestinationAccountId}
+                            onChange={e => setGoalDestinationAccountId(e.target.value)}
+                            className="w-full px-2.5 py-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 font-bold text-xs"
+                          >
+                            <option value="">Selecionar conta</option>
+                            {checkingAccounts.map(acc => (
+                              <option key={acc.id} value={acc.canonicalAccountId || acc.id}>
+                                {acc.bankName} ({acc.accountType})
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      )}
+                    </div>
+
+                    {diffR$ > 0 && (
+                      <div className="p-2 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-[11px] font-semibold text-amber-900 dark:text-amber-200">
+                        Diferença a revisar: <strong>{formatCurrency(diffR$)}</strong> (sem inventar IR/IOF/taxa)
+                      </div>
+                    )}
+
+                    {selectedGoalObj && grossVal > selectedGoalObj.currentAmount && (
+                      <label className="flex items-start gap-2 p-2 rounded-xl bg-rose-50 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-800 cursor-pointer text-[11px]">
+                        <input
+                          type="checkbox"
+                          checked={goalOverrideDivergence}
+                          onChange={e => setGoalOverrideDivergence(e.target.checked)}
+                          className="mt-0.5 rounded border-rose-400 text-rose-600 focus:ring-rose-500"
+                        />
+                        <span className="font-bold text-rose-900 dark:text-rose-200">
+                          Registrar divergência ocorrida no banco (saldo planejado {formatCurrency(selectedGoalObj.currentAmount)} insuficiente)
+                        </span>
+                      </label>
+                    )}
+
+                    {preview && (
+                      <div className="p-2.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 space-y-1">
+                        <div className="flex items-center justify-between text-[11px] font-extrabold">
+                          <span>Prévia da Operação</span>
+                          <span className="text-emerald-700 dark:text-emerald-300">Renda nova gerada: R$ 0,00</span>
+                        </div>
+                        <div className="text-[11px] text-slate-500 dark:text-slate-400 flex flex-wrap gap-x-2">
+                          <span>Bruto: {formatCurrency(preview.grossAmountCents / 100)}</span>
+                          <span>Líquido: {formatCurrency(preview.netAmountCents / 100)}</span>
+                          <span>Livre p/ caixa: {formatCurrency(preview.freeCashNetCents / 100)}</span>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                <div className="pt-2 flex justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectedGoalId(null);
+                      setGoalDepositError('');
+                      setGoalNetAmount('');
+                      setGoalOverrideDivergence(false);
+                      setGoalNeedsConfirmation(false);
+                      setGoalConfirmedCompleted(false);
+                    }}
+                    className="px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 font-bold"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="submit"
+                    className={`px-5 py-2 rounded-xl text-white font-extrabold shadow-sm ${
+                      goalDepositAction === 'withdraw' ? 'bg-rose-600 hover:bg-rose-700' : 'bg-sky-600 hover:bg-sky-700'
+                    }`}
+                  >
+                    {goalDepositAction === 'withdraw'
+                      ? goalExecutionMode === 'pending_settlement'
+                        ? 'Solicitar / Planejar Resgate'
+                        : 'Confirmar Resgate'
+                      : 'Confirmar Aporte'}
+                  </button>
+                </div>
+              </form>
+            </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* ========================================================================= */}
       {/* MODAL: EDITAR OBJETIVO COMPLETO */}
@@ -3305,6 +3898,18 @@ export const GoalsScreen: React.FC<GoalsScreenProps> = () => {
                   className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white font-medium"
                 />
               </div>
+
+              <label className="flex items-center gap-2 p-2.5 rounded-xl bg-amber-50/70 dark:bg-amber-950/30 border border-amber-200/70 dark:border-amber-800/60 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={editGoalIsFireEligible}
+                  onChange={e => setEditGoalIsFireEligible(e.target.checked)}
+                  className="rounded border-amber-400 text-amber-600 focus:ring-amber-500"
+                />
+                <span className="text-[11px] font-bold text-slate-700 dark:text-slate-200">
+                  Incluir este objetivo no cálculo de Liberdade Financeira (FIRE)
+                </span>
+              </label>
 
               <div>
                 <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">
@@ -3522,6 +4127,266 @@ export const GoalsScreen: React.FC<GoalsScreenProps> = () => {
       )}
 
       {/* ========================================================================= */}
+      {/* REGISTRO DE OPERAÇÕES PATRIMONIAIS & ESTORNO SEGURO                       */}
+      {/* ========================================================================= */}
+      {(state.financialOperations || []).filter(op =>
+        [
+          'GOAL_DEPOSIT',
+          'GOAL_WITHDRAWAL',
+          'GOAL_TRANSFER',
+          'BLOCK_TRANSFER',
+          'INITIAL_POSITION',
+          'VALUATION_ADJUSTMENT',
+        ].includes(op.type)
+      ).length > 0 && (
+        <div className="bg-white dark:bg-slate-900 rounded-3xl p-5 sm:p-6 border border-slate-200 dark:border-slate-800 shadow-xs space-y-3">
+          <div className="flex items-center justify-between gap-2">
+            <div>
+              <h3 className="text-sm sm:text-base font-black text-slate-900 dark:text-white font-display">
+                Histórico de Operações Patrimoniais (Rastreável)
+              </h3>
+              <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                Mesmo operationId exibido no Hub do Casal e no Extrato Unificado.
+              </p>
+            </div>
+          </div>
+
+          {patrimonialOpError && (
+            <p
+              role="alert"
+              className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-800 text-xs font-semibold text-rose-800 dark:text-rose-200"
+            >
+              {patrimonialOpError}
+            </p>
+          )}
+
+          <div className="divide-y divide-slate-100 dark:divide-slate-800 max-h-72 overflow-y-auto">
+            {(state.financialOperations || [])
+              .filter(op =>
+                [
+                  'GOAL_DEPOSIT',
+                  'GOAL_WITHDRAWAL',
+                  'GOAL_TRANSFER',
+                  'BLOCK_TRANSFER',
+                  'INITIAL_POSITION',
+                  'VALUATION_ADJUSTMENT',
+                ].includes(op.type)
+              )
+              .slice(-12)
+              .reverse()
+              .map(op => {
+                const isReverted = op.state === 'reverted' || op.state === 'estornado';
+                const signedVal =
+                  op.type === 'VALUATION_ADJUSTMENT' && op.signedDeltaCents !== undefined
+                    ? op.signedDeltaCents / 100
+                    : op.amountR$ ?? op.amountCents / 100;
+                return (
+                  <div key={op.id} className="py-2.5 flex items-center justify-between gap-3 text-xs">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-bold text-slate-800 dark:text-slate-200">
+                          {op.notes || op.type}
+                        </span>
+                        <span className="font-mono text-[10px] px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
+                          {op.id}
+                        </span>
+                        {isReverted && (
+                          <span className="text-[10px] px-2 py-0.5 rounded-full bg-rose-100 dark:bg-rose-950 text-rose-700 dark:text-rose-300 font-bold">
+                            Estornado
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-[11px] text-slate-500 dark:text-slate-400">
+                        {op.date} · {op.type}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <span
+                        className={`font-black tabular-nums ${
+                          signedVal < 0
+                            ? 'text-rose-600 dark:text-rose-400'
+                            : 'text-slate-900 dark:text-white'
+                        }`}
+                      >
+                        {op.type === 'VALUATION_ADJUSTMENT'
+                          ? formatSignedYield(signedVal)
+                          : formatCurrency(signedVal)}
+                      </span>
+                      {!isReverted && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            try {
+                              setPatrimonialOpError('');
+                              reverseFinancialOperation(op.id, 'Estorno solicitado na tela Investimentos');
+                              showToast(`Operação ${op.id} estornada com segurança.`);
+                            } catch (err: any) {
+                              setPatrimonialOpError(err?.message || 'Não foi possível estornar esta operação.');
+                            }
+                          }}
+                          className="px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-rose-50 text-slate-600 hover:text-rose-700 font-bold flex items-center gap-1 cursor-pointer"
+                          title="Estornar operação patrimonial"
+                        >
+                          <RotateCcw className="w-3 h-3" />
+                          <span>Estornar</span>
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* MODAL: TRANSFERÊNCIA ENTRE BLOCOS                                         */}
+      {/* ========================================================================= */}
+      {isBlockTransferModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="relative w-full max-w-md bg-white dark:bg-slate-900 rounded-3xl shadow-2xl border border-slate-200 dark:border-slate-800 p-6 space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
+              <h3 className="text-base font-bold text-slate-900 dark:text-white font-display flex items-center gap-2">
+                <ArrowLeftRight className="w-4 h-4 text-indigo-600" />
+                <span>Transferência entre Blocos</span>
+              </h3>
+              <button
+                onClick={() => setIsBlockTransferModalOpen(false)}
+                className="p-1.5 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleBlockTransferSubmit} className="space-y-3.5 text-xs">
+              {transferError && (
+                <p
+                  role="alert"
+                  className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-800 text-xs font-semibold text-rose-800 dark:text-rose-200"
+                >
+                  {transferError}
+                </p>
+              )}
+
+              {transferNeedsConfirm && (
+                <label className="flex items-center gap-2 p-3 rounded-xl bg-amber-50 dark:bg-amber-950/50 border border-amber-300 dark:border-amber-700 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={transferConfirmedCompleted}
+                    onChange={e => setTransferConfirmedCompleted(e.target.checked)}
+                    className="rounded border-amber-400 text-amber-600 focus:ring-amber-500"
+                  />
+                  <span className="text-[11px] font-bold text-amber-900 dark:text-amber-200">
+                    Confirmar envio para objetivo já concluído e integralmente utilizado
+                  </span>
+                </label>
+              )}
+
+              <div className="grid grid-cols-2 gap-2.5">
+                <div>
+                  <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">Origem</label>
+                  <select
+                    value={transferSourceBlock}
+                    onChange={e => setTransferSourceBlock(e.target.value as any)}
+                    className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 font-bold"
+                  >
+                    <option value="protection">🛡️ Proteção</option>
+                    <option value="piggy_bank">🎯 Objetivo</option>
+                    <option value="freedom">🔓 Liberdade</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">Destino</label>
+                  <select
+                    value={transferTargetBlock}
+                    onChange={e => setTransferTargetBlock(e.target.value as any)}
+                    className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 font-bold"
+                  >
+                    <option value="piggy_bank">🎯 Objetivo</option>
+                    <option value="freedom">🔓 Liberdade</option>
+                    <option value="protection">🛡️ Proteção</option>
+                  </select>
+                </div>
+              </div>
+
+              {transferSourceBlock === 'piggy_bank' && (
+                <div>
+                  <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">Objetivo de Origem</label>
+                  <select
+                    value={transferSourceGoalId || state.piggyBanks[0]?.id || ''}
+                    onChange={e => setTransferSourceGoalId(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 font-bold"
+                  >
+                    {state.piggyBanks.map(g => (
+                      <option key={g.id} value={g.id}>
+                        {g.emoji} {g.name} ({formatCurrency(g.currentAmount)})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
+              {transferTargetBlock === 'piggy_bank' && (
+                <div>
+                  <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">Objetivo de Destino</label>
+                  <select
+                    value={transferTargetGoalId || state.piggyBanks[0]?.id || ''}
+                    onChange={e => setTransferTargetGoalId(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 font-bold"
+                  >
+                    {state.piggyBanks.map(g => (
+                      <option key={g.id} value={g.id}>
+                        {g.emoji} {g.name} ({formatCurrency(g.currentAmount)})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
+              <div>
+                <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">Valor a Transferir (R$)</label>
+                <input
+                  type="text"
+                  placeholder="200"
+                  value={transferAmountInput}
+                  onChange={e => setTransferAmountInput(e.target.value)}
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 font-bold text-base"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">Nota (Opcional)</label>
+                <input
+                  type="text"
+                  placeholder="Ex: Rebalanceamento entre blocos"
+                  value={transferNoteInput}
+                  onChange={e => setTransferNoteInput(e.target.value)}
+                  className="w-full px-3.5 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700"
+                />
+              </div>
+
+              <div className="pt-2 flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setIsBlockTransferModalOpen(false)}
+                  className="px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 font-bold"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold shadow-sm cursor-pointer"
+                >
+                  Confirmar Transferência
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
       {/* FIXED FOOTER MESSAGE (Frase Fixa do Rodapé) */}
       {/* ========================================================================= */}
       <div className="bg-slate-900 text-slate-200 dark:bg-slate-900 dark:text-slate-200 rounded-3xl p-5 sm:p-6 border border-slate-800 shadow-md text-center text-xs sm:text-sm font-medium leading-relaxed">
@@ -3555,6 +4420,14 @@ export const GoalsScreen: React.FC<GoalsScreenProps> = () => {
         onClose={() => setIsIntentModalOpen(false)}
         defaultSource={selectedIntentSource}
         defaultGoalId={selectedIntentGoalId}
+      />
+
+      {/* Modal de Reforço Temporário de Orçamento */}
+      <CategoryReinforcementModal
+        isOpen={isReinforceModalOpen}
+        onClose={() => setIsReinforceModalOpen(false)}
+        initialSourceId={reinforceSourceGoalId}
+        initialSourceKind="piggy_bank"
       />
     </div>
   );

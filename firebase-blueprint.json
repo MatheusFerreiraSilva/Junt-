@@ -85,9 +85,46 @@
         "monthlyDeposit": { "type": "number" },
         "totalInvested": { "type": "number" },
         "yieldAccumulated": { "type": "number" },
+        "liberatedReservedCents": { "type": "number" },
+        "linkedBankAccountId": { "type": "string" },
         "completed": { "type": "boolean" }
       },
       "required": ["id", "name", "targetAmount"]
+    },
+    "CashBalanceAnchor": {
+      "title": "CashBalanceAnchor",
+      "description": "Confirmed account base-balance anchor for verifiable cash without double-counting prior ledger entries",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "accountId": { "type": "string" },
+        "canonicalAccountId": { "type": "string" },
+        "date": { "type": "string" },
+        "balanceCents": { "type": "number" },
+        "balanceStatus": { "type": "string", "enum": ["known", "unknown"] },
+        "origin": { "type": "string" },
+        "coverageType": { "type": "string" },
+        "confirmedAt": { "type": "string" },
+        "confirmedByUid": { "type": "string" }
+      },
+      "required": ["id", "accountId", "date", "balanceCents", "balanceStatus"]
+    },
+    "FinancialOperation": {
+      "title": "FinancialOperation",
+      "description": "Idempotent traceable financial operation including CATEGORY_REINFORCEMENT (provenance preserved) and CATEGORY_REALLOCATION",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "type": { "type": "string" },
+        "amountCents": { "type": "number" },
+        "competence": { "type": "string" },
+        "date": { "type": "string" },
+        "state": { "type": "string" },
+        "sourceOperationId": { "type": "string" },
+        "authorizedBy": { "type": "string" },
+        "authoredByUid": { "type": "string" }
+      },
+      "required": ["id", "type", "amountCents", "date", "state", "authorizedBy"]
     }
   },
   "firestore": {
@@ -98,6 +135,10 @@
     "/users/{userId}": {
       "schema": "UserProfile",
       "description": "Individual user lookup"
+    },
+    "/couples/{coupleId}/entities/{entityId}": {
+      "schema": "EntityWrapper",
+      "description": "Synchronized couple entities including expenses, installments, piggyBanks, linkedAccounts, cashBalanceAnchors, bankImportedTransactions, and financialOperations"
     },
     "/couples/{coupleId}/expenses/{expenseId}": {
       "schema": "Expense",

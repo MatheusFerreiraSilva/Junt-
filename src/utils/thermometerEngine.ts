@@ -3,6 +3,7 @@ import {
   CeilingState,
   ExpenseItem,
   PaidBy,
+  ReinforcementProvenanceRef,
 } from '../types/finance';
 import {
   apportionCentsByScope,
@@ -16,7 +17,11 @@ import {
   selectCanonicalFixedBillsRegistry,
   toSafeCents,
 } from './occurrenceProjection';
-import { selectEffectiveBudgetPlanForCompetence } from './domainSelectors';
+import {
+  selectCategoryReinforcementSummary,
+  selectEffectiveBudgetPlanForCompetence,
+  selectVerifiableCashSummary,
+} from './domainSelectors';
 
 export { roundMoney };
 
@@ -53,7 +58,13 @@ export interface ThermometerEngineResult {
   // Reading A: Plano do Mês
   declaredIncome: number;
   programmedSavings: number;
-  expenseBudget: number; // Denominator for expense budget
+  baseExpenseBudget?: number; // Meta habitual de despesas (antes de reforços temporários)
+  reinforcementAmount?: number; // Reforço temporário ativo na competência
+  reallocationNetAmount?: number; // Realocações líquidas na competência
+  hasTemporaryReinforcement?: boolean;
+  reinforcementSources?: ReinforcementProvenanceRef[];
+  verifiableCashStatus?: 'known' | 'partial' | 'unknown';
+  expenseBudget: number; // Denominator for expense budget (base + reforço ativo)
   hasExplicitCeiling?: boolean;
   ceilingState?: CeilingState;
   spentSoFar: number;
@@ -264,6 +275,23 @@ export function calculateThermometerEngine(
     expenseBudget = Math.max(0, roundMoney(declaredIncome - programmedSavings));
     hasExplicitCeiling = declaredIncome > 0 || Boolean(state.isCustomizedPercentages);
   }
+
+  const domainScope = scope === 'couple' ? 'casal' : scope;
+  const reinforcementSummary = selectCategoryReinforcementSummary(state, domainScope, currentMonthKey);
+  const cashSummary = selectVerifiableCashSummary(state, domainScope, todayDateStr);
+
+  const baseExpenseBudget = roundMoney(expenseBudget);
+  const reinforcementAmount = roundMoney(reinforcementSummary.totalReinforcementCents / 100);
+  const reallocationNetAmount = roundMoney(reinforcementSummary.totalNetReallocCents / 100);
+  const baseExpenseBudgetCents = toSafeCents(baseExpenseBudget);
+  const effectiveExpenseBudgetCents = Math.max(
+    0,
+    baseExpenseBudgetCents +
+      reinforcementSummary.totalReinforcementCents +
+      reinforcementSummary.totalNetReallocCents
+  );
+  expenseBudget = roundMoney(effectiveExpenseBudgetCents / 100);
+  hasExplicitCeiling = hasExplicitCeiling || reinforcementSummary.totalReinforcementCents > 0;
 
   const ceilingState: CeilingState = !hasExplicitCeiling
     ? 'absent'
@@ -731,6 +759,12 @@ export function calculateThermometerEngine(
     todayDateStr,
     declaredIncome,
     programmedSavings,
+    baseExpenseBudget,
+    reinforcementAmount,
+    reallocationNetAmount,
+    hasTemporaryReinforcement: reinforcementSummary.totalReinforcementCents > 0,
+    reinforcementSources: reinforcementSummary.allSources,
+    verifiableCashStatus: cashSummary.status,
     expenseBudget,
     hasExplicitCeiling,
     ceilingState,

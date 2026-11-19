@@ -29,7 +29,10 @@ import {
   commitFinancialCommandTransaction,
   type EntityState,
 } from '../entitySync';
-import { runFinancialCommand } from '../../utils/financialCommands';
+import {
+  runFinancialCommand,
+  reconcileWithdrawalWithStatementCommand,
+} from '../../utils/financialCommands';
 import type { AppState } from '../../types/finance';
 
 describe('entity synchronization', () => {
@@ -429,4 +432,459 @@ describe('entity synchronization', () => {
       expect(firestoreDoc).toHaveBeenCalled();
     });
   });
+
+  describe('09 patrimonial & monthly guide transaction concurrency', () => {
+    it('blocks concurrent monthly guide execution and item execution when remote session already confirmed', async () => {
+      const baseState: AppState = {
+        profile: {
+          partner1Name: 'Ana',
+          partner2Name: 'Bruno',
+          city: 'SP',
+          partner1Income: 10000,
+          partner2Income: 10000,
+          emergencyReserveMonthsTarget: 6,
+          expectedYieldAnnual: 6.5,
+          streakMonths: 1,
+          themeMode: 'light',
+          accentTheme: 'emerald',
+        },
+        categoryPercentages: {
+          moradia: 30,
+          transporte: 10,
+          comida: 25,
+          lazer: 15,
+          protecao: 10,
+          profissional: 10,
+        },
+        currentMonth: '2026-11',
+        expenses: [],
+        incomes: [],
+        installments: [],
+        piggyBanks: [],
+        coupleGoals: [],
+        linkedAccounts: [],
+        alertRules: [],
+        notifications: [],
+        protectionCurrentAmount: 10000,
+        protectionTotalInvested: 10000,
+        protectionYieldAccumulated: 0,
+        isProtectionComplete: false,
+        freedomTotalInvested: 0,
+        freedomYieldAccumulated: 0,
+        financialOperations: [],
+        monthlyDepositGuides: {
+          '2026-11': {
+            monthKey: '2026-11',
+            totalPlanned: 1000,
+            status: 'approved',
+            approvedAt: '2026-11-01T10:00:00.000Z',
+            items: [
+              {
+                id: 'item-prot-1',
+                block: 'protection',
+                title: 'Reserva de Proteção',
+                instruction: 'Aporte mensal na reserva',
+                destinationLabel: 'Reserva de Proteção',
+                baseAmount: 1000,
+                surplusAmount: 0,
+                totalAmount: 1000,
+              },
+            ],
+          },
+        },
+        completedMonthDeposits: {},
+      };
+
+      const cmdRes = runFinancialCommand(baseState, {
+        id: 'op-guide-full-2026-11',
+        type: 'GOAL_DEPOSIT',
+        amountCents: 100000,
+        authorizedBy: 'uid-ana',
+        authoredByUid: 'uid-ana',
+        scope: 'couple',
+        sourceRef: { type: 'external', id: 'monthly-guide' },
+        targetRef: { type: 'protection', id: 'protection_reserve' },
+        competence: '2026-11',
+        date: '2026-11-12',
+        state: 'occurred_manual',
+      });
+
+      const cmdWithGuide: typeof cmdRes = {
+        ...cmdRes,
+        state: {
+          ...cmdRes.state,
+          completedMonthDeposits: {
+            '2026-11': {
+              monthKey: '2026-11',
+              completedAt: '2026-11-12T10:00:00.000Z',
+              totalDeposited: 1000,
+              operationId: 'op-guide-full-2026-11',
+              items: [
+                {
+                  id: 'item-prot-1',
+                  block: 'protection',
+                  title: 'Reserva de Proteção',
+                  instruction: 'Aporte mensal na reserva',
+                  destinationLabel: 'Reserva de Proteção',
+                  baseAmount: 1000,
+                  surplusAmount: 0,
+                  totalAmount: 1000,
+                  executedAt: '2026-11-12T10:00:00.000Z',
+                  executedOperationId: 'op-guide-full-2026-11',
+                  executedAmount: 1000,
+                },
+              ],
+            },
+          },
+        },
+        touchedEntities: {
+          ...(cmdRes.touchedEntities || {}),
+          protectionUpdated: true,
+          guideUpdated: true,
+          guideMonthKey: '2026-11',
+        },
+      };
+
+      // Simulate remote session already committed a different operationId for 2026-11 guide
+      vi.mocked(firestoreRunTransaction).mockImplementationOnce(async (_db, callback) => {
+        const fakeTx = {
+          get: vi.fn(async (ref: { path: string }) => {
+            if (ref.path.includes('couples/couple-09')) {
+              return {
+                exists: () => true,
+                data: () => ({
+                  protectionCurrentAmount: 11000,
+                  completedMonthDeposits: {
+                    '2026-11': {
+                      monthKey: '2026-11',
+                      completedAt: '2026-11-12T09:59:00.000Z',
+                      totalDeposited: 1000,
+                      operationId: 'op-guide-other-session',
+                      items: [],
+                    },
+                  },
+                }),
+              };
+            }
+            return { exists: () => false, data: () => null };
+          }),
+          set: vi.fn(),
+        };
+        return callback(fakeTx as any);
+      });
+
+      const conflictOutcome = await commitFinancialCommandTransaction(
+        {} as any,
+        'couple-09',
+        cmdWithGuide,
+        baseState
+      );
+      expect(conflictOutcome.status).toBe('conflict');
+      expect(conflictOutcome.writtenEntities).toEqual([]);
+      expect(conflictOutcome.committedState).toBe(baseState);
+    });
+
+    it('persists negative VALUATION_ADJUSTMENT yield (-50) on couple freedom block atomically', async () => {
+      const baseState: AppState = {
+        profile: {
+          partner1Name: 'Ana',
+          partner2Name: 'Bruno',
+          city: 'SP',
+          partner1Income: 10000,
+          partner2Income: 10000,
+          emergencyReserveMonthsTarget: 6,
+          expectedYieldAnnual: 6.5,
+          streakMonths: 1,
+          themeMode: 'light',
+          accentTheme: 'emerald',
+        },
+        categoryPercentages: {
+          moradia: 30,
+          transporte: 10,
+          comida: 25,
+          lazer: 15,
+          protecao: 10,
+          profissional: 10,
+        },
+        currentMonth: '2026-11',
+        expenses: [],
+        incomes: [],
+        installments: [],
+        piggyBanks: [],
+        coupleGoals: [],
+        linkedAccounts: [],
+        alertRules: [],
+        notifications: [],
+        protectionCurrentAmount: 10000,
+        protectionTotalInvested: 10000,
+        protectionYieldAccumulated: 0,
+        isProtectionComplete: true,
+        freedomTotalInvested: 1000,
+        freedomYieldAccumulated: 100,
+        financialOperations: [],
+      };
+
+      const cmdRes = runFinancialCommand(baseState, {
+        id: 'op-val-neg-50',
+        type: 'VALUATION_ADJUSTMENT',
+        amountCents: 5000,
+        amountR$: 50,
+        signedDeltaCents: -5000,
+        valuationDirection: 'loss',
+        authorizedBy: 'uid-ana',
+        authoredByUid: 'uid-ana',
+        scope: 'couple',
+        sourceRef: { type: 'external', id: 'market-valuation', name: 'Marcação' },
+        targetRef: { type: 'freedom', id: 'freedom_block' },
+        competence: '2026-11',
+        date: '2026-11-12',
+        state: 'occurred_manual',
+      });
+
+      expect(cmdRes.status).toBe('success');
+      expect(cmdRes.state.freedomYieldAccumulated).toBe(50);
+
+      const txSet = vi.fn();
+      vi.mocked(firestoreRunTransaction).mockImplementationOnce(async (_db, callback) => {
+        const fakeTx = {
+          get: vi.fn(async (ref: { path: string }) => {
+            if (ref.path.includes('couples/couple-09')) {
+              return {
+                exists: () => true,
+                data: () => ({
+                  freedomTotalInvested: 1000,
+                  freedomYieldAccumulated: 100,
+                }),
+              };
+            }
+            return { exists: () => false, data: () => null };
+          }),
+          set: txSet,
+        };
+        return callback(fakeTx as any);
+      });
+
+      const outcome = await commitFinancialCommandTransaction(
+        {} as any,
+        'couple-09',
+        cmdRes,
+        baseState
+      );
+      expect(outcome.status).toBe('success');
+      expect(txSet).toHaveBeenCalledWith(
+        expect.objectContaining({ path: 'couples/couple-09' }),
+        expect.objectContaining({
+          freedomTotalInvested: 1000,
+          freedomYieldAccumulated: 50,
+        }),
+        { merge: true }
+      );
+    });
+  });
+
+  describe('26B withdrawal settlement & reconciliation transaction guards', () => {
+    it('commits in-place settlement and blocks double reconciliation when bankImportedTransaction was already reconciled remotely', async () => {
+      const baseState: AppState = {
+        profile: {
+          partner1Name: 'Ana',
+          partner2Name: 'Bruno',
+          city: 'SP',
+          partner1Income: 10000,
+          partner2Income: 10000,
+          emergencyReserveMonthsTarget: 6,
+          expectedYieldAnnual: 6.5,
+          streakMonths: 1,
+          themeMode: 'light',
+          accentTheme: 'emerald',
+        },
+        categoryPercentages: {
+          moradia: 30,
+          transporte: 10,
+          comida: 25,
+          lazer: 15,
+          protecao: 10,
+          profissional: 10,
+        },
+        currentMonth: '2026-11',
+        expenses: [],
+        incomes: [],
+        installments: [],
+        piggyBanks: [
+          {
+            id: 'goal-26b',
+            name: 'Reserva',
+            emoji: '🏦',
+            purpose: 'Reserva',
+            currentAmount: 1000,
+            targetAmount: 5000,
+            monthlyDeposit: 500,
+            availableCents: 100000,
+            committedCents: 50000,
+            revision: 2,
+          },
+        ],
+        coupleGoals: [
+          {
+            id: 'goal-26b',
+            title: 'Reserva',
+            category: 'reserva',
+            emoji: '🏦',
+            targetAmount: 5000,
+            currentAmount: 1000,
+            availableCents: 100000,
+            committedCents: 50000,
+            partner1Contribution: 500,
+            partner2Contribution: 500,
+            monthlyPlannedDeposit: 500,
+            isCompleted: false,
+            history: [],
+            createdAt: '2026-10-01',
+            revision: 2,
+          },
+        ],
+        linkedAccounts: [
+          {
+            id: 'acc-26b',
+            canonicalAccountId: 'canon-26b',
+            bankName: 'Itaú',
+            accountType: 'corrente',
+            accountNumber: '123',
+            holder: 'both',
+            balance: 1000,
+            lastSynced: '2026-11-10',
+            status: 'connected',
+            colorHex: '#ec7000',
+            logo: 'I',
+            verificationStatus: 'verified',
+          },
+        ],
+        bankImportedTransactions: [
+          {
+            id: 'tx-26b-cred',
+            itemId: 'item-26b',
+            accountId: 'acc-26b',
+            bankName: 'Itaú',
+            owner: 'both',
+            date: '2026-11-15',
+            description: 'RESGATE CDB',
+            amount: 500,
+            direction: 'credit',
+            status: 'pending',
+          },
+        ],
+        alertRules: [],
+        notifications: [],
+        protectionCurrentAmount: 10000,
+        protectionTotalInvested: 10000,
+        protectionYieldAccumulated: 0,
+        isProtectionComplete: true,
+        freedomTotalInvested: 0,
+        freedomYieldAccumulated: 0,
+        financialOperations: [
+          {
+            id: 'op-pend-26b',
+            type: 'GOAL_WITHDRAWAL',
+            amountCents: 50000,
+            grossAmountCents: 50000,
+            netAmountCents: 50000,
+            authorizedBy: 'uid-ana',
+            authoredByUid: 'uid-ana',
+            scope: 'couple',
+            sourceRef: { type: 'piggy_bank', id: 'goal-26b' },
+            targetRef: { type: 'account', id: 'canon-26b' },
+            destinationAccountId: 'canon-26b',
+            withdrawalChannel: 'asset_redemption',
+            settlementStatus: 'pending_settlement',
+            competence: '2026-11',
+            date: '2026-11-14',
+            state: 'pending_settlement',
+            revision: 1,
+          },
+        ],
+      };
+
+      const cmdRes = reconcileWithdrawalWithStatementCommand(baseState, {
+        bankTransactionId: 'tx-26b-cred',
+        operationId: 'op-pend-26b',
+        reconciledByUid: 'uid-ana',
+      });
+      expect(cmdRes.status).toBe('success');
+
+      // Remote already reconciled tx-26b-cred with another operation -> must conflict cleanly
+      vi.mocked(firestoreRunTransaction).mockImplementationOnce(async (_db, callback) => {
+        const fakeTx = {
+          get: vi.fn(async (ref: { path: string }) => {
+            if (ref.path.includes('piggyBanks')) {
+              return {
+                exists: () => true,
+                data: () => ({
+                  deleted: false,
+                  record: baseState.piggyBanks[0],
+                }),
+              };
+            }
+            if (ref.path.includes('coupleGoals')) {
+              return {
+                exists: () => true,
+                data: () => ({
+                  deleted: false,
+                  record: baseState.coupleGoals[0],
+                }),
+              };
+            }
+            if (ref.path.includes('linkedAccounts')) {
+              return {
+                exists: () => true,
+                data: () => ({
+                  deleted: false,
+                  record: baseState.linkedAccounts![0],
+                }),
+              };
+            }
+            if (ref.path.includes('bankImportedTransactions')) {
+              return {
+                exists: () => true,
+                data: () => ({
+                  deleted: false,
+                  record: {
+                    ...baseState.bankImportedTransactions![0],
+                    status: 'reconciled',
+                    reconciledOperationId: 'op-other-partner',
+                  },
+                }),
+              };
+            }
+            if (ref.path.includes('financialOperations')) {
+              return {
+                exists: () => true,
+                data: () => ({
+                  deleted: false,
+                  record: baseState.financialOperations![0],
+                }),
+              };
+            }
+            return { exists: () => false, data: () => null };
+          }),
+          set: vi.fn(),
+        };
+        return callback(fakeTx as any);
+      });
+
+      const conflictRes = await commitFinancialCommandTransaction(
+        {} as any,
+        'couple-26b',
+        {
+          ...cmdRes,
+          touchedEntities: {
+            ...cmdRes.touchedEntities,
+            bankImportedTransactions: ['tx-26b-cred'],
+          },
+        },
+        baseState
+      );
+      expect(conflictRes.status).toBe('conflict');
+      expect(conflictRes.writtenEntities).toEqual([]);
+    });
+  });
 });
+

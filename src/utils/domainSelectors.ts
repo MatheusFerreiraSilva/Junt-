@@ -35,6 +35,13 @@ import {
   CategoryMatrixEntryCents,
   CeilingState,
   FixedBillRegistryConflict,
+  CashBalanceAnchor,
+  CashAccountVerificationItem,
+  VerifiableCashSummary,
+  LinkedBankAccount,
+  PluggyBankConnection,
+  CategoryReinforcementSummary,
+  ReinforcementProvenanceRef,
 } from '../types/finance';
 import {
   readOperationAmountCents,
@@ -67,12 +74,46 @@ export {
   executeExpenseTriageCommand,
   executeGoalAdjustmentCommand,
   executeIntentConversionCommand,
+  executeBlockTransferCommand,
+  executeInitialPositionCommand,
+  executeValuationAdjustmentCommand,
+  executeMonthlyDepositItemCommand,
+  executeMonthlyDepositCommand,
+  reverseMonthlyDepositCommand,
+  previewGoalWithdrawal,
+  executeWithdrawalCommand,
+  reconcileWithdrawalWithStatementCommand,
+  confirmInternalTransferPairCommand,
+  distributeReinforcementCents,
+  listEligibleReinforcementSources,
+  previewCategoryReinforcement,
+  executeCategoryReinforcementCommand,
+  executeCategoryReallocationCommand,
   type MonetaryNormalizationInput,
   type MonetaryNormalizationResult,
   type RunFinancialCommandOptions,
   type ExpenseCommandContextOptions,
   type GoalAdjustmentCommandParams,
   type IntentConversionCommandParams,
+  type BlockTransferCommandParams,
+  type InitialPositionCommandParams,
+  type ValuationAdjustmentCommandParams,
+  type ExecuteMonthlyDepositItemParams,
+  type ExecuteMonthlyDepositParams,
+  type GoalWithdrawalCommandParams,
+  type GoalWithdrawalPreviewResult,
+  type ReconcileWithdrawalStatementParams,
+  type ConfirmInternalTransferPairParams,
+  type ReinforcementDistributionMode,
+  type ReinforcementDistributionTargetInput,
+  type ReinforcementDistributionItem,
+  type ReinforcementDistributionResult,
+  type EligibleReinforcementSource,
+  type PreviewCategoryReinforcementParams,
+  type CategoryReinforcementPreviewRow,
+  type PreviewCategoryReinforcementResult,
+  type ExecuteCategoryReinforcementParams,
+  type ExecuteCategoryReallocationParams,
 } from './financialCommands';
 
 export type DomainScope = 'casal' | 'partner1' | 'partner2';
@@ -231,33 +272,437 @@ export function selectPendingObligationsTotal(
   return roundMoney(totalPendingCents / 100);
 }
 
+function normalizeAccountSignatureText(value: string | undefined): string {
+  return (value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim()
+    .toLowerCase();
+}
+
+function normalizeOwnerSignature(owner: PaidBy | string | undefined): string {
+  if (owner === 'partner1') return 'partner1';
+  if (owner === 'partner2') return 'partner2';
+  return 'couple';
+}
+
+interface UnifiedAccountCandidate {
+  id: string;
+  sourceKind: 'linked' | 'pluggy';
+  canonicalAccountId?: string;
+  mirroredFromAccountId?: string;
+  externalAccountId?: string;
+  bankName: string;
+  accountType: 'corrente' | 'poupanca' | 'investimento' | 'cartao';
+  holder: PaidBy;
+  balance: number;
+  hasFiniteBalance: boolean;
+  lastSynced: string;
+  status: string;
+  verificationStatus?: 'verified' | 'unverified' | 'ambiguous_duplicate';
+  lockupUntil?: string;
+  revision?: number;
+  lastOperationId?: string;
+}
+
 /**
-  * Computes total liquid operational cash balance by summing connected bank accounts and adjusting for incomes, expenses, and reserve transfers.
+ * 26B: Calcula o resumo verificável de caixa operacional separando estritamente:
+ * - saldo conhecido vs desconhecido (`null`, nunca convertido em 0 falso; 0 confirmado permanece 0)
+ * - contas duplicadas entre linkedAccounts e pluggyAccounts (sem somar em dobro)
+ * - cartão de crédito (`cartao`) e ativos em carência (`lockupUntil` / `investimento`) excluídos do caixa livre
+ * - âncoras de saldo (`CashBalanceAnchor`) sem reaplicar movimentos já absorvidos até a data/lista da âncora
+ * - resgates em liquidação (`planned`/`pending_settlement`) como saldo em trânsito, nunca como caixa livre
+ */
+export function selectVerifiableCashSummary(
+  state: AppState,
+  scope: DomainScope = 'casal',
+  referenceDate?: string
+): VerifiableCashSummary {
+  const refDate = referenceDate || new Date().toISOString().slice(0, 10);
+  const linkedAccounts: LinkedBankAccount[] = state.linkedAccounts || [];
+  const pluggyAccounts: PluggyBankConnection[] = state.pluggyAccounts || [];
+  const anchors: CashBalanceAnchor[] = state.cashBalanceAnchors || [];
+
+  const assetLinkedIds = new Set<string>();
+  (state.piggyBanks || []).forEach((p) => {
+    if (!p.isDeleted && p.linkedBankAccountId) assetLinkedIds.add(p.linkedBankAccountId);
+  });
+  (state.coupleGoals || []).forEach((g) => {
+    if (!g.isDeleted && g.linkedBankAccountId) assetLinkedIds.add(g.linkedBankAccountId);
+  });
+
+  const candidates: UnifiedAccountCandidate[] = [
+    ...linkedAccounts.map((acc) => ({
+      id: acc.id,
+      sourceKind: 'linked' as const,
+      canonicalAccountId: acc.canonicalAccountId,
+      mirroredFromAccountId: acc.mirroredFromAccountId,
+      bankName: acc.bankName,
+      accountType: acc.accountType || 'corrente',
+      holder: acc.holder,
+      balance: acc.balance,
+      hasFiniteBalance: typeof acc.balance === 'number' && Number.isFinite(acc.balance),
+      lastSynced: acc.lastSynced || '',
+      status: acc.status,
+      verificationStatus: acc.verificationStatus,
+      lockupUntil: acc.lockupUntil,
+      revision: acc.revision,
+      lastOperationId: acc.lastOperationId,
+    })),
+    ...pluggyAccounts.map((p) => ({
+      id: p.id,
+      sourceKind: 'pluggy' as const,
+      canonicalAccountId: p.canonicalAccountId,
+      mirroredFromAccountId: p.mirroredFromAccountId,
+      externalAccountId: p.accountId,
+      bankName: p.bankName,
+      accountType: p.accountType || 'corrente',
+      holder: p.owner,
+      balance: p.balance,
+      hasFiniteBalance: typeof p.balance === 'number' && Number.isFinite(p.balance),
+      lastSynced: p.lastSynced || '',
+      status: p.status,
+      verificationStatus: p.verificationStatus,
+      lockupUntil: p.lockupUntil,
+    })),
+  ].filter((c) => isEntityInScope(c.holder, scope));
+
+  // Build explicit canonical clusters (shared canonicalAccountId, mirroredFromAccountId, or matching linked/pluggy id)
+  const linkedIds = new Set(linkedAccounts.map((l) => l.id));
+  const explicitKeyFor = (c: UnifiedAccountCandidate): string => {
+    if (c.canonicalAccountId) return c.canonicalAccountId;
+    if (c.mirroredFromAccountId) {
+      const mirroredTarget = candidates.find((o) => o.id === c.mirroredFromAccountId);
+      return mirroredTarget?.canonicalAccountId || c.mirroredFromAccountId;
+    }
+    if (c.sourceKind === 'pluggy' && c.externalAccountId && linkedIds.has(c.externalAccountId)) {
+      const target = candidates.find((o) => o.id === c.externalAccountId);
+      return target?.canonicalAccountId || c.externalAccountId;
+    }
+    return c.id;
+  };
+
+  const clusterMap = new Map<string, UnifiedAccountCandidate[]>();
+  for (const c of candidates) {
+    const key = explicitKeyFor(c);
+    const list = clusterMap.get(key) || [];
+    list.push(c);
+    clusterMap.set(key, list);
+  }
+
+  // Heuristic duplicate detection across distinct clusters (unlinked linkedAccount + pluggyAccount with same bank/owner/type)
+  const duplicateAccountAlerts: VerifiableCashSummary['duplicateAccountAlerts'] = [];
+  const ambiguousClusterKeys = new Set<string>();
+  const clusterEntries = Array.from(clusterMap.entries());
+  for (let i = 0; i < clusterEntries.length; i++) {
+    const [keyA, groupA] = clusterEntries[i];
+    const repA = groupA[0];
+    if (repA.accountType === 'cartao') continue;
+    const hasExplicitCanonicalA = groupA.some((g) => Boolean(g.canonicalAccountId || g.mirroredFromAccountId));
+    if (hasExplicitCanonicalA) continue;
+    for (let j = i + 1; j < clusterEntries.length; j++) {
+      const [keyB, groupB] = clusterEntries[j];
+      const repB = groupB[0];
+      if (repB.accountType === 'cartao') continue;
+      const hasExplicitCanonicalB = groupB.some((g) => Boolean(g.canonicalAccountId || g.mirroredFromAccountId));
+      if (hasExplicitCanonicalB) continue;
+      if (groupA.every((a) => a.sourceKind === groupB[0].sourceKind)) continue;
+      const sameBank =
+        normalizeAccountSignatureText(repA.bankName) !== '' &&
+        normalizeAccountSignatureText(repA.bankName) === normalizeAccountSignatureText(repB.bankName);
+      const sameOwner = normalizeOwnerSignature(repA.holder) === normalizeOwnerSignature(repB.holder);
+      const sameType = repA.accountType === repB.accountType;
+      if (sameBank && sameOwner && sameType) {
+        ambiguousClusterKeys.add(keyA);
+        ambiguousClusterKeys.add(keyB);
+        duplicateAccountAlerts.push({
+          accountIds: [...groupA.map((g) => g.id), ...groupB.map((g) => g.id)],
+          bankName: repA.bankName,
+          owner: repA.holder,
+          reason: `Possível conta duplicada entre "${repA.bankName}" manual e Open Finance sem vínculo canônico explícito.`,
+        });
+      }
+    }
+  }
+
+  const ops = state.financialOperations || [];
+  const unverifiedReasons: string[] = [];
+  const accountItems: CashAccountVerificationItem[] = [];
+  let knownAccountsCashCents = 0;
+  let lockedAssetCents = 0;
+  let checkingAccountCount = 0;
+  let unknownCheckingCount = 0;
+  let ambiguousCount = 0;
+
+  for (const [canonicalId, group] of clusterEntries) {
+    // Pick primary representative: prefer linked with lastOperationId/revision, else verified/connected
+    const rep =
+      group.find((g) => g.sourceKind === 'linked' && Boolean(g.lastOperationId)) ||
+      group.find((g) => g.sourceKind === 'linked') ||
+      group[0];
+    const sourceAccountIds = group.map((g) => g.id);
+    const isAssetLinked = sourceAccountIds.some((id) => assetLinkedIds.has(id)) || assetLinkedIds.has(canonicalId);
+
+    if (rep.accountType === 'cartao') {
+      accountItems.push({
+        canonicalAccountId: canonicalId,
+        sourceAccountIds,
+        bankName: rep.bankName,
+        accountType: 'cartao',
+        holder: rep.holder,
+        status: 'excluded_credit',
+        includedInLiquidCash: false,
+        baseBalanceCents: null,
+        postAnchorDeltaCents: 0,
+        effectiveLiquidCents: null,
+        inTransitCents: 0,
+        lockedCents: 0,
+        exclusionReason: 'Cartão de crédito não compõe caixa operacional disponível.',
+      });
+      continue;
+    }
+
+    const lockupUntil = group.map((g) => g.lockupUntil).find((d) => Boolean(d && d > refDate));
+    if (rep.accountType === 'investimento' || Boolean(lockupUntil) || isAssetLinked) {
+      const balCents = rep.hasFiniteBalance ? Math.max(0, Math.round(rep.balance * 100)) : 0;
+      const trackedLocked = isAssetLinked ? 0 : balCents;
+      lockedAssetCents += trackedLocked;
+      accountItems.push({
+        canonicalAccountId: canonicalId,
+        sourceAccountIds,
+        bankName: rep.bankName,
+        accountType: rep.accountType,
+        holder: rep.holder,
+        status: 'excluded_locked',
+        includedInLiquidCash: false,
+        baseBalanceCents: null,
+        postAnchorDeltaCents: 0,
+        effectiveLiquidCents: null,
+        inTransitCents: 0,
+        lockedCents: trackedLocked,
+        exclusionReason: isAssetLinked
+          ? 'Ativo vinculado a meta/cofrinho (sem dupla contagem com saldo da conta).'
+          : lockupUntil
+          ? `Ativo em carência/bloqueio até ${lockupUntil}.`
+          : 'Conta de investimento fora do caixa líquido imediato.',
+      });
+      continue;
+    }
+
+    checkingAccountCount += 1;
+
+    if (ambiguousClusterKeys.has(canonicalId) || group.some((g) => g.verificationStatus === 'ambiguous_duplicate')) {
+      ambiguousCount += 1;
+      unverifiedReasons.push(`Conta "${rep.bankName}" com possível duplicidade pendente de vínculo canônico.`);
+      accountItems.push({
+        canonicalAccountId: canonicalId,
+        sourceAccountIds,
+        bankName: rep.bankName,
+        accountType: rep.accountType,
+        holder: rep.holder,
+        status: 'ambiguous_duplicate',
+        includedInLiquidCash: false,
+        baseBalanceCents: null,
+        postAnchorDeltaCents: 0,
+        effectiveLiquidCents: null,
+        inTransitCents: 0,
+        lockedCents: 0,
+        exclusionReason: 'Vínculo canônico pendente entre entradas espelhadas.',
+      });
+      continue;
+    }
+
+    // Find latest anchor matching canonicalId or any sourceAccountId
+    const matchingAnchors = anchors
+      .filter(
+        (a) =>
+          a.canonicalAccountId === canonicalId ||
+          a.accountId === canonicalId ||
+          sourceAccountIds.includes(a.accountId)
+      )
+      .sort((a, b) => {
+        const cmpDate = (b.date || '').localeCompare(a.date || '');
+        if (cmpDate !== 0) return cmpDate;
+        const cmpConf = (b.confirmedAt || '').localeCompare(a.confirmedAt || '');
+        if (cmpConf !== 0) return cmpConf;
+        return (b.revision ?? 0) - (a.revision ?? 0);
+      });
+    const latestAnchor = matchingAnchors[0];
+
+    // Check explicit unknown status
+    const explicitUnknown =
+      (latestAnchor && latestAnchor.balanceStatus === 'unknown') ||
+      (!latestAnchor && (rep.verificationStatus === 'unverified' || rep.status === 'error' || !rep.hasFiniteBalance));
+
+    if (explicitUnknown) {
+      unknownCheckingCount += 1;
+      unverifiedReasons.push(`Conta "${rep.bankName}" sem saldo confirmado ou com sincronização não verificada.`);
+      accountItems.push({
+        canonicalAccountId: canonicalId,
+        sourceAccountIds,
+        bankName: rep.bankName,
+        accountType: rep.accountType,
+        holder: rep.holder,
+        status: 'unknown',
+        includedInLiquidCash: false,
+        baseBalanceCents: null,
+        postAnchorDeltaCents: 0,
+        effectiveLiquidCents: null,
+        inTransitCents: 0,
+        lockedCents: 0,
+        anchorId: latestAnchor?.id,
+        anchorDate: latestAnchor?.date,
+        exclusionReason: 'Saldo marcado como desconhecido ou aguardando confirmação.',
+      });
+      continue;
+    }
+
+    let baseBalanceCents: number;
+    let postAnchorDeltaCents = 0;
+
+    if (latestAnchor && latestAnchor.balanceStatus === 'known') {
+      baseBalanceCents = latestAnchor.balanceCents;
+      const includedIds = new Set(latestAnchor.includedOperationIds || []);
+      const cutoffDate = latestAnchor.includedUntilDate || (latestAnchor.coverageType === 'cutoff_inclusive' ? latestAnchor.date : undefined);
+
+      for (const op of ops) {
+        if (op.state === 'reverted' || op.state === 'estornado') continue;
+        if (op.state === 'planned' || op.state === 'pending_settlement') continue;
+        if (op.settlementStatus === 'planned' || op.settlementStatus === 'pending_settlement') continue;
+        if (includedIds.has(op.id)) continue;
+        if (cutoffDate && op.date && op.date <= cutoffDate) continue;
+
+        if (op.type === 'GOAL_WITHDRAWAL' && (op.withdrawalChannel || 'asset_redemption') === 'asset_redemption') {
+          const dst = op.destinationAccountId;
+          if (dst && (dst === canonicalId || sourceAccountIds.includes(dst))) {
+            postAnchorDeltaCents += op.netAmountCents ?? op.amountCents;
+          }
+        } else if (op.type === 'GOAL_DEPOSIT' && op.sourceRef?.type === 'account') {
+          const srcId = op.sourceRef.id;
+          if (srcId && (srcId === canonicalId || sourceAccountIds.includes(srcId))) {
+            postAnchorDeltaCents -= op.amountCents;
+          }
+        }
+      }
+    } else {
+      baseBalanceCents = Math.round((rep.balance || 0) * 100);
+    }
+
+    const effectiveLiquidCents = baseBalanceCents + postAnchorDeltaCents;
+    knownAccountsCashCents += effectiveLiquidCents;
+
+    accountItems.push({
+      canonicalAccountId: canonicalId,
+      sourceAccountIds,
+      bankName: rep.bankName,
+      accountType: rep.accountType,
+      holder: rep.holder,
+      status: 'known',
+      includedInLiquidCash: true,
+      baseBalanceCents,
+      postAnchorDeltaCents,
+      effectiveLiquidCents,
+      inTransitCents: 0,
+      lockedCents: 0,
+      anchorId: latestAnchor?.id,
+      anchorDate: latestAnchor?.date,
+    });
+  }
+
+  // Pending redemptions in transit (planned / pending_settlement NEVER count as verified liquid cash)
+  let inTransitRedemptionCents = 0;
+  for (const op of ops) {
+    if (op.type !== 'GOAL_WITHDRAWAL') continue;
+    if (op.state === 'reverted' || op.state === 'estornado') continue;
+    const isPending =
+      op.state === 'planned' ||
+      op.state === 'pending_settlement' ||
+      op.settlementStatus === 'planned' ||
+      op.settlementStatus === 'pending_settlement';
+    if (!isPending) continue;
+    const opOwner =
+      op.scope === 'partner1' || op.scope === 'partner2'
+        ? op.scope
+        : op.authorizedBy === 'partner1' || op.authorizedBy === 'partner2'
+        ? op.authorizedBy
+        : 'both';
+    if (!isEntityInScope(opOwner, scope)) continue;
+    inTransitRedemptionCents += op.netAmountCents ?? op.amountCents;
+  }
+
+  // Liberated purpose balance reserved inside active goals/piggy banks
+  let liberatedPurposeCents = 0;
+  const seenGoalIds = new Set<string>();
+  const addGoalLiberated = (id: string, liberatedCents: number | undefined, agreement?: CoupleGoal['coupleAgreement'], p1C = 0, p2C = 0) => {
+    if (seenGoalIds.has(id)) return;
+    seenGoalIds.add(id);
+    const val = typeof liberatedCents === 'number' && Number.isFinite(liberatedCents) ? Math.max(0, Math.round(liberatedCents)) : 0;
+    if (val <= 0) return;
+    if (scope === 'casal') {
+      liberatedPurposeCents += val;
+    } else if (agreement) {
+      const pct = scope === 'partner1' ? agreement.partner1SharePct : agreement.partner2SharePct;
+      liberatedPurposeCents += Math.round((val * (pct || 0)) / 100);
+    } else if (p1C + p2C > 0) {
+      const partnerC = scope === 'partner1' ? p1C : p2C;
+      liberatedPurposeCents += Math.round((val * partnerC) / (p1C + p2C));
+    }
+  };
+  const cgMap = new Map((state.coupleGoals || []).map((g) => [g.id, g]));
+  (state.piggyBanks || []).forEach((p) => {
+    if (p.isDeleted) return;
+    const cg = cgMap.get(p.id);
+    addGoalLiberated(p.id, p.liberatedReservedCents ?? cg?.liberatedReservedCents, p.coupleAgreement || cg?.coupleAgreement, cg?.partner1Contribution, cg?.partner2Contribution);
+  });
+  (state.coupleGoals || []).forEach((g) => {
+    if (g.isDeleted) return;
+    addGoalLiberated(g.id, g.liberatedReservedCents, g.coupleAgreement, g.partner1Contribution, g.partner2Contribution);
+  });
+
+  if (checkingAccountCount === 0) {
+    unverifiedReasons.push('Nenhuma conta corrente com saldo confirmado vinculada neste escopo.');
+  }
+
+  const knownCheckingCount = checkingAccountCount - unknownCheckingCount - ambiguousCount;
+  let status: VerifiableCashSummary['status'];
+  if (checkingAccountCount === 0 || (knownCheckingCount === 0 && (unknownCheckingCount > 0 || ambiguousCount > 0))) {
+    status = 'unknown';
+  } else if (unknownCheckingCount > 0 || ambiguousCount > 0) {
+    status = 'partial';
+  } else {
+    status = 'known';
+  }
+
+  const isReliableGlobalCash = status === 'known';
+  const verifiedLiquidCashCents = isReliableGlobalCash ? knownAccountsCashCents : null;
+
+  return {
+    scope,
+    status,
+    isReliableGlobalCash,
+    verifiedLiquidCashCents,
+    verifiedLiquidCashR$: verifiedLiquidCashCents !== null ? verifiedLiquidCashCents / 100 : null,
+    knownAccountsCashCents,
+    inTransitRedemptionCents,
+    lockedAssetCents,
+    liberatedPurposeCents,
+    unverifiedReasons,
+    duplicateAccountAlerts,
+    accounts: accountItems,
+    referenceDate: refDate,
+  };
+}
+
+/**
+  * Computes total liquid operational cash balance from deduplicated known checking accounts
+  * (excludes credit cards, locked assets, and unconfirmed balances).
   */
 export function selectLiquidOperationalCash(
   state: AppState,
   scope: DomainScope = 'casal'
 ): number {
-  const linkedAccounts = state.linkedAccounts || [];
-  const pluggyAccounts = state.pluggyAccounts || [];
-
-  let baseBankBalance = 0;
-
-  linkedAccounts.forEach((acc) => {
-    if (isEntityInScope(acc.holder, scope)) {
-      baseBankBalance += acc.balance || 0;
-    }
-  });
-
-  pluggyAccounts.forEach((acc) => {
-    if (acc.status === 'connected' && acc.accountType === 'corrente') {
-      if (isEntityInScope(acc.owner, scope)) {
-        baseBankBalance += acc.balance || 0;
-      }
-    }
-  });
-
-  return roundMoney(baseBankBalance);
+  const summary = selectVerifiableCashSummary(state, scope);
+  return roundMoney(summary.knownAccountsCashCents / 100);
 }
 
 /**
@@ -275,7 +720,7 @@ export function selectAnnualYield(state: AppState): number {
   */
 export function selectEmergencyReserveMetrics(state: AppState, monthlyExpenses: number) {
   const currentAmount = state.protectionCurrentAmount || 0;
-  const totalInvested = state.protectionTotalInvested || 0;
+  const totalInvested = state.protectionTotalInvested ?? currentAmount;
   const yieldAccumulated = state.protectionYieldAccumulated ?? (currentAmount - totalInvested);
   const targetMonths = state.profile?.emergencyReserveMonthsTarget ?? 6;
   const targetAmount = roundMoney(monthlyExpenses * targetMonths);
@@ -323,6 +768,7 @@ export function selectPiggyAndGoalsMetrics(state: AppState) {
   let monthlyPlannedPace = 0;
 
   piggyBanks.forEach((pb) => {
+    if (pb.isDeleted) return;
     const cur = pb.currentAmount || 0;
     const inv = pb.totalInvested ?? cur;
     const yld = pb.yieldAccumulated ?? (cur - inv);
@@ -331,18 +777,23 @@ export function selectPiggyAndGoalsMetrics(state: AppState) {
     totalPiggyYield += yld;
     monthlyPlannedPace += pb.monthlyDeposit || 0;
 
-    if (pb.isFireEligible) {
+    if (pb.isFireEligible === true) {
       fireEligibleGoalsAmount += cur;
     }
   });
 
   coupleGoals.forEach((cg) => {
+    if (cg.isDeleted) return;
     const existsInPiggy = piggyBanks.some((pb) => pb.id === cg.id);
     if (!existsInPiggy) {
       const cur = cg.currentAmount || 0;
+      const inv = cg.totalInvested ?? cur;
+      const yld = cg.yieldAccumulated ?? (cur - inv);
       totalPiggyAmount += cur;
+      totalPiggyInvested += inv;
+      totalPiggyYield += yld;
       monthlyPlannedPace += cg.monthlyPlannedDeposit || 0;
-      if (cg.category === 'liberdade' || cg.category === 'reserva') {
+      if (cg.isFireEligible === true) {
         fireEligibleGoalsAmount += cur;
       }
     }
@@ -440,28 +891,86 @@ export function selectTotalProtectedAssets(
   freedom: number;
   goalsAndPiggyBanks: number;
   totalProtected: number;
+  unapportionedCoupleAssets: number;
 } {
   const protection = roundMoney(state.protectionCurrentAmount || 0);
   const freedom = selectFreedomMetrics(state).currentAmount;
   const goalsAndPiggyBanks = selectPiggyAndGoalsMetrics(state).totalPiggyAmount;
 
-  let protectionShare = protection;
-  let freedomShare = freedom;
-  let goalsShare = goalsAndPiggyBanks;
-
-  if (scope !== 'casal') {
-    protectionShare = roundMoney(protection / 2);
-    freedomShare = roundMoney(freedom / 2);
-    goalsShare = roundMoney(goalsAndPiggyBanks / 2);
+  if (scope === 'casal') {
+    const totalProtected = roundMoney(protection + freedom + goalsAndPiggyBanks);
+    return {
+      protection,
+      freedom,
+      goalsAndPiggyBanks,
+      totalProtected,
+      unapportionedCoupleAssets: 0,
+    };
   }
 
-  const totalProtected = roundMoney(protectionShare + freedomShare + goalsShare);
+  // Escopo individual (partner1 / partner2): NUNCA dividir 50/50 forçado sem acordo explícito ou titularidade registrada.
+  const piggyBanks = (state.piggyBanks || []).filter((pb) => !pb.isDeleted);
+  const coupleGoals = (state.coupleGoals || []).filter((cg) => !cg.isDeleted);
+  const coupleGoalById = new Map(coupleGoals.map((g) => [g.id, g]));
+  const seenGoalIds = new Set<string>();
+
+  let goalsShare = 0;
+  let unapportionedCoupleAssets = protection + freedom;
+
+  const attributeGoal = (
+    id: string,
+    cur: number,
+    agreement?: CoupleGoal['coupleAgreement'],
+    p1Contrib: number = 0,
+    p2Contrib: number = 0
+  ) => {
+    if (seenGoalIds.has(id)) return;
+    seenGoalIds.add(id);
+    if (agreement) {
+      const pct = scope === 'partner1' ? agreement.partner1SharePct : agreement.partner2SharePct;
+      goalsShare += roundMoney((cur * (pct || 0)) / 100);
+      return;
+    }
+    const sumContrib = (p1Contrib || 0) + (p2Contrib || 0);
+    if (sumContrib > 0) {
+      const partnerContrib = scope === 'partner1' ? p1Contrib || 0 : p2Contrib || 0;
+      goalsShare += roundMoney((cur * partnerContrib) / sumContrib);
+      return;
+    }
+    // Sem acordo ou contribuição individual: permanece como ativo conjunto não rateado arbitrariamente
+    unapportionedCoupleAssets += cur;
+  };
+
+  piggyBanks.forEach((pb) => {
+    const cg = coupleGoalById.get(pb.id);
+    attributeGoal(
+      pb.id,
+      pb.currentAmount || 0,
+      pb.coupleAgreement || cg?.coupleAgreement,
+      cg?.partner1Contribution || 0,
+      cg?.partner2Contribution || 0
+    );
+  });
+
+  coupleGoals.forEach((cg) => {
+    attributeGoal(
+      cg.id,
+      cg.currentAmount || 0,
+      cg.coupleAgreement,
+      cg.partner1Contribution || 0,
+      cg.partner2Contribution || 0
+    );
+  });
+
+  const roundedGoalsShare = roundMoney(goalsShare);
+  const totalProtected = roundMoney(roundedGoalsShare);
 
   return {
-    protection: protectionShare,
-    freedom: freedomShare,
-    goalsAndPiggyBanks: goalsShare,
+    protection: 0,
+    freedom: 0,
+    goalsAndPiggyBanks: roundedGoalsShare,
     totalProtected,
+    unapportionedCoupleAssets: roundMoney(unapportionedCoupleAssets),
   };
 }
 
@@ -1781,7 +2290,7 @@ export function selectGoalBalanceBreakdown(
     const opCents = readOperationAmountCents(op);
     if (op.sourceRef?.id === goal.id && op.type === 'GOAL_DIRECT_PURCHASE') {
       opsUtilizedCents += opCents;
-    } else if (op.sourceRef?.id === goal.id && op.type === 'CATEGORY_REINFORCEMENT') {
+    } else if (op.sourceRef?.id === goal.id && op.type === 'CATEGORY_REINFORCEMENT' && !op.sourceOperationId) {
       opsCommittedCents += opCents;
     }
   }
@@ -1900,11 +2409,205 @@ function mapToCanonicalMatrixCategory(rawCat?: string): CategoryKey {
   return CANONICAL_CATEGORY_ALIAS_MAP[rawCat] || 'moradia';
 }
 
+function resolveReinforcementSourceLabel(
+  state: AppState,
+  op: FinancialOperationRecord
+): string {
+  const ref = op.sourceRef;
+  if (!ref) return 'Origem patrimonial';
+  if (ref.name && ref.name.trim()) return ref.name;
+  if (ref.type === 'protection' || ref.type === 'reserve') return 'Proteção (Reserva)';
+  if (ref.type === 'freedom') return 'Liberdade Financeira';
+  if (ref.type === 'piggy_bank') {
+    return (
+      state.piggyBanks?.find((p) => p.id === ref.id)?.name ||
+      state.coupleGoals?.find((g) => g.id === ref.id)?.title ||
+      ref.id
+    );
+  }
+  return ref.id || 'Meta / Cofrinho';
+}
+
+function apportionOperationCentsForScope(
+  amountCents: number,
+  scope: DomainScope,
+  opScopeRaw?: string,
+  authorizedBy?: string
+): number {
+  if (amountCents <= 0) return 0;
+  if (scope === 'casal') return amountCents;
+  const opScope =
+    opScopeRaw === 'partner1' || opScopeRaw === 'partner2'
+      ? opScopeRaw
+      : authorizedBy === 'partner1' || authorizedBy === 'partner2'
+      ? authorizedBy
+      : 'couple';
+  if (opScope === scope) return amountCents;
+  if (opScope === 'couple') {
+    const split = apportionCentsByScope(amountCents, scope, 'both');
+    return split.scopedCents;
+  }
+  return 0;
+}
+
 /**
- * 28C & 29B: Seletor unificado para as Duas Visões Reconciliadas do Orçamento (Categorias vs Estrutura).
- * Reconcilia Plano Aprovado por Competência, Ocorrências Compartilhadas (coupleFixedBills + fixedBillAlerts),
- * Fatias Classificadas (splits em centavos exatos), Natureza Desconhecida (pendente sem inventar variável),
- * Teto Zero Explícito vs Ausência de Teto, Rateio Individual sem metade arbitrária e Aportes.
+ * 26C: Seletor canônico de reforços temporários (CATEGORY_REINFORCEMENT) e realocações (CATEGORY_REALLOCATION)
+ * por competência YYYY-MM e escopo, mantendo proveniência somente no registro de reforço e sem vazamento entre meses.
+ */
+export function selectCategoryReinforcementSummary(
+  state: AppState,
+  scope: DomainScope = 'casal',
+  monthKey?: string
+): CategoryReinforcementSummary {
+  const currentMonthKey = monthKey || state.currentMonth || '2026-11';
+  const reinforcementCents: Record<CategoryKey, number> = {
+    moradia: 0, transporte: 0, comida: 0, lazer: 0, protecao: 0, profissional: 0,
+  };
+  const reallocInCents: Record<CategoryKey, number> = {
+    moradia: 0, transporte: 0, comida: 0, lazer: 0, protecao: 0, profissional: 0,
+  };
+  const reallocOutCents: Record<CategoryKey, number> = {
+    moradia: 0, transporte: 0, comida: 0, lazer: 0, protecao: 0, profissional: 0,
+  };
+  const netReallocCents: Record<CategoryKey, number> = {
+    moradia: 0, transporte: 0, comida: 0, lazer: 0, protecao: 0, profissional: 0,
+  };
+  const sourcesByCategory: Record<CategoryKey, ReinforcementProvenanceRef[]> = {
+    moradia: [], transporte: [], comida: [], lazer: [], protecao: [], profissional: [],
+  };
+  const allSources: ReinforcementProvenanceRef[] = [];
+
+  const ops = state.financialOperations || [];
+  const opById = new Map(ops.map((o) => [o.id, o]));
+
+  for (const op of ops) {
+    if (!op) continue;
+    if (
+      op.state === 'reverted' ||
+      op.state === 'estornado' ||
+      op.state === 'planned' ||
+      op.state === 'pending_settlement' ||
+      op.settlementStatus === 'planned' ||
+      op.settlementStatus === 'pending_settlement'
+    ) {
+      continue;
+    }
+
+    const opComp = op.competence || (op.date ? op.date.slice(0, 7) : '');
+    if (opComp !== currentMonthKey) continue;
+
+    const rawCents = readOperationAmountCents(op);
+    const scopedCents = apportionOperationCentsForScope(rawCents, scope, op.scope, op.authorizedBy);
+    if (scopedCents <= 0) continue;
+
+    if (op.type === 'CATEGORY_REINFORCEMENT') {
+      if (op.targetRef?.type !== 'category' || !op.targetRef.id) continue;
+      const cat = mapToCanonicalMatrixCategory(op.targetRef.id);
+      reinforcementCents[cat] += scopedCents;
+
+      const linkedWithdrawal = op.sourceOperationId ? opById.get(op.sourceOperationId) : undefined;
+      const isReconciled = Boolean(
+        op.state === 'reconciled' ||
+          op.reconciliationRef ||
+          op.bankTransactionId ||
+          linkedWithdrawal?.state === 'reconciled' ||
+          linkedWithdrawal?.reconciliationRef ||
+          linkedWithdrawal?.bankTransactionId
+      );
+      const evidenceType: ReinforcementProvenanceRef['evidenceType'] = isReconciled
+        ? 'bank_reconciled'
+        : op.sourceOperationId
+        ? 'manual_declared'
+        : 'virtual_earmark';
+
+      const provenance: ReinforcementProvenanceRef = {
+        operationId: op.id,
+        sourceType: op.sourceRef?.type || 'piggy_bank',
+        sourceId: op.sourceRef?.id || '',
+        sourceName: resolveReinforcementSourceLabel(state, op),
+        sourceOperationId: op.sourceOperationId,
+        competence: opComp,
+        category: cat,
+        amountCents: scopedCents,
+        amountR$: roundMoney(scopedCents / 100),
+        date: op.date,
+        state: op.state,
+        isReconciled,
+        evidenceType,
+        notes: op.notes,
+        reconciliationRef: op.reconciliationRef || linkedWithdrawal?.reconciliationRef,
+        bankTransactionId: op.bankTransactionId || linkedWithdrawal?.bankTransactionId,
+      };
+      sourcesByCategory[cat].push(provenance);
+      allSources.push(provenance);
+    } else if (op.type === 'CATEGORY_REALLOCATION') {
+      if (
+        op.sourceRef?.type !== 'category' ||
+        !op.sourceRef.id ||
+        op.targetRef?.type !== 'category' ||
+        !op.targetRef.id
+      ) {
+        continue;
+      }
+      const fromCat = mapToCanonicalMatrixCategory(op.sourceRef.id);
+      const toCat = mapToCanonicalMatrixCategory(op.targetRef.id);
+      if (fromCat === toCat) continue;
+      reallocOutCents[fromCat] += scopedCents;
+      reallocInCents[toCat] += scopedCents;
+      netReallocCents[fromCat] -= scopedCents;
+      netReallocCents[toCat] += scopedCents;
+    }
+  }
+
+  // Legacy temporary budget adjustments (casal scope)
+  if (scope === 'casal') {
+    for (const [adjId, adj] of Object.entries(state.temporaryBudgetAdjustments || {})) {
+      if (!adj || !adj.expiresAt || adj.expiresAt.slice(0, 7) !== currentMonthKey) continue;
+      const cents = toSafeCents(adj.amount);
+      if (cents <= 0) continue;
+      const cat = mapToCanonicalMatrixCategory(adj.category);
+      reinforcementCents[cat] += cents;
+      const provenance: ReinforcementProvenanceRef = {
+        operationId: `legacy-adj-${adjId}`,
+        sourceType: 'reserve',
+        sourceId: adjId,
+        sourceName: 'Reforço temporário da competência',
+        competence: currentMonthKey,
+        category: cat,
+        amountCents: cents,
+        amountR$: roundMoney(cents / 100),
+        date: adj.expiresAt,
+        state: 'occurred_manual',
+        isReconciled: false,
+        evidenceType: 'legacy_adjustment',
+      };
+      sourcesByCategory[cat].push(provenance);
+      allSources.push(provenance);
+    }
+  }
+
+  const totalReinforcementCents = Object.values(reinforcementCents).reduce((s, v) => s + v, 0);
+  const totalNetReallocCents = Object.values(netReallocCents).reduce((s, v) => s + v, 0);
+
+  return {
+    competence: currentMonthKey,
+    scope,
+    reinforcementCents,
+    reallocInCents,
+    reallocOutCents,
+    netReallocCents,
+    sourcesByCategory,
+    allSources,
+    totalReinforcementCents,
+    totalNetReallocCents,
+  };
+}
+
+/**
+ * 28C & 29B & 26C: Seletor unificado para as Duas Visões Reconciliadas do Orçamento (Categorias vs Estrutura).
+ * Fórmula de envelope por categoria e competência:
+ * orçamento efetivo = base habitual habilitada + reforços confirmados + realocações recebidas - realocações enviadas.
+ * Preserva meta habitual, % base, saldo nominal com sinal e caixa verificável sem alterar renda ou naturezas.
  */
 export function selectReconciledBudgetMatrix(
   state: AppState,
@@ -1914,6 +2617,8 @@ export function selectReconciledBudgetMatrix(
   const currentMonthKey = monthKey || state.currentMonth || '2026-11';
   const plannedNetIncome = selectPlannedNetIncome(state, scope, currentMonthKey);
   const receivedEligibleNetIncome = selectEligibleNetIncomeReceived(state, scope, currentMonthKey);
+  const reinforcementSummary = selectCategoryReinforcementSummary(state, scope, currentMonthKey);
+  const cashSummary = selectVerifiableCashSummary(state, scope);
 
   const plan = selectEffectiveBudgetPlanForCompetence(state, currentMonthKey).plan;
   let fixedPct = plan?.macroGroups?.fixos?.percentage ?? 60;
@@ -1989,13 +2694,6 @@ export function selectReconciledBudgetMatrix(
     return ceilingVal > 0 ? 'explicit_positive' : 'explicit_zero';
   };
 
-  const overallCeilingState: CeilingState = resolveCeilingState(
-    hasExplicitCeiling,
-    roundMoney(fixedBudget + varBudget)
-  );
-  const fixedCeilingState: CeilingState = resolveCeilingState(hasExplicitCeiling, fixedBudget);
-  const varCeilingState: CeilingState = resolveCeilingState(hasExplicitCeiling, varBudget);
-
   const catFixedCents: Record<CategoryKey, number> = {
     moradia: 0, transporte: 0, comida: 0, lazer: 0, protecao: 0, profissional: 0,
   };
@@ -2042,7 +2740,6 @@ export function selectReconciledBudgetMatrix(
   for (const exp of expenses) {
     if (!exp) continue;
     if (exp.splitParentId && parentIdsWithSplits.has(exp.splitParentId)) continue;
-    // Se vinculada a conta fixa cadastrada ou parcela, já foi reconciliada nas projeções dedicadas sem duplicar
     if (exp.linkedBillId && canonicalBillIds.has(exp.linkedBillId)) continue;
     if (exp.installmentId) continue;
 
@@ -2054,7 +2751,6 @@ export function selectReconciledBudgetMatrix(
     for (const slice of slices) {
       if (slice.competenceMonth !== currentMonthKey) continue;
       if (slice.isExcludedFromMonthlyBudget || slice.fundingSource !== 'month_budget') continue;
-      // Fatia direta de natureza fixa confiável já entrou em projectSharedFixedOccurrences
       if (slice.hasReliableNature && slice.resolvedNature === 'fixa') continue;
 
       const split = apportionCentsByScope(
@@ -2085,7 +2781,7 @@ export function selectReconciledBudgetMatrix(
     scope
   );
   for (const instOcc of instOccurrences) {
-    if (instOcc.isFixedNature) continue; // já incluída em fixedOccurrences
+    if (instOcc.isFixedNature) continue;
     if (instOcc.isExcludedFromMonthlyBudget) continue;
     const cat = mapToCanonicalMatrixCategory(instOcc.category);
     if (instOcc.status === 'paid' || instOcc.status === 'advanced') {
@@ -2104,7 +2800,7 @@ export function selectReconciledBudgetMatrix(
     transporte: { name: 'Transporte & Mobilidade', emoji: '🚗' },
   };
 
-  // 4. Cálculo das Linhas por Categoria
+  // 4. Cálculo das Linhas por Categoria com fórmula unificada 26C
   const categoryKeys: CategoryKey[] = [
     'moradia',
     'transporte',
@@ -2123,56 +2819,93 @@ export function selectReconciledBudgetMatrix(
   };
 
   let totalAllocatedVarCatBudget = 0;
+  let fixosReinforcementCents = 0;
+  let fixosReallocNetCents = 0;
+  let variaveisReinforcementCents = 0;
+  let variaveisReallocNetCents = 0;
+  const reinforcementsByCategory: Record<CategoryKey, number> = {
+    moradia: 0, transporte: 0, comida: 0, lazer: 0, protecao: 0, profissional: 0,
+  };
+
   const categories: ReconciledCategoryRow[] = categoryKeys.map((key) => {
     const catInfo = CATEGORY_NAMES_MAP[key] || { name: key, emoji: '🏷️' };
     const pct = categoryPercentages[key] ?? 0;
 
-    let plannedBudget = 0;
+    let basePlannedBudget = 0;
     if (hasExplicitCeiling) {
       if (scope === 'casal' && plan?.categoryAmountsR$?.[key] !== undefined) {
-        plannedBudget = roundMoney(plan.categoryAmountsR$[key]);
+        basePlannedBudget = roundMoney(plan.categoryAmountsR$[key]);
       } else if (
         scope !== 'casal' &&
         plan?.partnerCeilings?.[scope]?.categoryAmountsR$?.[key] !== undefined
       ) {
-        plannedBudget = roundMoney(plan.partnerCeilings[scope]!.categoryAmountsR$![key]!);
+        basePlannedBudget = roundMoney(plan.partnerCeilings[scope]!.categoryAmountsR$![key]!);
       } else {
-        plannedBudget = roundMoney((plannedNetIncome * pct) / 100);
+        basePlannedBudget = roundMoney((plannedNetIncome * pct) / 100);
       }
     }
 
-    const catCeilingState = resolveCeilingState(hasExplicitCeiling, plannedBudget);
+    const reinfCents = reinforcementSummary.reinforcementCents[key] || 0;
+    const reallocNetCents = reinforcementSummary.netReallocCents[key] || 0;
+    const reinforcementAmount = roundMoney(reinfCents / 100);
+    const reallocationNetAmount = roundMoney(reallocNetCents / 100);
+    reinforcementsByCategory[key] = reinforcementAmount;
+
+    const groupForCat =
+      plan?.categoryGroupMapping?.[key] || (key === 'moradia' || key === 'protecao' ? 'fixos' : 'variaveis');
+    if (groupForCat === 'fixos') {
+      fixosReinforcementCents += reinfCents;
+      fixosReallocNetCents += reallocNetCents;
+    } else {
+      variaveisReinforcementCents += reinfCents;
+      variaveisReallocNetCents += reallocNetCents;
+    }
+
+    const baseCents = Math.round(basePlannedBudget * 100);
+    const effectiveBudgetCents = baseCents + reinfCents + reallocNetCents;
+    const effectiveBudget = roundMoney(effectiveBudgetCents / 100);
+    const catHasCeiling = hasExplicitCeiling || reinfCents > 0 || reallocNetCents !== 0;
+
+    const catCeilingState = resolveCeilingState(catHasCeiling, effectiveBudget);
+    const realizedCents = catFixedCents[key] + catVarCents[key] + catUnclassifiedCents[key];
+    const pendingCents = catPendingFixedCents[key] + catPendingVarCents[key];
+    const projectedCents = realizedCents + pendingCents;
+
     const fixedSpent = roundMoney(catFixedCents[key] / 100);
     const variableSpent = roundMoney(catVarCents[key] / 100);
     const unclassifiedSpent = roundMoney(catUnclassifiedCents[key] / 100);
-    const realizedLiquid = roundMoney(
-      (catFixedCents[key] + catVarCents[key] + catUnclassifiedCents[key]) / 100
-    );
-    const pendingCommitments = roundMoney(
-      (catPendingFixedCents[key] + catPendingVarCents[key]) / 100
-    );
-    const projectedTotal = roundMoney(realizedLiquid + pendingCommitments);
-    const signedMargin = roundMoney(plannedBudget - projectedTotal);
-    const isOverCeiling = hasExplicitCeiling && projectedTotal > plannedBudget;
-    const overAmount = isOverCeiling ? roundMoney(projectedTotal - plannedBudget) : 0;
+    const realizedLiquid = roundMoney(realizedCents / 100);
+    const pendingCommitments = roundMoney(pendingCents / 100);
+    const projectedTotal = roundMoney(projectedCents / 100);
+    const signedMargin = roundMoney((effectiveBudgetCents - projectedCents) / 100);
+    const isOverCeiling = catHasCeiling && projectedCents > effectiveBudgetCents;
+    const overAmount = isOverCeiling ? roundMoney((projectedCents - effectiveBudgetCents) / 100) : 0;
     const percentageUsed =
-      !hasExplicitCeiling
+      !catHasCeiling
         ? 0
-        : plannedBudget > 0
-        ? Math.min(100, Math.round((projectedTotal / plannedBudget) * 100))
-        : projectedTotal > 0
+        : effectiveBudgetCents > 0
+        ? Math.min(100, Math.round((projectedCents / effectiveBudgetCents) * 100))
+        : projectedCents > 0
         ? 100
         : 0;
 
     if (key !== 'moradia' && key !== 'protecao') {
-      totalAllocatedVarCatBudget += plannedBudget;
+      totalAllocatedVarCatBudget += effectiveBudget;
     }
 
     return {
       key,
       name: catInfo.name,
       emoji: catInfo.emoji,
-      plannedBudget,
+      plannedBudget: effectiveBudget,
+      basePlannedBudget,
+      basePercentage: pct,
+      reinforcementAmount,
+      reallocationNetAmount,
+      effectiveBudget,
+      hasTemporaryReinforcement: reinfCents > 0,
+      reinforcementSources: reinforcementSummary.sourcesByCategory[key],
+      verifiableCashStatus: cashSummary.status,
       fixedSpent,
       variableSpent,
       unclassifiedSpent,
@@ -2183,7 +2916,7 @@ export function selectReconciledBudgetMatrix(
       isOverCeiling,
       overAmount,
       percentageUsed,
-      hasExplicitCeiling,
+      hasExplicitCeiling: catHasCeiling,
       ceilingState: catCeilingState,
     };
   });
@@ -2201,28 +2934,40 @@ export function selectReconciledBudgetMatrix(
   const fixedPendingTotal = roundMoney(totalPendingFixedCents / 100);
   const varPendingTotal = roundMoney(totalPendingVarCents / 100);
 
-  const fixedProjectedTotal = roundMoney((totalFixedRealizedCents + totalPendingFixedCents) / 100);
-  const varProjectedTotal = roundMoney((totalVarRealizedCents + totalPendingVarCents) / 100);
+  const fixedProjectedCents = totalFixedRealizedCents + totalPendingFixedCents;
+  const varProjectedCents = totalVarRealizedCents + totalPendingVarCents;
+  const fixedProjectedTotal = roundMoney(fixedProjectedCents / 100);
+  const varProjectedTotal = roundMoney(varProjectedCents / 100);
+
+  const fixedBaseCents = Math.round(fixedBudget * 100);
+  const fixedEffectiveCents = fixedBaseCents + fixosReinforcementCents + fixosReallocNetCents;
+  const fixedEffectiveBudget = roundMoney(fixedEffectiveCents / 100);
+  const fixosHasCeiling = hasExplicitCeiling || fixosReinforcementCents > 0;
+  const fixedCeilingState = resolveCeilingState(fixosHasCeiling, fixedEffectiveBudget);
 
   const fixosBlock: ReconciledStructureBlock = {
     key: 'fixos',
     title: 'Despesas Fixas & Compromissos',
     plannedBudget: fixedBudget,
+    basePlannedBudget: fixedBudget,
+    reinforcementAmount: roundMoney(fixosReinforcementCents / 100),
+    reallocationNetAmount: roundMoney(fixosReallocNetCents / 100),
+    effectiveBudget: fixedEffectiveBudget,
     realizedLiquid: totalFixedSpent,
     pendingCommitments: fixedPendingTotal,
     projectedTotal: fixedProjectedTotal,
-    signedMargin: roundMoney(fixedBudget - fixedProjectedTotal),
-    isOverCeiling: hasExplicitCeiling && fixedProjectedTotal > fixedBudget,
-    overAmount: hasExplicitCeiling ? Math.max(0, roundMoney(fixedProjectedTotal - fixedBudget)) : 0,
+    signedMargin: roundMoney((fixedEffectiveCents - fixedProjectedCents) / 100),
+    isOverCeiling: fixosHasCeiling && fixedProjectedCents > fixedEffectiveCents,
+    overAmount: fixosHasCeiling ? Math.max(0, roundMoney((fixedProjectedCents - fixedEffectiveCents) / 100)) : 0,
     percentageUsed:
-      !hasExplicitCeiling
+      !fixosHasCeiling
         ? 0
-        : fixedBudget > 0
-        ? Math.min(100, Math.round((fixedProjectedTotal / fixedBudget) * 100))
-        : fixedProjectedTotal > 0
+        : fixedEffectiveCents > 0
+        ? Math.min(100, Math.round((fixedProjectedCents / fixedEffectiveCents) * 100))
+        : fixedProjectedCents > 0
         ? 100
         : 0,
-    hasExplicitCeiling,
+    hasExplicitCeiling: fixosHasCeiling,
     ceilingState: fixedCeilingState,
     denominatorLabel:
       fixedCeilingState === 'absent'
@@ -2232,31 +2977,41 @@ export function selectReconciledBudgetMatrix(
         : `Teto fixo aprovado (${fixedPct}%)`,
   };
 
+  const varBaseCents = Math.round(varBudget * 100);
+  const varEffectiveCents = varBaseCents + variaveisReinforcementCents + variaveisReallocNetCents;
+  const varEffectiveBudget = roundMoney(varEffectiveCents / 100);
+  const varHasCeiling = hasExplicitCeiling || variaveisReinforcementCents > 0;
+  const varCeilingState = resolveCeilingState(varHasCeiling, varEffectiveBudget);
+
   const unallocatedVariableMargin = Math.max(
     0,
-    roundMoney(varBudget - totalAllocatedVarCatBudget)
+    roundMoney(varEffectiveBudget - totalAllocatedVarCatBudget)
   );
 
   const variaveisBlock: ReconciledStructureBlock = {
     key: 'variaveis',
     title: 'Gastos Variáveis & Rotina',
     plannedBudget: varBudget,
+    basePlannedBudget: varBudget,
+    reinforcementAmount: roundMoney(variaveisReinforcementCents / 100),
+    reallocationNetAmount: roundMoney(variaveisReallocNetCents / 100),
+    effectiveBudget: varEffectiveBudget,
     realizedLiquid: totalVarSpent,
     pendingCommitments: varPendingTotal,
     projectedTotal: varProjectedTotal,
-    signedMargin: roundMoney(varBudget - varProjectedTotal),
+    signedMargin: roundMoney((varEffectiveCents - varProjectedCents) / 100),
     unallocatedVariableMargin,
-    isOverCeiling: hasExplicitCeiling && varProjectedTotal > varBudget,
-    overAmount: hasExplicitCeiling ? Math.max(0, roundMoney(varProjectedTotal - varBudget)) : 0,
+    isOverCeiling: varHasCeiling && varProjectedCents > varEffectiveCents,
+    overAmount: varHasCeiling ? Math.max(0, roundMoney((varProjectedCents - varEffectiveCents) / 100)) : 0,
     percentageUsed:
-      !hasExplicitCeiling
+      !varHasCeiling
         ? 0
-        : varBudget > 0
-        ? Math.min(100, Math.round((varProjectedTotal / varBudget) * 100))
-        : varProjectedTotal > 0
+        : varEffectiveCents > 0
+        ? Math.min(100, Math.round((varProjectedCents / varEffectiveCents) * 100))
+        : varProjectedCents > 0
         ? 100
         : 0,
-    hasExplicitCeiling,
+    hasExplicitCeiling: varHasCeiling,
     ceilingState: varCeilingState,
     denominatorLabel:
       varCeilingState === 'absent'
@@ -2339,7 +3094,11 @@ export function selectReconciledBudgetMatrix(
     };
   }
 
-  const totalPlannedBudget = roundMoney(fixedBudget + varBudget);
+  const totalBasePlannedBudget = roundMoney(fixedBudget + varBudget);
+  const totalReinforcementAmount = roundMoney(reinforcementSummary.totalReinforcementCents / 100);
+  const totalReallocationNetAmount = roundMoney(reinforcementSummary.totalNetReallocCents / 100);
+  const totalEffectiveBudget = roundMoney(totalBasePlannedBudget + totalReinforcementAmount + totalReallocationNetAmount);
+  const totalPlannedBudget = totalEffectiveBudget;
   const totalRealizedLiquid = roundMoney(
     (totalFixedRealizedCents + totalVarRealizedCents + totalUnclassifiedCents) / 100
   );
@@ -2347,7 +3106,9 @@ export function selectReconciledBudgetMatrix(
     (totalPendingFixedCents + totalPendingVarCents) / 100
   );
   const totalProjectedConsumption = roundMoney(totalRealizedLiquid + totalPendingCommitments);
-  const totalSignedMargin = roundMoney(totalPlannedBudget - totalProjectedConsumption);
+  const totalSignedMargin = roundMoney(totalEffectiveBudget - totalProjectedConsumption);
+  const overallHasCeiling = hasExplicitCeiling || totalReinforcementAmount > 0;
+  const overallCeilingState: CeilingState = resolveCeilingState(overallHasCeiling, totalEffectiveBudget);
 
   return {
     competence: currentMonthKey,
@@ -2355,19 +3116,25 @@ export function selectReconciledBudgetMatrix(
     plannedNetIncome,
     receivedEligibleNetIncome,
     policyRatios: { fixedPct, varPct, investPct },
-    hasExplicitCeiling,
+    hasExplicitCeiling: overallHasCeiling,
     ceilingState: overallCeilingState,
+    verifiableCashStatus: cashSummary.status,
     structureBlocks: {
       fixos: fixosBlock,
       variaveis: variaveisBlock,
       investimentos: investimentosBlock,
     },
     categories,
+    totalBasePlannedBudget,
+    totalReinforcementAmount,
+    totalEffectiveBudget,
     totalPlannedBudget,
     totalRealizedLiquid,
     totalPendingCommitments,
     totalProjectedConsumption,
     totalSignedMargin,
+    reinforcementsByCategory,
+    allReinforcementSources: reinforcementSummary.allSources,
     unclassifiedSpent: totalUnclassifiedSpent,
     unclassifiedCents: totalUnclassifiedCents,
     pendingClassificationCount,
@@ -2379,4 +3146,5 @@ export function selectReconciledBudgetMatrix(
     unassignedVariableMarginCents: Math.round(unallocatedVariableMargin * 100),
   };
 }
+
 

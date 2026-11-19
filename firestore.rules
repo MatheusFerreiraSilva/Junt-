@@ -18,10 +18,40 @@ service cloud.firestore {
         && (!(field in ['expenses', 'incomes', 'bankImportedTransactions', 'financialOperations']) ||
           ((!('amount' in record) || (record.amount is number && record.amount >= 0 && record.amount <= 90071992547409))
             && (!('amountCents' in record) || (record.amountCents is int && record.amountCents <= 9007199254740991 && ((field == 'financialOperations' && record.amountCents > 0) || (field != 'financialOperations' && record.amountCents >= 0))))
-            && (!('amountR$' in record) || (record['amountR$'] is number && record['amountR$'] >= 0 && record['amountR$'] <= 90071992547409))))
+            && (!('amountR$' in record) || (record['amountR$'] is number && record['amountR$'] >= 0 && record['amountR$'] <= 90071992547409))
+            && (!('signedDeltaCents' in record) || (record.signedDeltaCents is int && record.signedDeltaCents >= -9007199254740991 && record.signedDeltaCents <= 9007199254740991))
+            && (!('costBasisCents' in record) || (record.costBasisCents is int && record.costBasisCents >= 0 && record.costBasisCents <= 9007199254740991))
+            && (!('postCostBasisCents' in record) || (record.postCostBasisCents is int && record.postCostBasisCents >= 0 && record.postCostBasisCents <= 9007199254740991))
+            && (!('postValuationCents' in record) || (record.postValuationCents is int && record.postValuationCents >= 0 && record.postValuationCents <= 9007199254740991))
+            && (!('grossAmountCents' in record) || (record.grossAmountCents is int && record.grossAmountCents >= 0 && record.grossAmountCents <= 9007199254740991))
+            && (!('netAmountCents' in record) || (record.netAmountCents is int && record.netAmountCents >= 0 && record.netAmountCents <= 9007199254740991))
+            && (!('differenceToReviewCents' in record) || (record.differenceToReviewCents is int && record.differenceToReviewCents >= 0 && record.differenceToReviewCents <= 9007199254740991))
+            && (!('principalCents' in record) || (record.principalCents is int && record.principalCents >= 0 && record.principalCents <= 9007199254740991))
+            && (!('interestCents' in record) || (record.interestCents is int && record.interestCents >= 0 && record.interestCents <= 9007199254740991))
+            && (!('taxCents' in record) || (record.taxCents is int && record.taxCents >= 0 && record.taxCents <= 9007199254740991))
+            && (!('feeCents' in record) || (record.feeCents is int && record.feeCents >= 0 && record.feeCents <= 9007199254740991))
+            && (!('planningDivergenceCents' in record) || (record.planningDivergenceCents is int && record.planningDivergenceCents >= 0 && record.planningDivergenceCents <= 9007199254740991))
+            && (field != 'financialOperations' || (
+              (!('competence' in record) || (record.competence is string && record.competence.matches('^[0-9]{4}-[0-9]{2}$')))
+              && (!(record.type in ['CATEGORY_REINFORCEMENT', 'CATEGORY_REALLOCATION']) || (
+                record.targetRef is map && record.targetRef.type == 'category'
+                && record.targetRef.id in ['moradia', 'transporte', 'comida', 'lazer', 'protecao', 'profissional']
+              ))
+              && (record.type != 'CATEGORY_REALLOCATION' || (
+                record.sourceRef is map && record.sourceRef.type == 'category'
+                && record.sourceRef.id in ['moradia', 'transporte', 'comida', 'lazer', 'protecao', 'profissional']
+                && record.sourceRef.id != record.targetRef.id
+              ))
+            ))))
         && (!(field in ['piggyBanks', 'coupleGoals']) ||
           ((!('currentAmount' in record) || (record.currentAmount is number && record.currentAmount >= 0 && record.currentAmount <= 90071992547409))
-            && (!('availableCents' in record) || (record.availableCents is int && record.availableCents >= 0 && record.availableCents <= 9007199254740991))))
+            && (!('availableCents' in record) || (record.availableCents is int && record.availableCents >= 0 && record.availableCents <= 9007199254740991))
+            && (!('liberatedReservedCents' in record) || (record.liberatedReservedCents is int && record.liberatedReservedCents >= 0 && record.liberatedReservedCents <= 9007199254740991))
+            && (!('uncoveredDivergenceCents' in record) || (record.uncoveredDivergenceCents is int && record.uncoveredDivergenceCents >= 0 && record.uncoveredDivergenceCents <= 9007199254740991))))
+        && (field != 'cashBalanceAnchors' ||
+          ((!('balanceCents' in record) || (record.balanceCents is int && record.balanceCents >= -9007199254740991 && record.balanceCents <= 9007199254740991))
+            && (!('accountId' in record) || (record.accountId is string && record.accountId.size() > 0 && record.accountId.size() <= 256))
+            && (!('balanceStatus' in record) || record.balanceStatus in ['known', 'unknown'])))
         && (!('scope' in record) || record.scope in ['partner1', 'partner2', 'couple', 'casal'])
         && (!('paidBy' in record) || record.paidBy in ['partner1', 'partner2', 'both', 'custom'])
         && (!('recipient' in record) || record.recipient in ['partner1', 'partner2', 'both', 'custom']);
@@ -29,18 +59,21 @@ service cloud.firestore {
     function validEntity(data) {
       return data.keys().hasOnly(['field', 'record', 'deleted', 'schemaVersion'])
         && data.keys().hasAll(['field', 'record', 'deleted', 'schemaVersion'])
-        && data.field in ['expenses', 'incomes', 'installments', 'piggyBanks', 'strategicIntents', 'medicalShifts', 'shiftIncomeAllocations', 'bankImportedTransactions', 'medicalShiftPresets', 'hospitalMappingRules', 'incomeSourceRules', 'pendingConfirmations', 'linkedAccounts', 'detectedSubscriptions', 'keywordRules', 'coupleGoals', 'coupleWishlist', 'coupleFixedBills', 'dreamSimulations', 'pluggyAccounts', 'monthlyBudgetPlans', 'financialOperations']
+        && data.field in ['expenses', 'incomes', 'installments', 'piggyBanks', 'strategicIntents', 'medicalShifts', 'shiftIncomeAllocations', 'bankImportedTransactions', 'medicalShiftPresets', 'hospitalMappingRules', 'incomeSourceRules', 'pendingConfirmations', 'linkedAccounts', 'cashBalanceAnchors', 'detectedSubscriptions', 'keywordRules', 'coupleGoals', 'coupleWishlist', 'coupleFixedBills', 'dreamSimulations', 'pluggyAccounts', 'monthlyBudgetPlans', 'financialOperations']
         && data.schemaVersion == 1 && data.deleted is bool
         && ((data.deleted && data.record == null) || (!data.deleted && validRecord(data.field, data.record)));
     }
     function safeAmount(data, key) {
       return !(key in data) || (data[key] is number && data[key] >= 0 && data[key] <= 90071992547409);
     }
+    function safeSignedAmount(data, key) {
+      return !(key in data) || (data[key] is number && data[key] >= -90071992547409 && data[key] <= 90071992547409);
+    }
     function validMetadata(data) {
       return safeAmount(data, 'partner1Income') && safeAmount(data, 'partner2Income')
         && safeAmount(data, 'protectionCurrentAmount') && safeAmount(data, 'protectionTotalInvested')
-        && safeAmount(data, 'protectionYieldAccumulated') && safeAmount(data, 'freedomTotalInvested')
-        && safeAmount(data, 'freedomYieldAccumulated')
+        && safeSignedAmount(data, 'protectionYieldAccumulated') && safeAmount(data, 'freedomTotalInvested')
+        && safeSignedAmount(data, 'freedomYieldAccumulated')
         && (!('investmentsPercentage' in data) || (data.investmentsPercentage is number && data.investmentsPercentage >= 0 && data.investmentsPercentage <= 100))
         && (!('emergencyReserveMonthsTarget' in data) || (data.emergencyReserveMonthsTarget is number && data.emergencyReserveMonthsTarget >= 1 && data.emergencyReserveMonthsTarget <= 120))
         && (!('expectedYieldAnnual' in data) || (data.expectedYieldAnnual is number && data.expectedYieldAnnual >= 0 && data.expectedYieldAnnual <= 100))

@@ -14,6 +14,7 @@ export const ENTITY_FIELDS = [
   'piggyBanks',
   'coupleGoals',
   'linkedAccounts',
+  'cashBalanceAnchors',
   'medicalShifts',
   'monthlyBudgetPlans',
   'expenses',
@@ -451,13 +452,23 @@ export async function commitFinancialCommandTransaction(
   pushField('financialOperations', touched?.financialOperations);
   pushField('piggyBanks', touched?.piggyBanks);
   pushField('coupleGoals', touched?.coupleGoals);
+  pushField('linkedAccounts', touched?.linkedAccounts);
+  pushField('bankImportedTransactions', touched?.bankImportedTransactions);
+  pushField('cashBalanceAnchors', touched?.cashBalanceAnchors);
   pushField('expenses', touched?.expenses);
   pushField('strategicIntents', touched?.strategicIntents);
   pushField('dreamSimulations', touched?.dreamSimulations);
   pushField('coupleWishlist', touched?.coupleWishlist);
   pushField('coupleFixedBills', touched?.coupleFixedBills);
 
-  if (!descriptors.length && !touched?.protectionUpdated) {
+  const needsCoupleDoc = Boolean(
+    touched?.protectionUpdated ||
+      touched?.freedomUpdated ||
+      touched?.guideUpdated ||
+      touched?.surplusTransfersUpdated
+  );
+
+  if (!descriptors.length && !needsCoupleDoc) {
     return {
       status: 'success',
       reasonCode: result.reasonCode,
@@ -468,7 +479,7 @@ export async function commitFinancialCommandTransaction(
   }
 
   const isActive = options?.isActive || (() => true);
-  const coupleRef = touched?.protectionUpdated ? doc(db, 'couples', coupleId) : null;
+  const coupleRef = needsCoupleDoc ? doc(db, 'couples', coupleId) : null;
 
   let txReplay = false;
   const writtenEntities: Array<{ field: EntityField; id: string; after: SyncEntity | null }> = [];
@@ -500,23 +511,54 @@ export async function commitFinancialCommandTransaction(
           const postOp = desc.postRecord as unknown as FinancialOperationRecord;
           if (remoteRecord) {
             const remoteOp = remoteRecord as unknown as FinancialOperationRecord;
-            if (postOp.state !== 'reverted' && postOp.state !== 'estornado') {
-              const postFp =
-                postOp.commandFingerprint || computeOperationFingerprint(postOp, readOperationAmountCents(postOp));
-              const remoteFp =
-                remoteOp.commandFingerprint || computeOperationFingerprint(remoteOp, readOperationAmountCents(remoteOp));
+            const postFp =
+              postOp.commandFingerprint || computeOperationFingerprint(postOp, readOperationAmountCents(postOp));
+            const remoteFp =
+              remoteOp.commandFingerprint || computeOperationFingerprint(remoteOp, readOperationAmountCents(remoteOp));
+
+            if (postOp.state === 'reverted' || postOp.state === 'estornado') {
+              if (remoteOp.state === 'reverted' || remoteOp.state === 'estornado') {
+                if (remoteOp.revertedBy && remoteOp.revertedBy === postOp.revertedBy) {
+                  replayedOpsCount++;
+                } else {
+                  throw new Error(`Conflito: operação "${desc.id}" já foi estornada anteriormente.`);
+                }
+              }
+            } else if (desc.preRecord) {
+              // Lifecycle transition (planned/pending_settlement -> occurred_manual/reconciled, or occurred_manual -> reconciled)
+              const preOp = desc.preRecord as unknown as FinancialOperationRecord;
+              const isExactSameState =
+                postFp === remoteFp &&
+                remoteOp.state === postOp.state &&
+                (remoteOp.bankTransactionId || '') === (postOp.bankTransactionId || '') &&
+                (remoteOp.reconciliationRef || '') === (postOp.reconciliationRef || '');
+              if (isExactSameState) {
+                replayedOpsCount++;
+              } else {
+                const preRev = preOp.revision ?? 0;
+                const remRev = remoteOp.revision ?? 0;
+                if (remRev !== preRev) {
+                  throw new Error(
+                    `Conflito concorrente na operação "${desc.id}" (revisão esperada ${preRev}, atual ${remRev}). Recarregue antes de tentar novamente.`
+                  );
+                }
+                if (
+                  remoteOp.reconciliationRef &&
+                  postOp.reconciliationRef &&
+                  remoteOp.reconciliationRef !== postOp.reconciliationRef
+                ) {
+                  throw new Error(
+                    `Conflito: operação "${desc.id}" já conciliada na nuvem com "${remoteOp.reconciliationRef}".`
+                  );
+                }
+              }
+            } else {
               if (postFp === remoteFp) {
                 replayedOpsCount++;
               } else {
                 throw new Error(
                   `Conflito de replay na nuvem: operação "${desc.id}" já foi confirmada com intenção diferente.`
                 );
-              }
-            } else if (remoteOp.state === 'reverted' || remoteOp.state === 'estornado') {
-              if (remoteOp.revertedBy && remoteOp.revertedBy === postOp.revertedBy) {
-                replayedOpsCount++;
-              } else {
-                throw new Error(`Conflito: operação "${desc.id}" já foi estornada anteriormente.`);
               }
             }
           }
@@ -585,21 +627,112 @@ export async function commitFinancialCommandTransaction(
           ) {
             throw new Error(`Conflito: intenção "${desc.id}" já reconciliada em outra sessão.`);
           }
+        } else if (desc.field === 'bankImportedTransactions' && remoteRecord && desc.postRecord) {
+          const remOp = remoteRecord.reconciledOperationId as string | undefined;
+          const postOpId = desc.postRecord.reconciledOperationId as string | undefined;
+          const remPair = remoteRecord.pairedTransferTransactionId as string | undefined;
+          const postPair = desc.postRecord.pairedTransferTransactionId as string | undefined;
+          if (
+            remoteRecord.status !== 'pending' &&
+            ((postOpId && remOp && remOp !== postOpId) ||
+              (postPair && remPair && remPair !== postPair) ||
+              (remoteRecord.status !== desc.postRecord.status &&
+                !(remoteRecord.status === 'reconciled' && remOp === postOpId)))
+          ) {
+            throw new Error(`Conflito: lançamento bancário "${desc.id}" já foi conciliado em outra sessão.`);
+          }
+        } else if (desc.field === 'linkedAccounts' && remoteRecord && desc.preRecord && desc.postRecord) {
+          const preRev = typeof desc.preRecord.revision === 'number' ? desc.preRecord.revision : 0;
+          const remRev = typeof remoteRecord.revision === 'number' ? remoteRecord.revision : 0;
+          if (remRev !== preRev) {
+            throw new Error(
+              `Conflito concorrente na conta "${desc.id}" (revisão esperada ${preRev}, atual ${remRev}). Recarregue antes de tentar novamente.`
+            );
+          }
         }
       }
 
       if (coupleRef && coupleSnap && coupleSnap.exists()) {
         const cData = coupleSnap.data() || {};
-        const remoteProtCents = Math.round(((cData.protectionCurrentAmount as number) ?? (preState.protectionCurrentAmount || 0)) * 100);
-        const preProtCents = Math.round((preState.protectionCurrentAmount || 0) * 100);
-        const postProtCents = Math.round((result.state.protectionCurrentAmount || 0) * 100);
-        const deltaProtCents = postProtCents - preProtCents;
-        const floorCents = Math.round((options?.reserveFloorR$ ?? 0) * 100);
-        const remoteExcessCents = Math.max(0, remoteProtCents - floorCents);
-        if (deltaProtCents < 0 && remoteExcessCents + deltaProtCents < 0) {
-          throw new Error(
-            `Excesso da reserva insuficiente na nuvem (R$ ${(remoteExcessCents / 100).toFixed(2)}). Operação concorrente bloqueada.`
+
+        if (touched?.protectionUpdated) {
+          const remoteProtCents = Math.round(
+            ((cData.protectionCurrentAmount as number) ?? (preState.protectionCurrentAmount || 0)) * 100
           );
+          const preProtCents = Math.round((preState.protectionCurrentAmount || 0) * 100);
+          const postProtCents = Math.round((result.state.protectionCurrentAmount || 0) * 100);
+          const deltaProtCents = postProtCents - preProtCents;
+          const floorCents = Math.round((options?.reserveFloorR$ ?? 0) * 100);
+          if (deltaProtCents < 0) {
+            if (remoteProtCents + deltaProtCents < 0) {
+              throw new Error(
+                `Saldo insuficiente na nuvem no Bloco 1 Proteção (R$ ${(remoteProtCents / 100).toFixed(2)}). Operação concorrente bloqueada.`
+              );
+            }
+            if (floorCents > 0) {
+              const remoteExcessCents = Math.max(0, remoteProtCents - floorCents);
+              if (remoteExcessCents + deltaProtCents < 0) {
+                throw new Error(
+                  `Excesso da reserva insuficiente na nuvem (R$ ${(remoteExcessCents / 100).toFixed(2)}). Operação concorrente bloqueada.`
+                );
+              }
+            }
+          }
+        }
+
+        if (touched?.freedomUpdated) {
+          const remoteFreeCents = Math.round(
+            (((cData.freedomTotalInvested as number) ?? (preState.freedomTotalInvested || 0)) +
+              ((cData.freedomYieldAccumulated as number) ?? (preState.freedomYieldAccumulated || 0))) *
+              100
+          );
+          const preFreeCents = Math.round(
+            ((preState.freedomTotalInvested || 0) + (preState.freedomYieldAccumulated || 0)) * 100
+          );
+          const postFreeCents = Math.round(
+            ((result.state.freedomTotalInvested || 0) + (result.state.freedomYieldAccumulated || 0)) * 100
+          );
+          const deltaFreeCents = postFreeCents - preFreeCents;
+          if (deltaFreeCents < 0 && remoteFreeCents + deltaFreeCents < 0) {
+            throw new Error(
+              `Saldo insuficiente na nuvem no Bloco 3 Liberdade (R$ ${(remoteFreeCents / 100).toFixed(2)}). Operação concorrente bloqueada.`
+            );
+          }
+        }
+
+        if (touched?.guideUpdated && touched.guideMonthKey) {
+          const mKey = touched.guideMonthKey;
+          const remoteCompleted = (cData.completedMonthDeposits as AppState['completedMonthDeposits'])?.[mKey];
+          const postCompleted = result.state.completedMonthDeposits?.[mKey];
+          const preCompleted = preState.completedMonthDeposits?.[mKey];
+          if (postCompleted && !preCompleted && remoteCompleted) {
+            if (remoteCompleted.operationId && remoteCompleted.operationId === postCompleted.operationId) {
+              txReplay = true;
+              return;
+            }
+            throw new Error(
+              `Conflito concorrente: os aportes da guia de ${mKey} já foram executados em outra sessão.`
+            );
+          }
+
+          const remoteGuide = (cData.monthlyDepositGuides as AppState['monthlyDepositGuides'])?.[mKey];
+          const postGuide = result.state.monthlyDepositGuides?.[mKey];
+          const preGuide = preState.monthlyDepositGuides?.[mKey];
+          if (remoteGuide && postGuide && preGuide) {
+            for (const postItem of postGuide.items || []) {
+              const preItem = (preGuide.items || []).find((i) => i.id === postItem.id);
+              const remoteItem = (remoteGuide.items || []).find((i) => i.id === postItem.id);
+              const newlyExecuted = Boolean(postItem.executedAt) && !preItem?.executedAt;
+              if (newlyExecuted && remoteItem?.executedAt) {
+                if (remoteItem.executedOperationId === postItem.executedOperationId) {
+                  continue;
+                }
+                throw new Error(
+                  `Conflito concorrente: item "${postItem.title}" da guia ${mKey} já foi executado em outra sessão.`
+                );
+              }
+            }
+          }
         }
       }
 
@@ -620,12 +753,28 @@ export async function commitFinancialCommandTransaction(
       }
 
       if (coupleRef) {
-        const patch = {
-          protectionCurrentAmount: result.state.protectionCurrentAmount,
-          protectionTotalInvested: result.state.protectionTotalInvested,
-          isProtectionComplete: result.state.isProtectionComplete,
+        const patch: Record<string, unknown> = {
           updatedAt: confirmedAt,
         };
+        if (touched?.protectionUpdated) {
+          patch.protectionCurrentAmount = result.state.protectionCurrentAmount;
+          patch.protectionTotalInvested = result.state.protectionTotalInvested;
+          if (result.state.protectionYieldAccumulated !== undefined) {
+            patch.protectionYieldAccumulated = result.state.protectionYieldAccumulated;
+          }
+          patch.isProtectionComplete = result.state.isProtectionComplete;
+        }
+        if (touched?.freedomUpdated) {
+          patch.freedomTotalInvested = result.state.freedomTotalInvested;
+          patch.freedomYieldAccumulated = result.state.freedomYieldAccumulated;
+        }
+        if (touched?.guideUpdated) {
+          patch.monthlyDepositGuides = JSON.parse(JSON.stringify(result.state.monthlyDepositGuides || {}));
+          patch.completedMonthDeposits = JSON.parse(JSON.stringify(result.state.completedMonthDeposits || {}));
+        }
+        if (touched?.surplusTransfersUpdated) {
+          patch.surplusTransfers = JSON.parse(JSON.stringify(result.state.surplusTransfers || []));
+        }
         if (typeof (tx as any).update === 'function') {
           (tx as any).update(coupleRef, patch);
         } else {

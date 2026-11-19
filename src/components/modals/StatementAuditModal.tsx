@@ -35,6 +35,10 @@ export const StatementAuditModal: React.FC<StatementAuditModalProps> = ({
 
   const isInflow = item.direction === 'inflow';
   const isTransfer = item.direction === 'internal';
+  const isNegativeAdjustment = item.type === 'valuation_adjustment' && item.amount < 0;
+  const formattedSignedAmount = isNegativeAdjustment
+    ? `-${formatCurrency(Math.abs(item.amount))}`
+    : `${isInflow ? '+ ' : isTransfer ? '' : '- '}${formatCurrency(item.amount)}`;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/70 backdrop-blur-md animate-in fade-in">
@@ -46,6 +50,8 @@ export const StatementAuditModal: React.FC<StatementAuditModalProps> = ({
               className={`w-10 h-10 rounded-2xl flex items-center justify-center font-bold text-xl ${
                 isInflow
                   ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
+                  : isNegativeAdjustment
+                  ? 'bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300'
                   : isTransfer
                   ? 'bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300'
                   : 'bg-slate-100 text-slate-800 dark:bg-slate-800 dark:text-slate-200'
@@ -77,6 +83,8 @@ export const StatementAuditModal: React.FC<StatementAuditModalProps> = ({
           className={`p-4 rounded-2xl border flex items-center justify-between ${
             isInflow
               ? 'bg-emerald-50/70 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800/60'
+              : isNegativeAdjustment
+              ? 'bg-rose-50/70 dark:bg-rose-950/30 border-rose-200 dark:border-rose-800/60'
               : isTransfer
               ? 'bg-blue-50/70 dark:bg-blue-950/30 border-blue-200 dark:border-blue-800/60'
               : 'bg-slate-50 dark:bg-slate-800/50 border-slate-200/80 dark:border-slate-700'
@@ -90,27 +98,45 @@ export const StatementAuditModal: React.FC<StatementAuditModalProps> = ({
               className={`text-xl sm:text-2xl font-black tabular-nums font-display ${
                 isInflow
                   ? 'text-emerald-700 dark:text-emerald-300'
+                  : isNegativeAdjustment
+                  ? 'text-rose-700 dark:text-rose-300'
                   : isTransfer
                   ? 'text-blue-700 dark:text-blue-300'
                   : 'text-slate-900 dark:text-white'
               }`}
             >
-              {isInflow ? '+ ' : isTransfer ? '' : '- '}
-              {formatCurrency(item.amount)}
+              {formattedSignedAmount}
             </div>
           </div>
 
-          <span
-            className={`px-3 py-1 rounded-full text-xs font-extrabold ${
-              isInflow
-                ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900 dark:text-emerald-200'
-                : isTransfer
-                ? 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200'
-                : 'bg-slate-200 text-slate-800 dark:bg-slate-700 dark:text-slate-200'
-            }`}
-          >
-            {isInflow ? 'Entrada' : isTransfer ? 'Transferência Interna' : 'Saída'}
-          </span>
+          <div className="flex items-center gap-1.5">
+            {item.status === 'pending' && (
+              <span className="px-2.5 py-1 rounded-full text-xs font-extrabold bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-200">
+                Em liquidação
+              </span>
+            )}
+            {item.status === 'reconciled' && (
+              <span className="px-2.5 py-1 rounded-full text-xs font-extrabold bg-emerald-100 text-emerald-900 dark:bg-emerald-950 dark:text-emerald-200">
+                Conciliado
+              </span>
+            )}
+            {item.status === 'reverted' && (
+              <span className="px-2.5 py-1 rounded-full text-xs font-extrabold bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-200">
+                Estornado
+              </span>
+            )}
+            <span
+              className={`px-3 py-1 rounded-full text-xs font-extrabold ${
+                isInflow
+                  ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900 dark:text-emerald-200'
+                  : isTransfer
+                  ? 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200'
+                  : 'bg-slate-200 text-slate-800 dark:bg-slate-700 dark:text-slate-200'
+              }`}
+            >
+              {isInflow ? 'Entrada' : isTransfer ? 'Transferência Interna' : 'Saída'}
+            </span>
+          </div>
         </div>
 
         {/* Audit Details Details Grid */}
@@ -194,16 +220,76 @@ export const StatementAuditModal: React.FC<StatementAuditModalProps> = ({
               </span>
             </div>
           </div>
+
+          {(item.operationId ||
+            item.costBasisR$ !== undefined ||
+            item.realizedGainR$ !== undefined ||
+            item.grossAmountR$ !== undefined ||
+            item.netAmountR$ !== undefined ||
+            item.differenceToReviewR$ !== undefined ||
+            item.planningDivergenceR$ !== undefined ||
+            item.bankTransactionId ||
+            item.withdrawalChannel) && (
+            <div className="p-3.5 rounded-2xl bg-indigo-50/70 dark:bg-indigo-950/30 border border-indigo-200 dark:border-indigo-800/60 space-y-1.5">
+              <div className="text-[11px] font-bold text-indigo-800 dark:text-indigo-300 uppercase tracking-wider">
+                Auditoria Patrimonial (Custo Base, Bruto/Líquido &amp; Conciliação)
+              </div>
+              {item.operationId && (
+                <div className="font-mono text-xs font-bold text-indigo-950 dark:text-indigo-200 break-all">
+                  operationId: {item.operationId}
+                </div>
+              )}
+              {item.withdrawalChannel && (
+                <div className="text-[11px] font-bold text-indigo-900 dark:text-indigo-200">
+                  Canal: {item.withdrawalChannel === 'virtual_reallocation' ? 'Realocação Virtual' : 'Resgate Real'}
+                </div>
+              )}
+              <div className="flex flex-wrap gap-3 text-[11px] font-semibold text-slate-700 dark:text-slate-300">
+                {item.grossAmountR$ !== undefined && (
+                  <span>Bruto: {formatCurrency(item.grossAmountR$)}</span>
+                )}
+                {item.netAmountR$ !== undefined && (
+                  <span>Líquido: {formatCurrency(item.netAmountR$)}</span>
+                )}
+                {item.differenceToReviewR$ !== undefined && item.differenceToReviewR$ > 0 && (
+                  <span className="text-amber-800 dark:text-amber-300 font-bold">
+                    Diferença a revisar: {formatCurrency(item.differenceToReviewR$)}
+                  </span>
+                )}
+                {item.costBasisR$ !== undefined && (
+                  <span>Custo base movimentado: {formatCurrency(item.costBasisR$)}</span>
+                )}
+                {item.realizedGainR$ !== undefined && (
+                  <span>
+                    Resultado realizado:{' '}
+                    {item.realizedGainR$ < 0
+                      ? `-${formatCurrency(Math.abs(item.realizedGainR$))}`
+                      : `+${formatCurrency(item.realizedGainR$)}`}
+                  </span>
+                )}
+              </div>
+              {item.planningDivergenceR$ !== undefined && item.planningDivergenceR$ > 0 && (
+                <div className="p-2 rounded-xl bg-rose-50 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-800 text-[11px] font-bold text-rose-800 dark:text-rose-200">
+                  Divergência de planejamento registrada: {formatCurrency(item.planningDivergenceR$)}
+                </div>
+              )}
+              {item.bankTransactionId && (
+                <div className="font-mono text-[11px] text-emerald-800 dark:text-emerald-300 break-all">
+                  Extrato bancário vinculado: {item.bankTransactionId}
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Modal Actions */}
         <div className="flex items-center justify-between border-t border-slate-100 dark:border-slate-800 pt-4 gap-2">
-          <div className="text-[11px] text-slate-400 font-mono">
-            ID: {item.entityId}
+          <div className="text-[11px] text-slate-400 font-mono truncate">
+            ID: {item.operationId || item.entityId}
           </div>
 
           <div className="flex items-center gap-2">
-            {onDelete && (
+            {onDelete && item.status !== 'reverted' && (
               <button
                 type="button"
                 onClick={() => {

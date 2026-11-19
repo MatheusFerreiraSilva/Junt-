@@ -54,6 +54,7 @@ export const TransactionHistoryScreen: React.FC<TransactionHistoryScreenProps> =
     state,
     deleteExpense,
     deleteIncome,
+    reverseFinancialOperation,
     getExpenseSplit,
     viewMode,
     detectedDuplicates,
@@ -61,6 +62,7 @@ export const TransactionHistoryScreen: React.FC<TransactionHistoryScreenProps> =
 
   const [triageExpense, setTriageExpense] = useState<ExpenseItem | null>(null);
   const [inspectAuditItem, setInspectAuditItem] = useState<StatementItem | null>(null);
+  const [ledgerActionError, setLedgerActionError] = useState<string>('');
 
   // Search and Filter States
   const [searchTerm, setSearchTerm] = useState('');
@@ -195,11 +197,18 @@ export const TransactionHistoryScreen: React.FC<TransactionHistoryScreenProps> =
   }, [filteredLedger]);
 
   const handleDeleteItem = (item: StatementItem) => {
-    if (item.entityType === 'expense') {
-      deleteExpense(item.entityId);
-    } else if (item.entityType === 'income') {
-      // Safely unlink medical shifts if linked
-      deleteIncome(item.entityId, true);
+    try {
+      setLedgerActionError('');
+      if (item.entityType === 'expense') {
+        deleteExpense(item.entityId);
+      } else if (item.entityType === 'income') {
+        // Safely unlink medical shifts if linked
+        deleteIncome(item.entityId, true);
+      } else if (item.entityType === 'financial_operation' && item.operationId) {
+        reverseFinancialOperation(item.operationId, 'Estorno solicitado pelo Extrato Unificado');
+      }
+    } catch (err: any) {
+      setLedgerActionError(err?.message || 'Não foi possível estornar este registro.');
     }
   };
 
@@ -244,6 +253,15 @@ export const TransactionHistoryScreen: React.FC<TransactionHistoryScreenProps> =
       {/* Duplicate Reconciliation Alert Card if any duplicates exist */}
       {detectedDuplicates.length > 0 && (
         <DuplicateReconciliationCard />
+      )}
+
+      {ledgerActionError && (
+        <p
+          role="alert"
+          className="p-3.5 rounded-2xl bg-rose-50 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-800 text-xs font-semibold text-rose-800 dark:text-rose-200"
+        >
+          {ledgerActionError}
+        </p>
       )}
 
       {/* SUMMARY TOTALS CARDS (Entradas, Saídas, Fluxo Líquido e Transferências) */}
@@ -406,6 +424,8 @@ export const TransactionHistoryScreen: React.FC<TransactionHistoryScreenProps> =
               <option value="installment">💳 Parcelamento de Cartão</option>
               <option value="fixed_bill">🏠 Conta Fixa</option>
               <option value="surplus_transfer">🔄 Vaso Comunicante</option>
+              <option value="patrimonial_command">💎 Operação Patrimonial</option>
+              <option value="monthly_guide">📅 Guia Mensal de Aportes</option>
             </select>
           </div>
 
@@ -552,6 +572,21 @@ export const TransactionHistoryScreen: React.FC<TransactionHistoryScreenProps> =
                             🔄 Nivelamento
                           </span>
                         )}
+                        {item.status === 'pending' && (
+                          <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-amber-100 dark:bg-amber-950 text-amber-900 dark:text-amber-200 border border-amber-300 dark:border-amber-800 shrink-0">
+                            Em liquidação
+                          </span>
+                        )}
+                        {item.status === 'reconciled' && (
+                          <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-emerald-100 dark:bg-emerald-950 text-emerald-900 dark:text-emerald-200 border border-emerald-300 dark:border-emerald-800 shrink-0">
+                            Conciliado
+                          </span>
+                        )}
+                        {item.status === 'reverted' && (
+                          <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-rose-100 dark:bg-rose-950 text-rose-800 dark:text-rose-200 border border-rose-200 dark:border-rose-800 shrink-0">
+                            Estornado
+                          </span>
+                        )}
                       </div>
 
                       <div className="text-xs text-slate-500 dark:text-slate-400 flex items-center gap-2 flex-wrap mt-0.5">
@@ -567,6 +602,37 @@ export const TransactionHistoryScreen: React.FC<TransactionHistoryScreenProps> =
                           {item.paidByName}
                         </span>
 
+                        {item.withdrawalChannel && (
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-50 dark:bg-indigo-950 text-indigo-800 dark:text-indigo-200">
+                            {item.withdrawalChannel === 'virtual_reallocation' ? 'Realocação Virtual' : 'Resgate Real'}
+                          </span>
+                        )}
+
+                        {item.grossAmountR$ !== undefined && item.netAmountR$ !== undefined && item.grossAmountR$ !== item.netAmountR$ && (
+                          <span className="text-[10px] font-semibold text-amber-700 dark:text-amber-300">
+                            Bruto {formatCurrency(item.grossAmountR$)} · Líq {formatCurrency(item.netAmountR$)}
+                            {item.differenceToReviewR$ ? ` · Dif. a revisar ${formatCurrency(item.differenceToReviewR$)}` : ''}
+                          </span>
+                        )}
+
+                        {item.planningDivergenceR$ && item.planningDivergenceR$ > 0 && (
+                          <span className="text-[10px] font-bold text-rose-700 dark:text-rose-300">
+                            Divergência {formatCurrency(item.planningDivergenceR$)}
+                          </span>
+                        )}
+
+                        {item.operationId && (
+                          <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
+                            {item.operationId}
+                          </span>
+                        )}
+
+                        {item.bankTransactionId && (
+                          <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-emerald-50 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300">
+                            tx:{item.bankTransactionId}
+                          </span>
+                        )}
+
                         {item.fitid && (
                           <span className="text-[10px] font-mono opacity-70">
                             [FITID OK]
@@ -581,15 +647,18 @@ export const TransactionHistoryScreen: React.FC<TransactionHistoryScreenProps> =
                     <div className="text-right">
                       <div
                         className={`font-black text-sm sm:text-base tabular-nums font-display ${
-                          isInflow
+                          item.type === 'valuation_adjustment' && item.amount < 0
+                            ? 'text-rose-600 dark:text-rose-400'
+                            : isInflow
                             ? 'text-emerald-700 dark:text-emerald-300'
                             : isTransfer
                             ? 'text-blue-700 dark:text-blue-300'
                             : 'text-slate-900 dark:text-white'
                         }`}
                       >
-                        {isInflow ? '+ ' : isTransfer ? '' : '- '}
-                        {formatCurrency(item.amount)}
+                        {item.type === 'valuation_adjustment' && item.amount < 0
+                          ? `-${formatCurrency(Math.abs(item.amount))}`
+                          : `${isInflow ? '+ ' : isTransfer ? '' : '- '}${formatCurrency(item.amount)}`}
                       </div>
                     </div>
 
@@ -616,14 +685,16 @@ export const TransactionHistoryScreen: React.FC<TransactionHistoryScreenProps> =
                       </button>
 
                       {/* Delete / Storno Button */}
-                      <button
-                        type="button"
-                        onClick={() => handleDeleteItem(item)}
-                        className="w-8 h-8 rounded-xl hover:bg-rose-50 dark:hover:bg-rose-950/60 text-slate-400 hover:text-rose-600 flex items-center justify-center transition-colors"
-                        title="Excluir ou Estornar lançamento"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
+                      {item.status !== 'reverted' && (
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteItem(item)}
+                          className="w-8 h-8 rounded-xl hover:bg-rose-50 dark:hover:bg-rose-950/60 text-slate-400 hover:text-rose-600 flex items-center justify-center transition-colors"
+                          title="Excluir ou Estornar lançamento"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      )}
                     </div>
                   </div>
                 </div>

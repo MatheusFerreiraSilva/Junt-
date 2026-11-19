@@ -33,6 +33,9 @@ export const ReallocateReserveExcessModal: React.FC<ReallocateReserveExcessModal
     state.piggyBanks.find(g => !g.completed)?.id || (state.piggyBanks[0]?.id ?? '')
   );
   const [amountInput, setAmountInput] = useState<string>('');
+  const [reallocError, setReallocError] = useState<string>('');
+  const [needsCompletedConfirmation, setNeedsCompletedConfirmation] = useState(false);
+  const [confirmedCompleted, setConfirmedCompleted] = useState(false);
 
   if (!isOpen) return null;
 
@@ -46,20 +49,40 @@ export const ReallocateReserveExcessModal: React.FC<ReallocateReserveExcessModal
   const handlePercentageQuick = (pct: number) => {
     const val = Math.round(maxExcess * (pct / 100));
     setAmountInput(val.toString());
+    if (reallocError) setReallocError('');
+  };
+
+  const handleClose = () => {
+    setReallocError('');
+    setNeedsCompletedConfirmation(false);
+    setConfirmedCompleted(false);
+    onClose();
   };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!isValidAmount) return;
 
-    reallocateReserveExcess(
-      numericAmount,
-      targetType,
-      targetType === 'goal' ? selectedGoalId : undefined,
-      targetType === 'goal' ? selectedGoal?.name : 'Bloco 3 Liberdade'
-    );
-
-    onClose();
+    try {
+      setReallocError('');
+      reallocateReserveExcess(
+        numericAmount,
+        targetType,
+        targetType === 'goal' ? selectedGoalId : undefined,
+        targetType === 'goal' ? selectedGoal?.name : 'Bloco 3 Liberdade',
+        { completedGoalContributionConfirmed: confirmedCompleted }
+      );
+      setNeedsCompletedConfirmation(false);
+      setConfirmedCompleted(false);
+      onClose();
+    } catch (err: any) {
+      const code = err?.code;
+      const msg = err?.message || 'Não foi possível concluir a realocação do excesso.';
+      if (code === 'CONFIRMATION_REQUIRED' || /CONFIRMATION_REQUIRED|conclu[ií]d/i.test(msg)) {
+        setNeedsCompletedConfirmation(true);
+      }
+      setReallocError(msg);
+    }
   };
 
   return (
@@ -82,7 +105,7 @@ export const ReallocateReserveExcessModal: React.FC<ReallocateReserveExcessModal
           </div>
 
           <button
-            onClick={onClose}
+            onClick={handleClose}
             className="p-2 rounded-xl text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
           >
             <X className="w-5 h-5" />
@@ -90,6 +113,26 @@ export const ReallocateReserveExcessModal: React.FC<ReallocateReserveExcessModal
         </div>
 
         <form onSubmit={handleSubmit} className="p-5 sm:p-6 space-y-6">
+          {reallocError && (
+            <p
+              role="alert"
+              className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-800 text-xs font-semibold text-rose-800 dark:text-rose-200"
+            >
+              {reallocError}
+            </p>
+          )}
+
+          {needsCompletedConfirmation && targetType === 'goal' && (
+            <label className="flex items-start gap-2.5 p-3 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-xs font-semibold text-amber-900 dark:text-amber-200 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={confirmedCompleted}
+                onChange={(e) => setConfirmedCompleted(e.target.checked)}
+                className="mt-0.5 rounded border-amber-400 text-amber-600 focus:ring-amber-500"
+              />
+              <span>Confirmo que desejo transferir excesso para esta meta já concluída e utilizada.</span>
+            </label>
+          )}
           {/* Reserve Status Callout (Piso vs Excesso) */}
           <div className="p-4 sm:p-5 rounded-2xl bg-emerald-50/70 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 space-y-3">
             <div className="flex items-center justify-between text-xs font-bold text-emerald-950 dark:text-emerald-100">
@@ -180,7 +223,12 @@ export const ReallocateReserveExcessModal: React.FC<ReallocateReserveExcessModal
                 </label>
                 <select
                   value={selectedGoalId}
-                  onChange={e => setSelectedGoalId(e.target.value)}
+                  onChange={e => {
+                    setSelectedGoalId(e.target.value);
+                    setNeedsCompletedConfirmation(false);
+                    setConfirmedCompleted(false);
+                    if (reallocError) setReallocError('');
+                  }}
                   className="w-full px-3 py-2 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-800 dark:text-slate-200"
                 >
                   {state.piggyBanks.map(g => (
@@ -259,7 +307,7 @@ export const ReallocateReserveExcessModal: React.FC<ReallocateReserveExcessModal
           <div className="flex items-center justify-end gap-3 pt-2 border-t border-slate-100 dark:border-slate-800">
             <button
               type="button"
-              onClick={onClose}
+              onClick={handleClose}
               className="px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 text-xs font-bold hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
             >
               Cancelar

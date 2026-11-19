@@ -57,6 +57,8 @@ import { ThermometerRaioXModal } from '../components/ThermometerRaioXModal';
 import { calculateThermometerEngine, ThermometerScope } from '../utils/thermometerEngine';
 import { FixedBillsPanelModal } from '../components/modals/FixedBillsPanelModal';
 import { MonthThermometerGauge } from '../components/MonthThermometerGauge';
+import { ReinforcementProvenanceBar } from '../components/ReinforcementProvenanceBar';
+import { CategoryReinforcementModal } from '../components/modals/CategoryReinforcementModal';
 
 interface HomeScreenProps {
   onNavigate: (screen: ScreenId, categoryKey?: CategoryKey) => void;
@@ -132,13 +134,17 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
     surplusTransfers,
     getMonthlyDepositGuide,
     executeMonthlyDeposit,
+    addNotification,
     predictiveBurnAlerts,
     aiPredictiveInsights,
     reconciledBudgetMatrix,
+    verifiableCashSummary,
   } = useFinance();
 
   const [budgetViewMode, setBudgetViewMode] = useState<'categories' | 'structure'>('categories');
   const [isFixedPanelOpen, setIsFixedPanelOpen] = useState(false);
+  const [isReinforcementModalOpen, setIsReinforcementModalOpen] = useState(false);
+  const [reinforcementInitialCategory, setReinforcementInitialCategory] = useState<CategoryKey | undefined>(undefined);
 
   const thermometerEngineResult = useMemo(() => {
     const scope: ThermometerScope = viewMode === 'partner1' ? 'partner1' : viewMode === 'partner2' ? 'partner2' : 'couple';
@@ -537,7 +543,17 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
 
                 <button
                   type="button"
-                  onClick={() => executeMonthlyDeposit(state.currentMonth)}
+                  onClick={() => {
+                    try {
+                      executeMonthlyDeposit(state.currentMonth);
+                    } catch (err: any) {
+                      addNotification({
+                        title: 'Não foi possível confirmar o guia',
+                        message: err?.message || 'Erro ao executar os aportes do mês.',
+                        type: 'alert',
+                      });
+                    }
+                  }}
                   className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs shadow-xs cursor-pointer active:scale-95 transition-all flex items-center gap-1.5"
                 >
                   <Check className="w-4 h-4 stroke-[3]" />
@@ -709,6 +725,19 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                 {formatCurrency(Math.max(0, displayedRemaining))} livres
               </span>
             </div>
+            <div className="text-[11px] font-bold mt-1 text-slate-700 dark:text-slate-300">
+              {verifiableCashSummary.status === 'unknown' ? (
+                <span className="text-amber-800 dark:text-amber-300">Caixa livre não verificável</span>
+              ) : verifiableCashSummary.status === 'partial' ? (
+                <span className="text-amber-800 dark:text-amber-300">
+                  Caixa conhecido parcial: {formatCurrency(verifiableCashSummary.knownAccountsCashCents / 100)} · pendências sem confirmação
+                </span>
+              ) : (
+                <span className="text-emerald-900 dark:text-emerald-300">
+                  Caixa livre verificável: {formatCurrency(verifiableCashSummary.verifiedLiquidCashR$ ?? 0, true)}
+                </span>
+              )}
+            </div>
           </div>
         </div>
 
@@ -777,7 +806,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
           <div>
             <div className="flex items-center gap-2">
               <h3 className="text-base sm:text-lg font-black text-slate-950 dark:text-white font-display">
-                Orçamento Reconciliado 28C
+                Orçamento Reconciliado
               </h3>
               <span className="px-2 py-0.5 text-[10px] font-extrabold rounded-full bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-700">
                 Fixos ({reconciledBudgetMatrix.policyRatios.fixedPct}%) • Variáveis ({reconciledBudgetMatrix.policyRatios.varPct}%) • Aportes ({reconciledBudgetMatrix.policyRatios.investPct}%)
@@ -811,6 +840,18 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                 🧱 Visão por Estrutura
               </button>
             </div>
+
+            <button
+              type="button"
+              onClick={() => {
+                setReinforcementInitialCategory(undefined);
+                setIsReinforcementModalOpen(true);
+              }}
+              className="px-3 py-1.5 rounded-xl bg-sky-100 hover:bg-sky-200 dark:bg-sky-950/70 dark:hover:bg-sky-900 text-blue-800 dark:text-sky-200 border border-blue-300 dark:border-sky-700 text-xs font-black flex items-center gap-1 transition-colors cursor-pointer"
+            >
+              <Sparkles className="w-3.5 h-3.5" />
+              <span>Reforçar categoria</span>
+            </button>
 
             <button
               onClick={() => onNavigate('categories')}
@@ -895,13 +936,19 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                     </div>
                   </div>
 
-                  {/* Glass Bar */}
-                  <div className="relative h-3.5 w-full bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden p-0.5 border border-slate-300 dark:border-slate-600">
-                    <div
-                      className={`h-full rounded-full transition-all duration-700 ${barFill}`}
-                      style={{ width: `${percent}%` }}
-                    />
-                  </div>
+                  {/* Glass Bar com Origem Azul (Somente Leitura) */}
+                  <ReinforcementProvenanceBar
+                    spent={row.realizedLiquid}
+                    baseBudget={row.basePlannedBudget}
+                    effectiveBudget={row.effectiveBudget}
+                    reinforcementAmount={row.reinforcementAmount}
+                    reallocationNetAmount={row.reallocationNetAmount}
+                    sources={row.reinforcementSources}
+                    categoryName={row.name}
+                    competence={reconciledBudgetMatrix.competence}
+                    verifiableCashStatus={row.verifiableCashStatus}
+                    fillClassName={barFill}
+                  />
                 </div>
               );
             })}
@@ -2018,10 +2065,10 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                 </span>
                 <div>
                   <h3 className="font-black text-base sm:text-lg text-slate-950 dark:text-white leading-tight">
-                    Patrimônio &amp; Cofrinhos
+                    Ativos Guardados &amp; Cofrinhos
                   </h3>
                   <p className="text-xs text-slate-600 dark:text-slate-400 font-medium">
-                    Total guardado e liquidez livre do casal
+                    Total guardado e liquidez livre do casal (sem passivos modelados)
                   </p>
                 </div>
               </div>
@@ -2041,7 +2088,45 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                 <div className="text-3xl font-black text-emerald-600 dark:text-emerald-400 font-display">
                   {formatCurrency(totalSavedInPiggyBanks + Math.max(0, displayedRemaining))}
                 </div>
+                <div className="text-xs font-bold pt-1">
+                  {verifiableCashSummary.status === 'unknown' ? (
+                    <span className="text-amber-700 dark:text-amber-300">Caixa livre não verificável</span>
+                  ) : verifiableCashSummary.status === 'partial' ? (
+                    <span className="text-amber-700 dark:text-amber-300">
+                      Caixa conhecido parcial: {formatCurrency(verifiableCashSummary.knownAccountsCashCents / 100)} · pendências sem confirmação
+                    </span>
+                  ) : (
+                    <span className="text-emerald-700 dark:text-emerald-300">
+                      Caixa verificável em conta: {formatCurrency(verifiableCashSummary.verifiedLiquidCashR$ ?? 0, true)}
+                    </span>
+                  )}
+                </div>
               </div>
+
+              {(verifiableCashSummary.inTransitRedemptionCents > 0 ||
+                verifiableCashSummary.lockedAssetCents > 0 ||
+                verifiableCashSummary.liberatedPurposeCents > 0) && (
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
+                  <div className="p-2.5 rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800">
+                    <span className="text-[10px] font-bold text-amber-800 dark:text-amber-300 block">Em liquidação</span>
+                    <strong className="font-black text-slate-900 dark:text-white tabular-nums">
+                      {formatCurrency(verifiableCashSummary.inTransitRedemptionCents / 100)}
+                    </strong>
+                  </div>
+                  <div className="p-2.5 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
+                    <span className="text-[10px] font-bold text-slate-600 dark:text-slate-300 block">Em carência</span>
+                    <strong className="font-black text-slate-900 dark:text-white tabular-nums">
+                      {formatCurrency(verifiableCashSummary.lockedAssetCents / 100)}
+                    </strong>
+                  </div>
+                  <div className="p-2.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800">
+                    <span className="text-[10px] font-bold text-emerald-800 dark:text-emerald-300 block">Liberado p/ finalidade</span>
+                    <strong className="font-black text-slate-900 dark:text-white tabular-nums">
+                      {formatCurrency(verifiableCashSummary.liberatedPurposeCents / 100)}
+                    </strong>
+                  </div>
+                </div>
+              )}
 
               <div className="space-y-2">
                 <span className="text-xs font-black uppercase tracking-wider text-slate-700 dark:text-slate-300 block">
@@ -2277,10 +2362,15 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                   </div>
 
                   <div className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700">
-                    <span className="text-slate-600 dark:text-slate-400 block font-bold">Teto Combinado:</span>
+                    <span className="text-slate-600 dark:text-slate-400 block font-bold">Teto Efetivo:</span>
                     <strong className="text-base font-black text-slate-950 dark:text-white block mt-0.5 tabular-nums">
                       {formatCurrency(spend.budget)}
                     </strong>
+                    {(spend.reinforcementAmount || 0) > 0 && (
+                      <span className="text-[10px] font-bold text-blue-700 dark:text-sky-300 block">
+                        Habitual {formatCurrency(spend.baseBudget ?? spend.budget)} + Reforço {formatCurrency(spend.reinforcementAmount || 0)}
+                      </span>
+                    )}
                     <span className={`text-[11px] font-black ${spend.isOver ? 'text-rose-600' : 'text-emerald-600'}`}>
                       {spend.isOver ? `Estourou ${formatCurrency(Math.abs(spend.remaining))}` : `Resta ${formatCurrency(spend.remaining)}`}
                     </span>
@@ -2323,7 +2413,19 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                 </div>
               </div>
 
-              <div className="p-4 border-t border-slate-200 dark:border-slate-800 flex items-center justify-end gap-2 bg-slate-50 dark:bg-slate-900">
+              <div className="p-4 border-t border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-end gap-2 bg-slate-50 dark:bg-slate-900">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const catKey = selectedCategoryModalKey;
+                    setActiveModal(null);
+                    setReinforcementInitialCategory(catKey);
+                    setIsReinforcementModalOpen(true);
+                  }}
+                  className="px-4 py-2 rounded-xl bg-sky-100 hover:bg-sky-200 dark:bg-sky-950 dark:hover:bg-sky-900 text-blue-800 dark:text-sky-200 border border-blue-300 dark:border-sky-700 font-black text-xs cursor-pointer"
+                >
+                  Reforçar {cat.name}
+                </button>
                 <button
                   onClick={() => {
                     setActiveModal(null);
@@ -2439,6 +2541,13 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
         onClose={() => setIsFixedPanelOpen(false)}
         initialMonth={state.currentMonth}
         onNavigateToCategory={(cat) => onNavigate('categories', cat)}
+      />
+
+      {/* Modal de Reforço Temporário de Orçamento com Origem Azul */}
+      <CategoryReinforcementModal
+        isOpen={isReinforcementModalOpen}
+        onClose={() => setIsReinforcementModalOpen(false)}
+        initialCategory={reinforcementInitialCategory}
       />
     </div>
   );

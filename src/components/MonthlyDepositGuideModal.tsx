@@ -41,6 +41,7 @@ export const MonthlyDepositGuideModal: React.FC<MonthlyDepositGuideModalProps> =
     updateDepositGuideStrategy,
     approveMonthlyDepositGuide,
     executeMonthlyDeposit,
+    executeMonthlyDepositItem,
     resetMonthlyDeposit,
   } = useFinance();
 
@@ -57,6 +58,8 @@ export const MonthlyDepositGuideModal: React.FC<MonthlyDepositGuideModalProps> =
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [showFixedEditor, setShowFixedEditor] = useState(false);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
+  const [guideError, setGuideError] = useState<string>('');
+  const [isSubmittingGuide, setIsSubmittingGuide] = useState(false);
 
   // Ceiling calculations
   const ceiling = guide.suggestedCeiling ?? investmentCeiling.suggestedCeiling;
@@ -82,10 +85,22 @@ export const MonthlyDepositGuideModal: React.FC<MonthlyDepositGuideModalProps> =
       setBaseInputs(initBase);
       setActiveTab(initialTab);
       setShowResetConfirm(false);
+      setGuideError('');
+      setIsSubmittingGuide(false);
     }
   }, [isOpen, monthKey, initialTab, getMonthlyDepositGuide]);
 
   if (!isOpen) return null;
+
+  const actualExecutedTotal =
+    completionRecord?.totalDeposited ??
+    guide.items.reduce((sum, it) => sum + (it.executedAt ? (it.executedAmount ?? it.totalAmount) : 0), 0);
+  const extraDepositedTotal =
+    completionRecord?.extraAmount ??
+    guide.items.reduce(
+      (sum, it) => sum + (it.executedAmount !== undefined ? Math.max(0, it.executedAmount - it.totalAmount) : 0),
+      0
+    );
 
   // Dynamic calculations for customization
   const totalAllocatedSurplus = guide.items.reduce((sum, it) => {
@@ -179,11 +194,34 @@ export const MonthlyDepositGuideModal: React.FC<MonthlyDepositGuideModalProps> =
   };
 
   const handleApproveGuide = () => {
+    setGuideError('');
     approveMonthlyDepositGuide(monthKey);
   };
 
+  const handleConfirmItem = (itemId: string) => {
+    if (isSubmittingGuide) return;
+    setIsSubmittingGuide(true);
+    try {
+      setGuideError('');
+      executeMonthlyDepositItem(monthKey, itemId);
+    } catch (err: any) {
+      setGuideError(err?.message || 'Não foi possível confirmar este item do guia.');
+    } finally {
+      setIsSubmittingGuide(false);
+    }
+  };
+
   const handleConfirmDone = () => {
-    executeMonthlyDeposit(monthKey);
+    if (isSubmittingGuide) return;
+    setIsSubmittingGuide(true);
+    try {
+      setGuideError('');
+      executeMonthlyDeposit(monthKey);
+    } catch (err: any) {
+      setGuideError(err?.message || 'Não foi possível confirmar os aportes do mês.');
+    } finally {
+      setIsSubmittingGuide(false);
+    }
   };
 
   const handleCopyAmount = (id: string, amount: number) => {
@@ -267,6 +305,14 @@ export const MonthlyDepositGuideModal: React.FC<MonthlyDepositGuideModalProps> =
 
         {/* Modal Scrollable Body */}
         <div className="p-5 sm:p-6 space-y-5 overflow-y-auto flex-1">
+          {guideError && (
+            <p
+              role="alert"
+              className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-800 text-xs font-semibold text-rose-800 dark:text-rose-200"
+            >
+              {guideError}
+            </p>
+          )}
           {/* ========================================================= */}
           {/* CASO JÁ CONCLUÍDO: SELO VISUAL DE CONCLUSÃO               */}
           {/* ========================================================= */}
@@ -361,8 +407,13 @@ export const MonthlyDepositGuideModal: React.FC<MonthlyDepositGuideModalProps> =
                     <button
                       type="button"
                       onClick={() => {
-                        resetMonthlyDeposit(monthKey);
-                        setShowResetConfirm(false);
+                        try {
+                          setGuideError('');
+                          resetMonthlyDeposit(monthKey);
+                          setShowResetConfirm(false);
+                        } catch (err: any) {
+                          setGuideError(err?.message || 'Não foi possível estornar e reabrir o guia deste mês.');
+                        }
                       }}
                       className="px-3.5 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-black text-xs cursor-pointer shadow-sm flex items-center gap-1.5"
                     >
@@ -651,16 +702,19 @@ export const MonthlyDepositGuideModal: React.FC<MonthlyDepositGuideModalProps> =
                   </button>
                 </div>
 
-                {/* Decomposição da Origem: Fixo vs Sobras */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-3 border-t border-slate-200 dark:border-slate-700 text-xs">
+                {/* Decomposição da Origem: Planejado (10% + Sobras) vs Realizado vs Extra */}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 pt-3 border-t border-slate-200 dark:border-slate-700 text-xs">
                   <div className="p-3 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex items-center justify-between">
                     <div>
                       <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
-                        Parte Fixa (10% da Renda)
+                        Planejado (Base 10% + Sobra)
                       </span>
                       <strong className="text-sm font-black text-slate-900 dark:text-white tabular-nums">
-                        {formatCurrency(guide.items.reduce((s, it) => s + it.baseAmount, 0))}
+                        {formatCurrency(guide.totalPlanned)}
                       </strong>
+                      <span className="text-[10px] text-slate-500 block">
+                        Base: {formatCurrency(guide.items.reduce((s, it) => s + it.baseAmount, 0))} · Sobra: +{formatCurrency(guide.items.reduce((s, it) => s + it.surplusAmount, 0))}
+                      </span>
                     </div>
                     <span className="text-base">📌</span>
                   </div>
@@ -668,10 +722,22 @@ export const MonthlyDepositGuideModal: React.FC<MonthlyDepositGuideModalProps> =
                   <div className="p-3 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex items-center justify-between">
                     <div>
                       <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
-                        Sobras Direcionadas
+                        Realizado no Mês
                       </span>
                       <strong className="text-sm font-black text-emerald-600 dark:text-emerald-400 tabular-nums">
-                        +{formatCurrency(guide.items.reduce((s, it) => s + it.surplusAmount, 0))}
+                        {formatCurrency(actualExecutedTotal)}
+                      </strong>
+                    </div>
+                    <span className="text-base">✅</span>
+                  </div>
+
+                  <div className="p-3 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex items-center justify-between">
+                    <div>
+                      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
+                        Aporte Extra
+                      </span>
+                      <strong className="text-sm font-black text-indigo-600 dark:text-indigo-400 tabular-nums">
+                        +{formatCurrency(extraDepositedTotal)}
                       </strong>
                     </div>
                     <span className="text-base">✨</span>
@@ -856,9 +922,25 @@ export const MonthlyDepositGuideModal: React.FC<MonthlyDepositGuideModalProps> =
                           </span>
                         </div>
 
-                        <div className="text-[11px] font-semibold text-slate-500 dark:text-slate-400 flex items-center gap-1">
-                          <Building className="w-3.5 h-3.5 text-slate-400" />
-                          <span>{item.instruction}</span>
+                        <div className="text-[11px] font-semibold text-slate-500 dark:text-slate-400 flex items-center gap-2 flex-wrap">
+                          <span className="flex items-center gap-1">
+                            <Building className="w-3.5 h-3.5 text-slate-400" />
+                            <span>{item.instruction}</span>
+                          </span>
+                          {item.executedAt ? (
+                            <span className="px-2.5 py-1 rounded-full bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 font-black text-[10px]">
+                              Realizado ✓ {item.executedOperationId ? `(${item.executedOperationId})` : ''}
+                            </span>
+                          ) : (
+                            <button
+                              type="button"
+                              disabled={isSubmittingGuide}
+                              onClick={() => handleConfirmItem(item.id)}
+                              className="px-2.5 py-1 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-black text-[11px] cursor-pointer"
+                            >
+                              Confirmar este item
+                            </button>
+                          )}
                         </div>
                       </div>
                     </div>
@@ -909,8 +991,9 @@ export const MonthlyDepositGuideModal: React.FC<MonthlyDepositGuideModalProps> =
             {/* O BOTÃO PRINCIPAL DE CONCLUSÃO SOLICITADO */}
             <button
               type="button"
+              disabled={isSubmittingGuide}
               onClick={handleConfirmDone}
-              className="px-6 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-black text-xs shadow-md shadow-emerald-600/25 flex items-center gap-2 transition-all cursor-pointer"
+              className="px-6 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 active:scale-95 text-white font-black text-xs shadow-md shadow-emerald-600/25 flex items-center gap-2 transition-all cursor-pointer"
             >
               <Check className="w-4 h-4 stroke-[3]" />
               <span>Já fiz os aportes do mês</span>

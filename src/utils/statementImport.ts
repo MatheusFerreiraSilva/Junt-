@@ -1,4 +1,10 @@
-import type { BankImportedTransaction, CategoryKeywordRule, PaidBy } from '../types/finance';
+import type {
+  BankImportedTransaction,
+  CategoryKeywordRule,
+  FinancialOperationRecord,
+  LinkedBankAccount,
+  PaidBy,
+} from '../types/finance';
 import { categorizeTransaction, DEFAULT_KEYWORD_RULES } from './categorizationEngine';
 
 export interface ImportRejectedItem {
@@ -430,4 +436,172 @@ export async function parseStatement(
   }
 
   return parseCsvStatement(text, account, owner, customRules);
+}
+
+// =========================================================================
+// STAGE 26B: INTERNAL TRANSFER PAIR DETECTION & WITHDRAWAL CANDIDATES
+// =========================================================================
+
+export interface InternalTransferPairCandidate {
+  debitTx: BankImportedTransaction;
+  creditTx: BankImportedTransaction;
+  amountCents: number;
+  daysApart: number;
+  reason: string;
+}
+
+function diffDaysCivil(a: string, b: string): number {
+  const ta = Date.parse(`${a.slice(0, 10)}T12:00:00Z`);
+  const tb = Date.parse(`${b.slice(0, 10)}T12:00:00Z`);
+  if (!Number.isFinite(ta) || !Number.isFinite(tb)) return 999;
+  return Math.round(Math.abs(ta - tb) / 86400000);
+}
+
+function resolveCanonicalKey(tx: BankImportedTransaction, accounts: LinkedBankAccount[] = []): string {
+  if (tx.canonicalAccountId) return tx.canonicalAccountId;
+  const matched = accounts.find((a) => a.id === tx.accountId || a.bankName === tx.bankName);
+  return matched?.canonicalAccountId || tx.accountId || tx.bankName || tx.id;
+}
+
+/**
+ * 26B: Detecta pares candidatos de transferência interna (débito em uma conta + crédito de mesmo centavo em outra)
+ * para confirmação explícita do casal — nunca converte automaticamente por título genérico.
+ */
+export function detectInternalTransferPairs(
+  transactions: BankImportedTransaction[],
+  accounts: LinkedBankAccount[] = []
+): InternalTransferPairCandidate[] {
+  const pendingDebits = transactions.filter((t) => t.status === 'pending' && t.direction === 'debit');
+  const pendingCredits = transactions.filter((t) => t.status === 'pending' && t.direction === 'credit');
+  const pairs: InternalTransferPairCandidate[] = [];
+  const usedCredits = new Set<string>();
+
+  for (const debit of pendingDebits) {
+    const debitCents = Math.round((debit.amount || 0) * 100);
+    if (debitCents <= 0) continue;
+    const debitAccKey = resolveCanonicalKey(debit, accounts);
+
+    let bestCredit: BankImportedTransaction | undefined;
+    let bestDays = 999;
+
+    for (const credit of pendingCredits) {
+      if (usedCredits.has(credit.id)) continue;
+      const creditCents = Math.round((credit.amount || 0) * 100);
+      if (creditCents !== debitCents) continue;
+      const creditAccKey = resolveCanonicalKey(credit, accounts);
+      if (debitAccKey === creditAccKey) continue;
+      const days = diffDaysCivil(debit.date, credit.date);
+      if (days <= 2 && days < bestDays) {
+        bestDays = days;
+        bestCredit = credit;
+      }
+    }
+
+    if (bestCredit) {
+      usedCredits.add(bestCredit.id);
+      pairs.push({
+        debitTx: debit,
+        creditTx: bestCredit,
+        amountCents: debitCents,
+        daysApart: bestDays,
+        reason: `Saída de R$ ${(debitCents / 100).toFixed(2)} em ${debit.bankName || debit.accountId} compatível com entrada idêntica em ${bestCredit.bankName || bestCredit.accountId} (${bestDays === 0 ? 'mesmo dia' : `${bestDays}d de diferença`}).`,
+      });
+    }
+  }
+
+  return pairs;
+}
+
+export interface ReconciliationCandidate {
+  operation: FinancialOperationRecord;
+  score: number;
+  exactNetMatch: boolean;
+  withinGrossSpread: boolean;
+  daysApart: number;
+  differenceCents: number;
+  reason: string;
+}
+
+export interface ReconciliationCandidateResult {
+  candidates: ReconciliationCandidate[];
+  ambiguous: boolean;
+}
+
+/**
+ * 26B: Encontra operações de resgate candidatas para conciliar um lançamento do extrato bancário,
+ * tolerando diferença leve de data, descrição e spread bruto→líquido, sinalizando ambiguidade ao usuário.
+ */
+export function findReconciliationCandidates(
+  bankTx: BankImportedTransaction,
+  operations: FinancialOperationRecord[],
+  accounts: LinkedBankAccount[] = []
+): ReconciliationCandidateResult {
+  if (bankTx.direction !== 'credit') {
+    return { candidates: [], ambiguous: false };
+  }
+  const txCents = Math.round((bankTx.amount || 0) * 100);
+  if (txCents <= 0) {
+    return { candidates: [], ambiguous: false };
+  }
+  const txAccKey = resolveCanonicalKey(bankTx, accounts);
+  const candidates: ReconciliationCandidate[] = [];
+
+  for (const op of operations) {
+    if (op.type !== 'GOAL_WITHDRAWAL') continue;
+    if (op.state === 'reverted' || op.state === 'estornado') continue;
+    if (op.withdrawalChannel === 'virtual_reallocation') continue;
+    if (op.bankTransactionId && op.bankTransactionId !== bankTx.id) continue;
+
+    const grossCents = op.grossAmountCents ?? op.amountCents;
+    const netCents = op.netAmountCents ?? op.amountCents;
+    const daysApart = diffDaysCivil(bankTx.date, op.date);
+    if (daysApart > 10) continue;
+
+    const exactNetMatch = netCents === txCents;
+    const exactGrossMatch = grossCents === txCents;
+    const spreadCents = grossCents - txCents;
+    const withinGrossSpread =
+      txCents <= grossCents &&
+      grossCents > 0 &&
+      spreadCents / grossCents <= 0.2;
+
+    if (!exactNetMatch && !exactGrossMatch && !withinGrossSpread) continue;
+
+    let score = 0;
+    if (exactNetMatch) score += 60;
+    else if (exactGrossMatch) score += 50;
+    else score += 30;
+
+    if (daysApart <= 1) score += 25;
+    else if (daysApart <= 3) score += 15;
+    else if (daysApart <= 7) score += 5;
+
+    const dstAcc = op.destinationAccountId;
+    if (dstAcc && (dstAcc === bankTx.accountId || dstAcc === txAccKey)) {
+      score += 20;
+    }
+
+    const differenceCents = Math.max(0, grossCents - txCents);
+    const reasonParts: string[] = [];
+    if (exactNetMatch) reasonParts.push('Valor líquido exato');
+    else if (withinGrossSpread) reasonParts.push(`Líquido R$ ${(txCents / 100).toFixed(2)} vs Bruto R$ ${(grossCents / 100).toFixed(2)}`);
+    reasonParts.push(daysApart === 0 ? 'mesma data' : `${daysApart}d`);
+    if (op.state === 'pending_settlement' || op.state === 'planned') reasonParts.push('em liquidação');
+
+    candidates.push({
+      operation: op,
+      score,
+      exactNetMatch,
+      withinGrossSpread,
+      daysApart,
+      differenceCents,
+      reason: reasonParts.join(' · '),
+    });
+  }
+
+  candidates.sort((a, b) => b.score - a.score || a.daysApart - b.daysApart);
+  const topScore = candidates[0]?.score ?? 0;
+  const ambiguous = candidates.filter((c) => c.score >= topScore - 5).length > 1;
+
+  return { candidates, ambiguous };
 }

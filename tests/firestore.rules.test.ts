@@ -192,6 +192,121 @@ describe.skipIf(!enabled)('Firestore couple isolation (emulator only)', () => {
       deleted: false,
       schemaVersion: 1,
     }));
+    await assertSucceeds(updateDoc(doc(alice, 'couples/a'), {
+      protectionYieldAccumulated: -50,
+      freedomYieldAccumulated: -120.5,
+    }));
+    await assertSucceeds(setDoc(doc(alice, 'couples/a/entities/financialOperations%3Aop-val-loss'), {
+      field: 'financialOperations',
+      record: {
+        id: 'op-val-loss',
+        type: 'VALUATION_ADJUSTMENT',
+        amountCents: 5000,
+        signedDeltaCents: -5000,
+        costBasisCents: 100000,
+        postValuationCents: 95000,
+        valuationDirection: 'loss',
+        scope: 'couple',
+        date: '2026-11-11',
+        state: 'occurred_manual',
+      },
+      deleted: false,
+      schemaVersion: 1,
+    }));
+    await assertSucceeds(setDoc(doc(alice, 'couples/a/entities/cashBalanceAnchors%3Aanchor-1'), {
+      field: 'cashBalanceAnchors',
+      record: {
+        id: 'anchor-1',
+        accountId: 'acc-nubank',
+        balanceCents: 0,
+        balanceStatus: 'known',
+        date: '2026-11-15',
+        scope: 'casal',
+      },
+      deleted: false,
+      schemaVersion: 1,
+    }));
+    await assertFails(setDoc(doc(alice, 'couples/a/entities/cashBalanceAnchors%3Aanchor-bad'), {
+      field: 'cashBalanceAnchors',
+      record: {
+        id: 'anchor-bad',
+        accountId: 'acc-nubank',
+        balanceCents: 100.5,
+        balanceStatus: 'invalid_status',
+      },
+      deleted: false,
+      schemaVersion: 1,
+    }));
+    await assertFails(setDoc(doc(alice, 'couples/a/entities/financialOperations%3Aop-w-neg-diff'), {
+      field: 'financialOperations',
+      record: {
+        id: 'op-w-neg-diff',
+        type: 'GOAL_WITHDRAWAL',
+        amountCents: 80000,
+        grossAmountCents: 80000,
+        netAmountCents: 78000,
+        differenceToReviewCents: -2000,
+        scope: 'couple',
+        date: '2026-11-15',
+        state: 'occurred_manual',
+      },
+      deleted: false,
+      schemaVersion: 1,
+    }));
+  });
+
+  it('validates competence and canonical categories for CATEGORY_REINFORCEMENT and CATEGORY_REALLOCATION (26C)', async () => {
+    const alice = env.authenticatedContext('alice').firestore();
+    await assertSucceeds(setDoc(doc(alice, 'couples/a/entities/financialOperations%3Aop-26c-ok'), {
+      field: 'financialOperations',
+      record: {
+        id: 'op-26c-ok',
+        type: 'CATEGORY_REINFORCEMENT',
+        amountCents: 800000,
+        scope: 'couple',
+        competence: '2026-11',
+        sourceRef: { type: 'piggy_bank', id: 'goal-1', name: 'Viagem' },
+        targetRef: { type: 'category', id: 'lazer', name: 'Lazer' },
+        date: '2026-11-15',
+        state: 'reconciled',
+      },
+      deleted: false,
+      schemaVersion: 1,
+    }));
+
+    await assertFails(setDoc(doc(alice, 'couples/a/entities/financialOperations%3Aop-26c-bad-cat'), {
+      field: 'financialOperations',
+      record: {
+        id: 'op-26c-bad-cat',
+        type: 'CATEGORY_REINFORCEMENT',
+        amountCents: 800000,
+        scope: 'couple',
+        competence: '2026-11',
+        sourceRef: { type: 'piggy_bank', id: 'goal-1', name: 'Viagem' },
+        targetRef: { type: 'category', id: 'carteira_secreta', name: 'Secreta' },
+        date: '2026-11-15',
+        state: 'occurred_manual',
+      },
+      deleted: false,
+      schemaVersion: 1,
+    }));
+
+    await assertFails(setDoc(doc(alice, 'couples/a/entities/financialOperations%3Aop-26c-same-realloc'), {
+      field: 'financialOperations',
+      record: {
+        id: 'op-26c-same-realloc',
+        type: 'CATEGORY_REALLOCATION',
+        amountCents: 50000,
+        scope: 'couple',
+        competence: '2026-11',
+        sourceRef: { type: 'category', id: 'lazer', name: 'Lazer' },
+        targetRef: { type: 'category', id: 'lazer', name: 'Lazer' },
+        date: '2026-11-15',
+        state: 'occurred_manual',
+      },
+      deleted: false,
+      schemaVersion: 1,
+    }));
   });
 
   describe('account avatars', () => {

@@ -16,7 +16,11 @@ import {
 } from 'lucide-react';
 import { useFinance, CATEGORIES_BASE } from '../context/FinanceContext';
 import { useDialogFocus } from '../hooks/useDialogFocus';
-import { parseStatement, isOfxContent } from '../utils/statementImport';
+import {
+  parseStatement,
+  detectInternalTransferPairs,
+  findReconciliationCandidates,
+} from '../utils/statementImport';
 import { formatCurrency } from '../utils/formatters';
 import { detectRecurringSubscriptions } from '../utils/categorizationEngine';
 import type { BankImportedTransaction, CategoryKey, PaidBy, ExpenseItem } from '../types/finance';
@@ -45,12 +49,20 @@ export const BankSyncModal: React.FC<BankSyncModalProps> = ({ isOpen, onClose })
     reviewBankTransaction,
     updatePushSettings,
     triggerCelebration,
+    verifiableCashSummary,
+    setCashBalanceAnchor,
+    linkCanonicalAccount,
+    reconcileBankTransactionWithOperation,
+    confirmInternalTransferPair,
   } = useFinance();
 
   const [account, setAccount] = useState<string>('Nubank');
   const [owner, setOwner] = useState<PaidBy>('both');
   const [preview, setPreview] = useState<BankImportedTransaction[]>([]);
   const [categoriesMap, setCategoriesMap] = useState<Record<string, CategoryKey>>({});
+  const [anchorBalanceInputs, setAnchorBalanceInputs] = useState<Record<string, string>>({});
+  const [anchorCutoffInputs, setAnchorCutoffInputs] = useState<Record<string, string>>({});
+  const [selectedReconcileOps, setSelectedReconcileOps] = useState<Record<string, string>>({});
   const [error, setError] = useState<string>('');
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
   const [importSuccessMsg, setImportSuccessMsg] = useState<string>('');
@@ -86,6 +98,31 @@ export const BankSyncModal: React.FC<BankSyncModalProps> = ({ isOpen, onClose })
     ];
     return detectRecurringSubscriptions(candidateExpenses);
   }, [state.expenses, preview, categoriesMap]);
+
+  const internalTransferPairs = useMemo(
+    () => detectInternalTransferPairs(state.bankImportedTransactions || [], state.linkedAccounts || []),
+    [state.bankImportedTransactions, state.linkedAccounts]
+  );
+
+  const checkingAccountsForAnchor = useMemo(
+    () =>
+      verifiableCashSummary.accounts
+        .filter(
+          a =>
+            (a.accountType === 'corrente' || a.accountType === 'poupanca') &&
+            a.status !== 'excluded_credit' &&
+            a.status !== 'excluded_locked'
+        )
+        .map(a => ({
+          id: a.sourceAccountIds[0] || a.canonicalAccountId,
+          canonicalAccountId: a.canonicalAccountId,
+          bankName: a.bankName,
+          accountType: a.accountType,
+          balance: a.effectiveLiquidCents !== null ? a.effectiveLiquidCents / 100 : 0,
+          verificationStatus: a.status === 'known' ? 'verified' : 'unverified',
+        })),
+    [verifiableCashSummary.accounts]
+  );
 
   if (!isOpen) return null;
 
@@ -440,6 +477,149 @@ export const BankSyncModal: React.FC<BankSyncModalProps> = ({ isOpen, onClose })
             </section>
           )}
 
+          {/* 26B: VERIFICAÇÃO DE SALDO E DUPLICIDADES DE CONTA */}
+          {(verifiableCashSummary.duplicateAccountAlerts.length > 0 || checkingAccountsForAnchor.length > 0) && (
+            <section className="space-y-3 pt-4 border-t border-slate-100 dark:border-slate-800">
+              <div className="flex items-center justify-between gap-2">
+                <h3 className="font-extrabold text-sm text-slate-900 dark:text-white">
+                  Verificação de Caixa &amp; Contas Canônicas
+                </h3>
+                <span className="text-[11px] font-bold text-slate-500 dark:text-slate-400">
+                  {verifiableCashSummary.status === 'unknown'
+                    ? 'Caixa livre não verificável'
+                    : verifiableCashSummary.status === 'partial'
+                    ? `Parcial: ${formatCurrency(verifiableCashSummary.knownAccountsCashCents / 100)}`
+                    : `Verificado: ${formatCurrency(verifiableCashSummary.verifiedLiquidCashR$ ?? 0)}`}
+                </span>
+              </div>
+
+              {verifiableCashSummary.duplicateAccountAlerts.map((dup, idx) => (
+                <div
+                  key={`${dup.bankName}-${idx}`}
+                  className="p-3 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 flex flex-wrap items-center justify-between gap-2 text-xs"
+                >
+                  <div>
+                    <div className="font-bold text-amber-900 dark:text-amber-200">
+                      Possível duplicidade: {dup.bankName}
+                    </div>
+                    <div className="text-[11px] text-amber-800 dark:text-amber-300">{dup.reason}</div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const canonical = `canon-${dup.accountIds[0]}`;
+                      dup.accountIds.forEach(id => linkCanonicalAccount(id, canonical));
+                      setImportSuccessMsg(`Contas espelhadas de ${dup.bankName} vinculadas sob ID canônico.`);
+                    }}
+                    className="px-3 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-bold text-[11px] cursor-pointer"
+                  >
+                    Vincular conta canônica
+                  </button>
+                </div>
+              ))}
+
+              {checkingAccountsForAnchor.map(acc => {
+                const defaultBal = anchorBalanceInputs[acc.id] ?? String(acc.balance ?? 0);
+                const defaultCutoff = anchorCutoffInputs[acc.id] ?? new Date().toISOString().slice(0, 10);
+                return (
+                  <div
+                    key={acc.id}
+                    className="p-3 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 space-y-2 text-xs"
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-slate-900 dark:text-white">
+                        {acc.bankName} ({acc.accountType})
+                      </span>
+                      <span className="text-[10px] font-bold text-slate-500">
+                        Status: {acc.verificationStatus === 'unverified' ? 'Desconhecido' : 'Verificado'}
+                      </span>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <input
+                        type="number"
+                        step="0.01"
+                        aria-label={`Saldo confirmado de ${acc.bankName}`}
+                        value={defaultBal}
+                        onChange={e => setAnchorBalanceInputs({ ...anchorBalanceInputs, [acc.id]: e.target.value })}
+                        className="w-28 px-2.5 py-1.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 font-bold text-xs tabular-nums"
+                      />
+                      <input
+                        type="date"
+                        aria-label={`Data de corte de ${acc.bankName}`}
+                        value={defaultCutoff}
+                        onChange={e => setAnchorCutoffInputs({ ...anchorCutoffInputs, [acc.id]: e.target.value })}
+                        className="px-2.5 py-1.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 font-bold text-xs"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const parsed = parseFloat(defaultBal.replace(',', '.'));
+                          if (!Number.isFinite(parsed)) return;
+                          setCashBalanceAnchor({
+                            accountId: acc.canonicalAccountId || acc.id,
+                            status: 'known',
+                            confirmedBalanceR$: parsed,
+                            cutoffDate: defaultCutoff,
+                          });
+                          setImportSuccessMsg(`Saldo de ${acc.bankName} confirmado em ${formatCurrency(parsed)}.`);
+                        }}
+                        className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[11px] cursor-pointer"
+                      >
+                        Confirmar saldo
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setCashBalanceAnchor({
+                            accountId: acc.canonicalAccountId || acc.id,
+                            status: 'unknown',
+                            cutoffDate: defaultCutoff,
+                          });
+                          setImportSuccessMsg(`Saldo de ${acc.bankName} marcado como desconhecido.`);
+                        }}
+                        className="px-2.5 py-1.5 rounded-xl bg-slate-200 hover:bg-slate-300 dark:bg-slate-700 dark:hover:bg-slate-600 text-slate-800 dark:text-slate-200 font-bold text-[11px] cursor-pointer"
+                      >
+                        Marcar desconhecido
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </section>
+          )}
+
+          {/* 26B: PARES CANDIDATOS DE TRANSFERÊNCIA INTERNA */}
+          {internalTransferPairs.length > 0 && (
+            <section className="space-y-2.5 pt-4 border-t border-slate-100 dark:border-slate-800">
+              <h3 className="font-extrabold text-sm text-slate-900 dark:text-white">
+                Transferências Internas Detectadas ({internalTransferPairs.length})
+              </h3>
+              {internalTransferPairs.map(pair => (
+                <div
+                  key={`${pair.debitTx.id}-${pair.creditTx.id}`}
+                  className="p-3 rounded-2xl bg-blue-50/70 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 flex flex-wrap items-center justify-between gap-2 text-xs"
+                >
+                  <div>
+                    <div className="font-bold text-slate-900 dark:text-white">
+                      {pair.debitTx.description} ↔ {pair.creditTx.description} ({formatCurrency(pair.amountCents / 100)})
+                    </div>
+                    <div className="text-[11px] text-slate-600 dark:text-slate-400">{pair.reason}</div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      confirmInternalTransferPair(pair.debitTx.id, pair.creditTx.id);
+                      setImportSuccessMsg('Par de transferência interna confirmado (impacto zero em gastos/renda).');
+                    }}
+                    className="px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-[11px] cursor-pointer"
+                  >
+                    Confirmar Transferência Interna
+                  </button>
+                </div>
+              ))}
+            </section>
+          )}
+
           {/* PENDING TRANSACTIONS AWAITING REVIEW */}
           {pendingTransactions.length > 0 && (
             <section className="space-y-3 pt-4 border-t border-slate-100 dark:border-slate-800">
@@ -469,6 +649,11 @@ export const BankSyncModal: React.FC<BankSyncModalProps> = ({ isOpen, onClose })
                 {pendingTransactions.map(t => {
                   const isCredit = t.direction === 'credit';
                   const activeCat = categoriesMap[t.id] || t.category || (isCredit ? 'moradia' : 'lazer');
+                  const reconciliationMatch = isCredit
+                    ? findReconciliationCandidates(t, state.financialOperations || [], state.linkedAccounts || [])
+                    : { candidates: [], ambiguous: false };
+                  const chosenOpId =
+                    selectedReconcileOps[t.id] || reconciliationMatch.candidates[0]?.operation.id || '';
 
                   return (
                     <div
@@ -500,6 +685,51 @@ export const BankSyncModal: React.FC<BankSyncModalProps> = ({ isOpen, onClose })
                           {isCredit ? '+' : '-'} {formatCurrency(t.amount)}
                         </span>
                       </div>
+
+                      {isCredit && reconciliationMatch.candidates.length > 0 && (
+                        <div className="p-2.5 rounded-xl bg-indigo-50/70 dark:bg-indigo-950/30 border border-indigo-200 dark:border-indigo-800 space-y-1.5 text-xs">
+                          <div className="font-bold text-indigo-900 dark:text-indigo-200 flex items-center justify-between gap-2">
+                            <span>Resgate compatível encontrado para conciliação</span>
+                            {reconciliationMatch.ambiguous && (
+                              <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-100 text-amber-900 font-extrabold">
+                                Múltiplos candidatos — escolha explicitamente
+                              </span>
+                            )}
+                          </div>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <select
+                              aria-label={`Selecionar resgate para conciliar ${t.description}`}
+                              value={chosenOpId}
+                              onChange={e =>
+                                setSelectedReconcileOps({ ...selectedReconcileOps, [t.id]: e.target.value })
+                              }
+                              className="flex-1 min-w-[180px] px-2.5 py-1.5 rounded-xl bg-white dark:bg-slate-900 border border-indigo-200 dark:border-indigo-700 text-xs font-bold"
+                            >
+                              {reconciliationMatch.candidates.map(cand => (
+                                <option key={cand.operation.id} value={cand.operation.id}>
+                                  {cand.operation.sourceRef?.name || cand.operation.id} ({cand.reason})
+                                </option>
+                              ))}
+                            </select>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (!chosenOpId) return;
+                                try {
+                                  setError('');
+                                  reconcileBankTransactionWithOperation(t.id, chosenOpId);
+                                  setImportSuccessMsg('Crédito conciliado com o resgate sem gerar renda fictícia.');
+                                } catch (err: any) {
+                                  setError(err?.message || 'Não foi possível conciliar este crédito com o resgate.');
+                                }
+                              }}
+                              className="px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs cursor-pointer"
+                            >
+                              Conciliar com resgate
+                            </button>
+                          </div>
+                        </div>
+                      )}
 
                       <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-slate-100 dark:border-slate-700/60">
                         {!isCredit && (

@@ -488,7 +488,16 @@ export function computeCompetenceBudgetSnapshot(
   };
   for (const op of state.financialOperations || []) {
     if (op.type !== 'CATEGORY_REINFORCEMENT') continue;
-    if (op.state === 'reverted' || op.state === 'estornado' || op.state === 'planned') continue;
+    if (
+      op.state === 'reverted' ||
+      op.state === 'estornado' ||
+      op.state === 'planned' ||
+      op.state === 'pending_settlement' ||
+      op.settlementStatus === 'planned' ||
+      op.settlementStatus === 'pending_settlement'
+    ) {
+      continue;
+    }
     const opComp = op.competence || (op.date ? op.date.slice(0, 7) : '');
     if (opComp !== competence) continue;
     if (op.targetRef?.type === 'category' && op.targetRef.id) {
@@ -514,6 +523,33 @@ export function computeCompetenceBudgetSnapshot(
     protecao: 0,
     profissional: 0,
   };
+  for (const op of state.financialOperations || []) {
+    if (op.type !== 'CATEGORY_REALLOCATION') continue;
+    if (
+      op.state === 'reverted' ||
+      op.state === 'estornado' ||
+      op.state === 'planned' ||
+      op.state === 'pending_settlement'
+    ) {
+      continue;
+    }
+    const opComp = op.competence || (op.date ? op.date.slice(0, 7) : '');
+    if (opComp !== competence) continue;
+    if (
+      op.sourceRef?.type === 'category' &&
+      op.sourceRef.id &&
+      op.targetRef?.type === 'category' &&
+      op.targetRef.id
+    ) {
+      const fromCat = mapToCanonicalCategoryKey(op.sourceRef.id);
+      const toCat = mapToCanonicalCategoryKey(op.targetRef.id);
+      if (fromCat !== toCat) {
+        const cents = readOperationAmountCents(op);
+        netReallocCents[fromCat] -= cents;
+        netReallocCents[toCat] += cents;
+      }
+    }
+  }
 
   const actualSpentR$: Record<DestinationKey, number> = {
     moradia: 0,

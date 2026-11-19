@@ -297,6 +297,8 @@ export interface SavingsPiggyBank {
   committedCents?: number;
   utilizedCents?: number;
   availableCents?: number; // accumulated - committed - utilized
+  liberatedReservedCents?: number; // 26B: Saldo liberado/resgatado ainda reservado ao propósito antes de gasto/reforço
+  uncoveredDivergenceCents?: number; // 26B: Divergência registrada quando ocorrência bancária superou planejamento
   linkedBankAccountId?: string; // Vínculo de custódia real para evitar dupla contagem de patrimônio
   // 29A: Revisão monotônica e última operação confirmada
   revision?: number;
@@ -417,6 +419,12 @@ export interface PluggyBankConnection {
   consentExpiresAt: string; // 12-month Open Finance regulatory expiration
   status: 'connected' | 'syncing' | 'needs_reauth' | 'error';
   appOwner: 'partner1' | 'partner2'; // which Pluggy application provided the data
+  // 26B: Identidade canônica de conta/ativo, carência e status de verificação
+  canonicalAccountId?: string;
+  mirroredFromAccountId?: string;
+  lockupUntil?: string; // YYYY-MM-DD (CDB/ativo em carência ou bloqueio)
+  settlementDate?: string; // YYYY-MM-DD (liquidação D+N)
+  verificationStatus?: 'verified' | 'unverified' | 'ambiguous_duplicate';
 }
 
 
@@ -451,7 +459,7 @@ export interface DetectedSubscription {
 export interface LinkedBankAccount {
   id: string;
   bankName: string;
-  accountType: 'corrente' | 'cartao' | 'investimento';
+  accountType: 'corrente' | 'cartao' | 'investimento' | 'poupanca';
   accountNumber: string;
   holder: PaidBy;
   balance: number;
@@ -459,6 +467,72 @@ export interface LinkedBankAccount {
   status: 'connected' | 'syncing' | 'error';
   colorHex: string;
   logo: string;
+  // 26B: Deduplicação canônica, carência e verificação explícita
+  canonicalAccountId?: string;
+  mirroredFromAccountId?: string;
+  lockupUntil?: string; // YYYY-MM-DD
+  settlementDate?: string; // YYYY-MM-DD
+  verificationStatus?: 'verified' | 'unverified' | 'ambiguous_duplicate';
+  revision?: number;
+  lastOperationId?: string;
+}
+
+export interface CashBalanceAnchor {
+  id: string;
+  accountId: string;
+  canonicalAccountId?: string;
+  accountType?: 'corrente' | 'poupanca' | 'investimento' | 'cartao';
+  date: string; // YYYY-MM-DD
+  balanceCents: number;
+  balanceStatus: 'known' | 'unknown';
+  scope: DomainScope | string;
+  origin: 'manual_confirmed' | 'statement_closing';
+  coverageType: 'cutoff_inclusive' | 'operations_list';
+  includedUntilDate?: string; // YYYY-MM-DD
+  includedOperationIds?: string[];
+  confirmedAt: string;
+  confirmedByUid: string;
+  notes?: string;
+  revision?: number;
+}
+
+export interface CashAccountVerificationItem {
+  canonicalAccountId: string;
+  sourceAccountIds: string[];
+  bankName: string;
+  accountType: 'corrente' | 'poupanca' | 'investimento' | 'cartao';
+  holder: PaidBy;
+  status: 'known' | 'unknown' | 'excluded_credit' | 'excluded_locked' | 'ambiguous_duplicate';
+  includedInLiquidCash: boolean;
+  baseBalanceCents: number | null;
+  postAnchorDeltaCents: number;
+  effectiveLiquidCents: number | null;
+  inTransitCents: number;
+  lockedCents: number;
+  anchorId?: string;
+  anchorDate?: string;
+  exclusionReason?: string;
+}
+
+export interface VerifiableCashSummary {
+  scope: DomainScope;
+  status: 'known' | 'partial' | 'unknown';
+  isReliableGlobalCash: boolean;
+  verifiedLiquidCashCents: number | null;
+  verifiedLiquidCashR$: number | null;
+  knownAccountsCashCents: number;
+  inTransitRedemptionCents: number;
+  lockedAssetCents: number;
+  liberatedPurposeCents: number;
+  unverifiedReasons: string[];
+  duplicateAccountAlerts: Array<{
+    accountIds: string[];
+    bankName: string;
+    owner: PaidBy;
+    reason: string;
+  }>;
+  accounts: CashAccountVerificationItem[];
+  referenceDate: string;
 }
 
 export interface SpendingAlertRule {
@@ -504,6 +578,10 @@ export interface MonthlyDepositItem {
   totalAmount: number;
   targetGoalId?: string;
   targetGoalEmoji?: string;
+  executedAt?: string;
+  executedOperationId?: string;
+  executedAmount?: number;
+  executedByUid?: string;
 }
 
 export interface MonthlyDepositGuide {
@@ -519,6 +597,8 @@ export interface MonthlyDepositGuide {
   shieldedEssential?: number;
   focusStrategy?: '100_percent_reserve' | 'split_freedom';
   redirectedBlock2Surplus?: number;
+  revision?: number;
+  lastOperationId?: string;
 }
 
 export interface MonthDepositCompletionRecord {
@@ -526,6 +606,10 @@ export interface MonthDepositCompletionRecord {
   completedAt: string;
   totalDeposited: number;
   items: MonthlyDepositItem[];
+  operationId?: string;
+  executedByUid?: string;
+  plannedAmount?: number;
+  extraAmount?: number;
 }
 
 export interface MonthTrendRecord {
@@ -579,7 +663,7 @@ export interface BankImportedTransaction {
   description: string;
   direction: 'credit' | 'debit';
   owner: PaidBy;
-  status: 'pending' | 'expense' | 'income' | 'internal_transfer';
+  status: 'pending' | 'expense' | 'income' | 'internal_transfer' | 'reconciled';
   category?: CategoryKey;
   subcategory?: string;
   matchedRule?: string;
@@ -592,6 +676,13 @@ export interface BankImportedTransaction {
   classificationReason?: string;
   ruleVersion?: string;
   splits?: TransactionSplit[];
+  // 26B: Conciliação explícita com operação patrimonial e pareamento interno
+  canonicalAccountId?: string;
+  reconciledOperationId?: string;
+  pairedTransferTransactionId?: string;
+  reconciliationCandidateIds?: string[];
+  statementBalanceCents?: number;
+  statementBalanceDate?: string;
 }
 
 export type DestinationKey = CategoryKey | 'investimentos';
@@ -686,14 +777,50 @@ export interface BudgetPlanContract {
 }
 
 // 28C & 29B: Tipos para as Duas Visões Reconciliadas do Orçamento (Categorias vs Estrutura)
+export interface ReinforcementProvenanceRef {
+  operationId: string;
+  sourceType: NonNullable<FinancialOperationRecord['sourceRef']>['type'];
+  sourceId: string;
+  sourceName: string;
+  sourceOperationId?: string;
+  competence: string;
+  category: CategoryKey;
+  amountCents: number;
+  amountR$: number;
+  date: string;
+  state: FinancialOperationState;
+  isReconciled: boolean;
+  evidenceType: 'bank_reconciled' | 'manual_declared' | 'virtual_earmark' | 'legacy_adjustment';
+  notes?: string;
+  reconciliationRef?: string;
+  bankTransactionId?: string;
+}
+
+export interface CategoryReinforcementSummary {
+  competence: string;
+  scope: DomainScope;
+  reinforcementCents: Record<CategoryKey, number>;
+  reallocInCents: Record<CategoryKey, number>;
+  reallocOutCents: Record<CategoryKey, number>;
+  netReallocCents: Record<CategoryKey, number>;
+  sourcesByCategory: Record<CategoryKey, ReinforcementProvenanceRef[]>;
+  allSources: ReinforcementProvenanceRef[];
+  totalReinforcementCents: number;
+  totalNetReallocCents: number;
+}
+
 export interface ReconciledStructureBlock {
   key: 'fixos' | 'variaveis';
   title: string;
-  plannedBudget: number; // R$
+  plannedBudget: number; // R$ (base habitual aprovada pela política)
+  basePlannedBudget?: number; // R$ (meta habitual explícita)
+  reinforcementAmount?: number; // R$ (soma de reforços temporários ativos no bloco)
+  reallocationNetAmount?: number; // R$ (realocações recebidas - enviadas no bloco)
+  effectiveBudget?: number; // R$ (base + reforços + realocações líquidas)
   realizedLiquid: number; // R$ (fatias pagas)
   pendingCommitments: number; // R$ (obrigações/parcelas pendentes)
   projectedTotal: number; // realized + pending
-  signedMargin: number; // plannedBudget - projectedTotal
+  signedMargin: number; // effectiveBudget - projectedTotal
   unallocatedVariableMargin?: number; // R$ (apenas em variáveis)
   isOverCeiling: boolean;
   overAmount: number; // R$
@@ -715,14 +842,22 @@ export interface ReconciledCategoryRow {
   key: CategoryKey;
   name: string;
   emoji: string;
-  plannedBudget: number; // R$
+  plannedBudget: number; // R$ (envelope efetivo = base + reforços + realocações líquidas)
+  basePlannedBudget?: number; // R$ (meta habitual intocada)
+  basePercentage?: number; // % habitual da categoria
+  reinforcementAmount?: number; // R$ (reforços temporários confirmados nesta competência)
+  reallocationNetAmount?: number; // R$ (realocações recebidas - enviadas nesta competência)
+  effectiveBudget?: number; // R$ (= plannedBudget quando há reforço/realocação)
+  hasTemporaryReinforcement?: boolean;
+  reinforcementSources?: ReinforcementProvenanceRef[];
+  verifiableCashStatus?: 'known' | 'partial' | 'unknown';
   fixedSpent: number; // R$ (fatias de natureza fixa)
   variableSpent: number; // R$ (fatias de natureza variável)
   unclassifiedSpent?: number; // R$ (fatias sem natureza confiável — pendente de classificação)
   realizedLiquid: number; // R$ (fixedSpent + variableSpent + unclassifiedSpent)
   pendingCommitments: number; // R$ (obrigações pendentes da categoria)
   projectedTotal: number; // R$ (realized + pending)
-  signedMargin: number; // R$ (plannedBudget - projectedTotal)
+  signedMargin: number; // R$ (effectiveBudget - projectedTotal)
   isOverCeiling: boolean;
   overAmount: number; // R$
   percentageUsed: number;
@@ -738,6 +873,7 @@ export interface ReconciledBudgetMatrixResult {
   policyRatios: { fixedPct: number; varPct: number; investPct: number };
   hasExplicitCeiling?: boolean;
   ceilingState?: CeilingState;
+  verifiableCashStatus?: 'known' | 'partial' | 'unknown';
   
   // Visão por Estrutura (Fixos vs Variáveis vs Aportes)
   structureBlocks: {
@@ -750,11 +886,18 @@ export interface ReconciledBudgetMatrixResult {
   categories: ReconciledCategoryRow[];
 
   // Totais Reconciliados Globais
+  totalBasePlannedBudget?: number; // R$ (meta habitual total de Fixos + Variáveis)
+  totalReinforcementAmount?: number; // R$ (total de reforços temporários na competência)
+  totalEffectiveBudget?: number; // R$ (orçamento efetivo unificado na competência)
   totalPlannedBudget: number; // R$
   totalRealizedLiquid: number; // R$
   totalPendingCommitments: number; // R$
   totalProjectedConsumption: number; // R$
   totalSignedMargin: number; // R$
+
+  // 26C: Provas e origens de reforço na competência
+  reinforcementsByCategory?: Record<CategoryKey, number>;
+  allReinforcementSources?: ReinforcementProvenanceRef[];
 
   // 29B: Parcela sem natureza confiável (pendente de classificação, preservada no total sem inventar variável)
   unclassifiedSpent?: number; // R$
@@ -831,19 +974,28 @@ export interface AppState {
   dreamSimulations?: DreamSimulation[];
   // 26A: Registro durável de operações financeiras (comandos atômicos com idempotência e conciliação)
   financialOperations?: FinancialOperationRecord[];
+  // 26B: Âncoras manuais de saldo em conta para caixa verificável sem dupla contagem
+  cashBalanceAnchors?: CashBalanceAnchor[];
 }
 
 export type FinancialOperationType =
   | 'CATEGORY_REINFORCEMENT' // Reforço temporário de envelope da categoria
+  | 'CATEGORY_REALLOCATION'  // Realocação entre categorias na mesma competência (vasos comunicantes)
   | 'GOAL_DIRECT_PURCHASE'   // Compra direta financiada por caixinha/meta (fora do teto da categoria)
-  | 'GOAL_DEPOSIT'           // Aporte na caixinha/meta
-  | 'GOAL_WITHDRAWAL'        // Resgate da caixinha/meta
+  | 'GOAL_DEPOSIT'           // Aporte na caixinha/meta ou bloco
+  | 'GOAL_WITHDRAWAL'        // Resgate da caixinha/meta ou bloco
   | 'GOAL_TRANSFER'          // Transferência entre metas (Meta A -> Meta B)
+  | 'BLOCK_TRANSFER'         // Transferência entre blocos/ativos (Proteção / Objetivos / Liberdade)
+  | 'INITIAL_POSITION'       // Posição inicial / saldo de abertura sem inflar renda ou aporte do mês
+  | 'VALUATION_ADJUSTMENT'   // Ajuste de avaliação / rendimento (inclusive negativo) sem fluxo de caixa
+  | 'MONTHLY_GUIDE_ITEM'     // Execução individual de item da guia de aporte mensal
+  | 'MONTHLY_GUIDE_EXECUTION'// Execução da guia de aporte mensal (itens pendentes)
   | 'EXPENSE_RECORD'         // Registro de despesa
   | 'INCOME_RECORD';         // Registro de receita
 
 export type FinancialOperationState =
   | 'planned'
+  | 'pending_settlement'
   | 'processing'
   | 'occurred_manual'
   | 'reconciled'
@@ -875,23 +1027,24 @@ export type FinancialCommandReasonCode =
   | 'INSUFFICIENT_FUNDS'
   | 'OPERATION_NOT_FOUND'
   | 'REVERSAL_DEPENDENCY_ERROR'
+  | 'CONFIRMATION_REQUIRED'
   | 'EXPENSE_NOT_FOUND'
   | 'INTENT_NOT_FOUND';
 
 export interface FinancialOperationRecord {
   id: string; // operationId estável
   type: FinancialOperationType;
-  amountCents: number; // Centavos inteiros preservados (unidade autoritativa)
+  amountCents: number; // Centavos inteiros preservados (unidade autoritativa, > 0)
   amountR$?: number; // Valor equivalente derivado em Reais (apenas apresentação/compatibilidade)
   authorizedBy: string; // uid ou role 'partner1' | 'partner2' | 'both'
   authoredByUid?: string; // UID autenticado de autoria
   sourceRef?: {
-    type: 'account' | 'piggy_bank' | 'income' | 'reserve' | 'external';
+    type: 'account' | 'piggy_bank' | 'income' | 'reserve' | 'external' | 'protection' | 'freedom' | 'guide' | 'category';
     id: string;
     name?: string;
   };
   targetRef?: {
-    type: 'category' | 'piggy_bank' | 'expense' | 'external';
+    type: 'account' | 'category' | 'piggy_bank' | 'expense' | 'external' | 'protection' | 'reserve' | 'freedom' | 'guide';
     id: string;
     name?: string;
   };
@@ -913,22 +1066,68 @@ export interface FinancialOperationRecord {
     path: 'budget_reinforcement' | 'direct_goal_purchase';
     allocatedCents: number;
   };
+  valuationDirection?: 'gain' | 'loss';
+  signedDeltaCents?: number;
+  costBasisCents?: number;
+  realizedGainCents?: number;
+  postCostBasisCents?: number;
+  postValuationCents?: number;
+  guideMonthKey?: string;
+  guideItemId?: string;
+  isExtraAporte?: boolean;
+  surplusTransferId?: string;
+  completedGoalContributionConfirmed?: boolean;
+  // 26B: Canais de resgate/liberação, liquidação bruto x líquido, partições e divergência real
+  withdrawalChannel?: 'virtual_reallocation' | 'asset_redemption';
+  settlementStatus?: 'planned' | 'pending_settlement' | 'occurred_manual' | 'reconciled' | 'divergent';
+  settlementDate?: string;
+  destinationAccountId?: string;
+  grossAmountCents?: number;
+  netAmountCents?: number;
+  differenceToReviewCents?: number;
+  principalCents?: number;
+  interestCents?: number;
+  taxCents?: number;
+  feeCents?: number;
+  partitions?: Array<{
+    id: string;
+    targetType: 'category_reinforcement' | 'direct_purchase' | 'cash_free' | 'other_goal';
+    targetId?: string;
+    targetLabel?: string;
+    amountCents: number;
+    consumedCents?: number;
+  }>;
+  sourceOperationId?: string;
+  bankTransactionId?: string;
+  overrideInsufficientPlanning?: boolean;
+  planningDivergenceCents?: number;
+  reconciledAt?: string;
+  reconciledByUid?: string;
   createdAt?: string;
   notes?: string;
   currency?: string;
   scope?: DomainScope | string;
 }
 
+export type WithdrawalPurposePartition = NonNullable<FinancialOperationRecord['partitions']>[number];
+
 export interface FinancialCommandTouchedEntities {
   financialOperations?: string[];
   piggyBanks?: string[];
   coupleGoals?: string[];
+  linkedAccounts?: string[];
+  bankImportedTransactions?: string[];
+  cashBalanceAnchors?: string[];
   expenses?: string[];
   strategicIntents?: string[];
   dreamSimulations?: string[];
   coupleWishlist?: string[];
   coupleFixedBills?: string[];
   protectionUpdated?: boolean;
+  freedomUpdated?: boolean;
+  guideUpdated?: boolean;
+  surplusTransfersUpdated?: boolean;
+  guideMonthKey?: string;
 }
 
 export interface FinancialCommandResult {
@@ -1183,6 +1382,9 @@ export interface CoupleGoal {
   history: CoupleGoalContribution[];
   createdAt: string;
   coupleAgreement?: CoupleAgreement;
+  isFireEligible?: boolean;
+  totalInvested?: number;
+  yieldAccumulated?: number;
   // 27: Controle seguro de arquivamento e tombstones
   archived?: boolean;
   isDeleted?: boolean;
@@ -1191,6 +1393,8 @@ export interface CoupleGoal {
   committedCents?: number;
   utilizedCents?: number;
   availableCents?: number; // accumulated - committed - utilized
+  liberatedReservedCents?: number; // 26B: Saldo liberado/resgatado ainda reservado ao propósito
+  uncoveredDivergenceCents?: number;
   linkedBankAccountId?: string; // Vínculo de conta/CDB para evitar contagem duplicada
   revision?: number;
   lastOperationId?: string;

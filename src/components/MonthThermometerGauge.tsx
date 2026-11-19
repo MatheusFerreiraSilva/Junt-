@@ -3,6 +3,7 @@ import { ChevronRight, AlertCircle, CheckCircle2, AlertTriangle, HelpCircle } fr
 import { formatCurrency } from '../utils/formatters';
 import { LifeTierInfo } from '../types/finance';
 import { ThermometerEngineResult } from '../utils/thermometerEngine';
+import { ReinforcementProvenanceBar } from './ReinforcementProvenanceBar';
 
 interface MonthThermometerGaugeProps {
   engineResult: ThermometerEngineResult;
@@ -262,6 +263,27 @@ export const MonthThermometerGauge: React.FC<MonthThermometerGaugeProps> = ({
               {formatCurrency(totalConsumedAmount)} / {formatCurrency(expenseBudget)}
             </span>
           </div>
+
+          {engineResult.hasTemporaryReinforcement && (engineResult.reinforcementAmount || 0) > 0 && (
+            <div
+              onClick={(e) => e.stopPropagation()}
+              className="p-3 rounded-2xl bg-sky-50/80 dark:bg-sky-950/30 border border-sky-200 dark:border-sky-800/70"
+            >
+              <ReinforcementProvenanceBar
+                compact
+                spent={totalConsumedAmount}
+                baseBudget={engineResult.baseExpenseBudget ?? Math.max(0, expenseBudget - (engineResult.reinforcementAmount || 0))}
+                effectiveBudget={expenseBudget}
+                reinforcementAmount={engineResult.reinforcementAmount || 0}
+                reallocationNetAmount={engineResult.reallocationNetAmount || 0}
+                sources={engineResult.reinforcementSources || []}
+                categoryName="Plano de Despesas do Mês"
+                competence={engineResult.monthKey}
+                verifiableCashStatus={engineResult.verifiableCashStatus}
+                fillClassName={isOverBudget ? 'bg-rose-500' : 'bg-[#111318] dark:bg-sky-400'}
+              />
+            </div>
+          )}
         </div>
       </div>
     </div>

@@ -97,6 +97,12 @@ import {
   DreamSimulation,
   ReconciledBudgetMatrixResult,
   FinancialCommandResult,
+  FinancialOperationRecord,
+  CashBalanceAnchor,
+  VerifiableCashSummary,
+  WithdrawalPurposePartition,
+  ReinforcementProvenanceRef,
+  CategoryReinforcementSummary,
 } from '../types/finance';
 import {
   DEFAULT_PUSH_SETTINGS,
@@ -153,6 +159,36 @@ import {
   executeExpenseTriageCommand,
   executeGoalAdjustmentCommand,
   executeIntentConversionCommand,
+  runFinancialCommand,
+  reverseFinancialCommand,
+  executeBlockTransferCommand,
+  executeInitialPositionCommand,
+  executeValuationAdjustmentCommand,
+  executeMonthlyDepositItemCommand,
+  executeMonthlyDepositCommand,
+  reverseMonthlyDepositCommand,
+  selectVerifiableCashSummary,
+  previewGoalWithdrawal,
+  executeWithdrawalCommand,
+  reconcileWithdrawalWithStatementCommand,
+  confirmInternalTransferPairCommand,
+  selectCategoryReinforcementSummary,
+  listEligibleReinforcementSources,
+  previewCategoryReinforcement,
+  executeCategoryReinforcementCommand,
+  executeCategoryReallocationCommand,
+  type BlockTransferCommandParams,
+  type InitialPositionCommandParams,
+  type ValuationAdjustmentCommandParams,
+  type ExecuteMonthlyDepositItemParams,
+  type ExecuteMonthlyDepositParams,
+  type GoalWithdrawalCommandParams,
+  type GoalWithdrawalPreviewResult,
+  type ReconcileWithdrawalStatementParams,
+  type EligibleReinforcementSource,
+  type PreviewCategoryReinforcementParams,
+  type PreviewCategoryReinforcementResult,
+  type ExecuteCategoryReinforcementParams,
 } from '../utils/domainSelectors';
 import {
   apportionCentsByScope,
@@ -436,12 +472,28 @@ const INITIAL_STATE: AppState = {
   },
   strategicIntents: [],
   financialOperations: [],
+  cashBalanceAnchors: [],
 };
 
 export interface FinanceContextType {
   state: AppState;
   categories: Record<CategoryKey, CategoryInfo>;
-  categoriesSpending: Record<CategoryKey, { spent: number; budget: number; remaining: number; percentageUsed: number; isOver: boolean }>;
+  categoriesSpending: Record<
+    CategoryKey,
+    {
+      spent: number;
+      budget: number;
+      baseBudget: number;
+      basePct: number;
+      reinforcementAmount: number;
+      reallocationNetAmount: number;
+      hasTemporaryReinforcement: boolean;
+      reinforcementSources: ReinforcementProvenanceRef[];
+      remaining: number;
+      percentageUsed: number;
+      isOver: boolean;
+    }
+  >;
   totalIncome: number;
   totalSpent: number;
   totalSpentThisMonth: number;
@@ -494,10 +546,54 @@ export interface FinanceContextType {
   archivePiggyBank: (id: string, archive?: boolean) => void;
   deletePiggyBank: (id: string, force?: boolean) => void;
   removePiggyBank: (id: string, force?: boolean) => void;
-  depositPiggyBank: (id: string, amount: number, contributor?: 'partner1' | 'partner2' | 'both', note?: string) => void;
-  depositToPiggyBank: (id: string, amount: number, contributor?: 'partner1' | 'partner2' | 'both', note?: string) => void;
-  withdrawPiggyBank: (id: string, amount: number) => void;
-  withdrawFromPiggyBank: (id: string, amount: number) => void;
+  depositPiggyBank: (
+    id: string,
+    amount: number,
+    contributor?: 'partner1' | 'partner2' | 'both',
+    note?: string,
+    options?: { operationId?: string; completedGoalContributionConfirmed?: boolean; date?: string }
+  ) => FinancialCommandResult;
+  depositToPiggyBank: (
+    id: string,
+    amount: number,
+    contributor?: 'partner1' | 'partner2' | 'both',
+    note?: string,
+    options?: { operationId?: string; completedGoalContributionConfirmed?: boolean; date?: string }
+  ) => FinancialCommandResult;
+  withdrawPiggyBank: (
+    id: string,
+    amount: number,
+    options?: {
+      operationId?: string;
+      date?: string;
+      note?: string;
+      withdrawalChannel?: 'virtual_reallocation' | 'asset_redemption';
+      executionMode?: 'planned' | 'pending_settlement' | 'occurred_manual' | 'reconciled';
+      grossAmountR$?: number;
+      netAmountR$?: number;
+      destinationAccountId?: string;
+      settlementDate?: string;
+      partitions?: WithdrawalPurposePartition[];
+      overrideInsufficientPlanning?: boolean;
+    }
+  ) => FinancialCommandResult;
+  withdrawFromPiggyBank: (
+    id: string,
+    amount: number,
+    options?: {
+      operationId?: string;
+      date?: string;
+      note?: string;
+      withdrawalChannel?: 'virtual_reallocation' | 'asset_redemption';
+      executionMode?: 'planned' | 'pending_settlement' | 'occurred_manual' | 'reconciled';
+      grossAmountR$?: number;
+      netAmountR$?: number;
+      destinationAccountId?: string;
+      settlementDate?: string;
+      partitions?: WithdrawalPurposePartition[];
+      overrideInsufficientPlanning?: boolean;
+    }
+  ) => FinancialCommandResult;
   setCurrentMonth: (month: string) => void;
   syncBankAccounts: () => Promise<void>;
   triggerBankSync: () => Promise<void>;
@@ -515,16 +611,73 @@ export interface FinanceContextType {
   monthlyFixedExpensesAvg: number;
   toggleProtectionComplete: () => void;
   setProtectionComplete: (complete: boolean) => void;
-  depositToProtection: (amount: number) => void;
-  withdrawFromProtection: (amount: number) => void;
+  depositToProtection: (amount: number, options?: { operationId?: string; note?: string; date?: string }) => FinancialCommandResult;
+  withdrawFromProtection: (amount: number, options?: { operationId?: string; note?: string; date?: string }) => FinancialCommandResult;
   toggleGoalComplete: (id: string) => void;
-  depositToGoal: (id: string, amount: number) => void;
-  withdrawFromGoal: (id: string, amount: number) => void;
-  depositToFreedom: (amount: number) => void;
-  withdrawFromFreedom: (amount: number) => void;
+  depositToGoal: (
+    id: string,
+    amount: number,
+    options?: { operationId?: string; completedGoalContributionConfirmed?: boolean; date?: string; note?: string }
+  ) => FinancialCommandResult;
+  withdrawFromGoal: (
+    id: string,
+    amount: number,
+    options?: {
+      operationId?: string;
+      date?: string;
+      note?: string;
+      withdrawalChannel?: 'virtual_reallocation' | 'asset_redemption';
+      executionMode?: 'planned' | 'pending_settlement' | 'occurred_manual' | 'reconciled';
+      grossAmountR$?: number;
+      netAmountR$?: number;
+      destinationAccountId?: string;
+      settlementDate?: string;
+      partitions?: WithdrawalPurposePartition[];
+      overrideInsufficientPlanning?: boolean;
+    }
+  ) => FinancialCommandResult;
+  depositToFreedom: (amount: number, options?: { operationId?: string; note?: string; date?: string }) => FinancialCommandResult;
+  withdrawFromFreedom: (amount: number, options?: { operationId?: string; note?: string; date?: string }) => FinancialCommandResult;
   updateProtectionBankBalance: (totalInvested: number, currentBankAmount: number) => void;
   updateFreedomBankBalance: (totalInvested: number, currentBankAmount: number) => void;
   updateGoalBankBalance: (id: string, totalInvested: number, currentBankAmount: number) => void;
+  transferBetweenBlocks: (
+    params: Omit<BlockTransferCommandParams, 'authoredByUid' | 'scope' | 'reserveFloorR$'>
+  ) => FinancialCommandResult;
+  recordInitialPosition: (
+    params: Omit<InitialPositionCommandParams, 'authoredByUid' | 'scope' | 'reserveFloorR$'>
+  ) => FinancialCommandResult;
+  adjustPatrimonialValuation: (
+    params: Omit<ValuationAdjustmentCommandParams, 'authoredByUid' | 'scope' | 'reserveFloorR$'>
+  ) => FinancialCommandResult;
+  reverseFinancialOperation: (operationId: string, reason?: string) => FinancialCommandResult;
+  verifiableCashSummary: VerifiableCashSummary;
+  setCashBalanceAnchor: (input: {
+    accountId: string;
+    status: 'known' | 'unknown';
+    confirmedBalanceR$?: number;
+    cutoffDate?: string;
+    reason?: string;
+  }) => void;
+  linkCanonicalAccount: (accountId: string, canonicalAccountId: string) => void;
+  previewWithdrawal: (params: GoalWithdrawalCommandParams) => GoalWithdrawalPreviewResult;
+  executeWithdrawal: (
+    params: Omit<GoalWithdrawalCommandParams, 'authoredByUid' | 'scope' | 'reserveFloorR$'>
+  ) => FinancialCommandResult;
+  reconcileBankTransactionWithOperation: (
+    bankTransactionId: string,
+    operationId: string,
+    options?: Omit<ReconcileWithdrawalStatementParams, 'bankTransactionId' | 'operationId' | 'reconciledByUid'>
+  ) => FinancialCommandResult;
+  confirmInternalTransferPair: (debitTxId: string, creditTxId: string, note?: string) => FinancialCommandResult;
+  eligibleReinforcementSources: EligibleReinforcementSource[];
+  reinforcementSummary: CategoryReinforcementSummary;
+  previewCategoryReinforcementAction: (
+    params: PreviewCategoryReinforcementParams
+  ) => PreviewCategoryReinforcementResult;
+  reinforceCategoryFromSource: (
+    params: Omit<ExecuteCategoryReinforcementParams, 'authorizedBy' | 'authoredByUid'>
+  ) => FinancialCommandResult;
 
   // Modo Faculdade Actions
   setAppMode: (mode: 'casal' | 'faculdade') => void;
@@ -702,8 +855,17 @@ export interface FinanceContextType {
   updateDepositGuideStrategy: (monthKey: string, strategy: '100_percent_reserve' | 'split_freedom') => void;
   approveMonthlyDepositGuide: (monthKey: string, customItems?: MonthlyDepositItem[]) => void;
   adjustMonthlyDepositItem: (monthKey: string, itemId: string, newAmount: number) => void;
-  executeMonthlyDeposit: (monthKey: string) => void;
-  resetMonthlyDeposit: (monthKey: string) => void;
+  executeMonthlyDeposit: (
+    monthKey: string,
+    options?: Omit<ExecuteMonthlyDepositParams, 'monthKey'>
+  ) => FinancialCommandResult;
+  executeMonthlyDepositItem: (
+    monthKey: string,
+    itemId: string,
+    extraAmountR$?: number,
+    options?: Omit<ExecuteMonthlyDepositItemParams, 'monthKey' | 'itemId' | 'extraAmountR$'>
+  ) => FinancialCommandResult;
+  resetMonthlyDeposit: (monthKey: string) => FinancialCommandResult;
 
   // Notificações Push & Alertas Estratégicos
   pushSettings: PushNotificationSettings;
@@ -754,7 +916,13 @@ export interface FinanceContextType {
   // Gestão da Reserva de Emergência & Adiantamento de Parcelas
   emergencyReserveFloorAmount: number;
   emergencyReserveExcessAmount: number;
-  reallocateReserveExcess: (amount: number, targetType: 'goal' | 'freedom', targetGoalId?: string, targetGoalName?: string) => void;
+  reallocateReserveExcess: (
+    amount: number,
+    targetType: 'goal' | 'freedom',
+    targetGoalId?: string,
+    targetGoalName?: string,
+    options?: { completedGoalContributionConfirmed?: boolean; operationId?: string }
+  ) => FinancialCommandResult;
   advanceInstallmentPayment: (payload: import('../types/finance').AdvanceInstallmentPayload) => void;
 
   // Intenções de Gasto Estratégico & Triagem Omnipresente (Alocação Proativa de Fonte)
@@ -876,7 +1044,12 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
           }
           parsed.monthlyBudgetPlans = upgradedPlans;
         }
-        return { ...INITIAL_STATE, ...parsed, profile: { ...INITIAL_STATE.profile, ...parsed.profile } };
+        return {
+          ...INITIAL_STATE,
+          ...parsed,
+          cashBalanceAnchors: Array.isArray(parsed.cashBalanceAnchors) ? parsed.cashBalanceAnchors : [],
+          profile: { ...INITIAL_STATE.profile, ...parsed.profile },
+        };
       }
     } catch { console.warn('Não foi possível recuperar o cache desta conta.'); }
     return { ...INITIAL_STATE };
@@ -1373,6 +1546,7 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
     state.pluggyAccounts,
     state.monthlyBudgetPlans,
     state.financialOperations,
+    state.cashBalanceAnchors,
   ]);
 
   // Realtime Cloud Persistence: Save ONLY changed shared couple header fields (partial patch transaction)
@@ -1819,14 +1993,50 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
     };
   }, [state, activeCompetenceBudgetPlan]);
 
+  const reinforcementSummary = useMemo(() => {
+    return selectCategoryReinforcementSummary(state, 'casal', state.currentMonth);
+  }, [state]);
+
+  const eligibleReinforcementSources = useMemo(() => {
+    return listEligibleReinforcementSources(state);
+  }, [state]);
+
   const categoriesSpending = useMemo(() => {
-    const res: Record<CategoryKey, { spent: number; budget: number; remaining: number; percentageUsed: number; isOver: boolean }> = {
-      moradia: { spent: 0, budget: 0, remaining: 0, percentageUsed: 0, isOver: false },
-      transporte: { spent: 0, budget: 0, remaining: 0, percentageUsed: 0, isOver: false },
-      comida: { spent: 0, budget: 0, remaining: 0, percentageUsed: 0, isOver: false },
-      lazer: { spent: 0, budget: 0, remaining: 0, percentageUsed: 0, isOver: false },
-      protecao: { spent: 0, budget: 0, remaining: 0, percentageUsed: 0, isOver: false },
-      profissional: { spent: 0, budget: 0, remaining: 0, percentageUsed: 0, isOver: false },
+    const emptyRow = () => ({
+      spent: 0,
+      budget: 0,
+      baseBudget: 0,
+      basePct: 0,
+      reinforcementAmount: 0,
+      reallocationNetAmount: 0,
+      hasTemporaryReinforcement: false,
+      reinforcementSources: [] as ReinforcementProvenanceRef[],
+      remaining: 0,
+      percentageUsed: 0,
+      isOver: false,
+    });
+    const res: Record<
+      CategoryKey,
+      {
+        spent: number;
+        budget: number;
+        baseBudget: number;
+        basePct: number;
+        reinforcementAmount: number;
+        reallocationNetAmount: number;
+        hasTemporaryReinforcement: boolean;
+        reinforcementSources: ReinforcementProvenanceRef[];
+        remaining: number;
+        percentageUsed: number;
+        isOver: boolean;
+      }
+    > = {
+      moradia: emptyRow(),
+      transporte: emptyRow(),
+      comida: emptyRow(),
+      lazer: emptyRow(),
+      protecao: emptyRow(),
+      profissional: emptyRow(),
     };
     const spentCentsByCat: Record<CategoryKey, number> = {
       moradia: 0,
@@ -1842,54 +2052,37 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
         ? activeCompetenceBudgetPlan.plannedNetIncome
         : totalIncome;
 
-    const reinforcementCentsByCat: Record<CategoryKey, number> = {
-      moradia: 0,
-      transporte: 0,
-      comida: 0,
-      lazer: 0,
-      protecao: 0,
-      profissional: 0,
-    };
-    (state.financialOperations || []).forEach(op => {
-      if (!op || op.type !== 'CATEGORY_REINFORCEMENT') return;
-      if (op.state === 'reverted' || op.state === 'estornado' || op.state === 'planned') return;
-      const opComp = op.competence || (op.date ? op.date.slice(0, 7) : '');
-      if (opComp !== state.currentMonth) return;
-      if (op.targetRef?.type === 'category' && op.targetRef.id) {
-        const catKey = mapToCanonicalCategoryKey(op.targetRef.id);
-        reinforcementCentsByCat[catKey] += toSafeCents(op.amountR$, op.amountCents);
-      }
-    });
-    Object.values(state.temporaryBudgetAdjustments || {}).forEach(adj => {
-      if (!adj) return;
-      if (adj.expiresAt && adj.expiresAt.slice(0, 7) === state.currentMonth) {
-        const catKey = mapToCanonicalCategoryKey(adj.category);
-        reinforcementCentsByCat[catKey] += toSafeCents(adj.amount);
-      }
-    });
-
     (Object.keys(CATEGORIES_BASE) as CategoryKey[]).forEach(catKey => {
-      let budget: number;
+      const pct =
+        activeCompetenceBudgetPlan?.categoryPercentages?.[catKey] !== undefined
+          ? activeCompetenceBudgetPlan.categoryPercentages[catKey]
+          : state.categoryPercentages && state.categoryPercentages[catKey] !== undefined
+          ? state.categoryPercentages[catKey]
+          : activeLifeTier.percentages[catKey] || 0;
+
+      let baseBudget: number;
       if (activeCompetenceBudgetPlan?.categoryAmountsR$?.[catKey] !== undefined && activeCompetenceBudgetPlan.plannedNetIncome > 0) {
-        budget = activeCompetenceBudgetPlan.categoryAmountsR$[catKey];
+        baseBudget = activeCompetenceBudgetPlan.categoryAmountsR$[catKey];
       } else {
-        const pct =
-          activeCompetenceBudgetPlan?.categoryPercentages?.[catKey] !== undefined
-            ? activeCompetenceBudgetPlan.categoryPercentages[catKey]
-            : state.categoryPercentages && state.categoryPercentages[catKey] !== undefined
-            ? state.categoryPercentages[catKey]
-            : activeLifeTier.percentages[catKey] || 0;
-        budget = (planIncomeBase * pct) / 100;
+        baseBudget = (planIncomeBase * pct) / 100;
       }
       // REGRA 50 POR 50: 50% do excedente de plantão extra é liberado para Lazer no próprio mês sem culpa
       if (catKey === 'lazer' && bonusShiftCalculation.hasBonus) {
-        budget += bonusShiftCalculation.toLeisure;
+        baseBudget += bonusShiftCalculation.toLeisure;
       }
-      // 26C & 14: Reforço temporário soma apenas ao envelope efetivo da competência (sem alterar % base nem repetir no mês seguinte)
-      if (reinforcementCentsByCat[catKey] > 0) {
-        budget += reinforcementCentsByCat[catKey] / 100;
-      }
-      res[catKey].budget = roundMoney(budget);
+
+      const reinfCents = reinforcementSummary.reinforcementCents[catKey] || 0;
+      const netReallocCents = reinforcementSummary.netReallocCents[catKey] || 0;
+      const baseCents = Math.round(roundMoney(baseBudget) * 100);
+      const effectiveCents = baseCents + reinfCents + netReallocCents;
+
+      res[catKey].basePct = pct;
+      res[catKey].baseBudget = roundMoney(baseCents / 100);
+      res[catKey].reinforcementAmount = roundMoney(reinfCents / 100);
+      res[catKey].reallocationNetAmount = roundMoney(netReallocCents / 100);
+      res[catKey].hasTemporaryReinforcement = reinfCents > 0;
+      res[catKey].reinforcementSources = reinforcementSummary.sourcesByCategory[catKey] || [];
+      res[catKey].budget = roundMoney(effectiveCents / 100);
     });
 
     const parentIdsWithSplits = new Set(
@@ -1931,7 +2124,7 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
     });
 
     return res;
-  }, [activeCompetenceBudgetPlan, state.categoryPercentages, state.financialOperations, state.temporaryBudgetAdjustments, totalIncome, state.expenses, state.keywordRules, state.installments, activeInstallments, activeLifeTier, bonusShiftCalculation, state.currentMonth]);
+  }, [activeCompetenceBudgetPlan, state.categoryPercentages, reinforcementSummary, totalIncome, state.expenses, state.keywordRules, state.installments, activeInstallments, activeLifeTier, bonusShiftCalculation, state.currentMonth]);
 
   const blownCategories = useMemo(() => {
     return (Object.keys(categoriesSpending) as CategoryKey[]).filter(k => categoriesSpending[k].isOver);
@@ -2719,7 +2912,9 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
     const preSnapshot = stateRef.current;
     const res = builder(preSnapshot);
     if (res.status !== 'success') {
-      throw new Error(res.message);
+      const err = new Error(res.message);
+      (err as Error & { code?: string }).code = res.reasonCode;
+      throw err;
     }
 
     let nextLocalState = res.state;
@@ -3480,11 +3675,27 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
 
   const addPiggyBank = (piggy: (Omit<SavingsPiggyBank, 'id'> & { id?: string }) | SavingsPiggyBank): SavingsPiggyBank => {
     const id = piggy.id || `piggy-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    const initialCur = piggy.currentAmount ?? 0;
+    const initialCents = Math.round(initialCur * 100);
+    const p1Contrib = piggy.coupleAgreement
+      ? roundMoney(initialCur * ((piggy.coupleAgreement.partner1SharePct || 0) / 100))
+      : 0;
+    const p2Contrib = piggy.coupleAgreement
+      ? roundMoney(initialCur - p1Contrib)
+      : 0;
+
     const newPiggy: SavingsPiggyBank = {
       ...piggy,
       id,
-      currentAmount: piggy.currentAmount ?? 0,
+      currentAmount: initialCur,
+      totalInvested: piggy.totalInvested ?? initialCur,
+      yieldAccumulated: piggy.yieldAccumulated ?? roundMoney(initialCur - (piggy.totalInvested ?? initialCur)),
+      accumulatedCents: piggy.accumulatedCents ?? initialCents,
+      committedCents: piggy.committedCents ?? 0,
+      utilizedCents: piggy.utilizedCents ?? 0,
+      availableCents: piggy.availableCents ?? initialCents,
       monthlyDeposit: piggy.monthlyDeposit ?? 0,
+      isFireEligible: Boolean(piggy.isFireEligible),
       archived: piggy.archived ?? false,
     };
     const newCoupleGoal: import('../types/finance').CoupleGoal = {
@@ -3493,95 +3704,118 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
       category: 'reserva',
       emoji: piggy.emoji || '🎯',
       targetAmount: piggy.targetAmount,
-      currentAmount: piggy.currentAmount ?? 0,
-      partner1Contribution: (piggy.currentAmount ?? 0) / 2,
-      partner2Contribution: (piggy.currentAmount ?? 0) / 2,
+      currentAmount: initialCur,
+      totalInvested: newPiggy.totalInvested,
+      yieldAccumulated: newPiggy.yieldAccumulated,
+      accumulatedCents: newPiggy.accumulatedCents,
+      committedCents: newPiggy.committedCents,
+      utilizedCents: newPiggy.utilizedCents,
+      availableCents: newPiggy.availableCents,
+      partner1Contribution: p1Contrib,
+      partner2Contribution: p2Contrib,
       monthlyPlannedDeposit: piggy.monthlyDeposit ?? 0,
-      isCompleted: (piggy.currentAmount ?? 0) >= piggy.targetAmount,
+      isCompleted: initialCur >= piggy.targetAmount && piggy.targetAmount > 0,
+      isFireEligible: Boolean(piggy.isFireEligible),
       history: [],
       createdAt: new Date().toISOString().split('T')[0],
       coupleAgreement: piggy.coupleAgreement,
       archived: piggy.archived ?? false,
     };
-    setState(prev => ({
-      ...prev,
-      piggyBanks: [...prev.piggyBanks.filter(p => p.id !== id), newPiggy],
-      coupleGoals: [...(prev.coupleGoals || []).filter(cg => cg.id !== id), newCoupleGoal],
-    }));
+    const prevSnap = stateRef.current;
+    const nextSnap: AppState = {
+      ...prevSnap,
+      piggyBanks: [...prevSnap.piggyBanks.filter(p => p.id !== id), newPiggy],
+      coupleGoals: [...(prevSnap.coupleGoals || []).filter(cg => cg.id !== id), newCoupleGoal],
+    };
+    stateRef.current = nextSnap;
+    setState(nextSnap);
     triggerCelebration();
     return newPiggy;
   };
 
   const updatePiggyBank = (id: string, updates: PiggyBankUpdatePayload) => {
-    setState(prev => {
-      const updatedPiggy: SavingsPiggyBank[] = prev.piggyBanks.map(p => {
-        if (p.id === id) {
-          const updatedName = updates.name !== undefined ? updates.name : (updates.title !== undefined ? updates.title : p.name);
-          const updatedEmoji = updates.emoji !== undefined ? updates.emoji : p.emoji;
-          const updatedTarget = updates.targetAmount !== undefined ? updates.targetAmount : p.targetAmount;
-          const updatedMonthly = updates.monthlyDeposit !== undefined ? updates.monthlyDeposit : (updates.monthlyPlannedDeposit !== undefined ? updates.monthlyPlannedDeposit : p.monthlyDeposit);
-          const updatedCur = updates.currentAmount !== undefined ? updates.currentAmount : p.currentAmount;
-          const updatedArchived = updates.archived !== undefined ? updates.archived : p.archived;
-          const updatedAgreement = updates.coupleAgreement !== undefined ? updates.coupleAgreement : p.coupleAgreement;
+    const prev = stateRef.current;
+    const updatedPiggy: SavingsPiggyBank[] = prev.piggyBanks.map(p => {
+      if (p.id === id) {
+        const updatedName = updates.name !== undefined ? updates.name : (updates.title !== undefined ? updates.title : p.name);
+        const updatedEmoji = updates.emoji !== undefined ? updates.emoji : p.emoji;
+        const updatedTarget = updates.targetAmount !== undefined ? updates.targetAmount : p.targetAmount;
+        const updatedMonthly = updates.monthlyDeposit !== undefined ? updates.monthlyDeposit : (updates.monthlyPlannedDeposit !== undefined ? updates.monthlyPlannedDeposit : p.monthlyDeposit);
+        const updatedCur = updates.currentAmount !== undefined ? updates.currentAmount : p.currentAmount;
+        const updatedArchived = updates.archived !== undefined ? updates.archived : p.archived;
+        const updatedAgreement = updates.coupleAgreement !== undefined ? updates.coupleAgreement : p.coupleAgreement;
+        const updatedFireEligible = updates.isFireEligible !== undefined ? updates.isFireEligible : p.isFireEligible;
+        const updatedInvested = updates.totalInvested !== undefined ? updates.totalInvested : p.totalInvested;
+        const updatedYield = updates.yieldAccumulated !== undefined ? updates.yieldAccumulated : p.yieldAccumulated;
 
-          const isCategoryKey = updates.category && ['moradia', 'comida', 'lazer', 'protecao', 'profissional', 'transporte'].includes(updates.category as string);
-          const piggyCategory = isCategoryKey ? (updates.category as CategoryKey) : p.category;
+        const isCategoryKey = updates.category && ['moradia', 'comida', 'lazer', 'protecao', 'profissional', 'transporte'].includes(updates.category as string);
+        const piggyCategory = isCategoryKey ? (updates.category as CategoryKey) : p.category;
 
-          const updatedItem: SavingsPiggyBank = {
-            ...p,
-            name: updatedName,
-            emoji: updatedEmoji,
-            targetAmount: updatedTarget,
-            monthlyDeposit: updatedMonthly,
-            currentAmount: updatedCur,
-            archived: updatedArchived,
-            coupleAgreement: updatedAgreement,
-            category: piggyCategory,
-            completed: updatedCur >= updatedTarget && updatedTarget > 0,
-          };
-          return updatedItem;
-        }
-        return p;
-      });
-
-      const updatedCoupleGoals: import('../types/finance').CoupleGoal[] = (prev.coupleGoals || []).map(cg => {
-        if (cg.id === id) {
-          const updatedTitle = updates.title !== undefined ? updates.title : (updates.name !== undefined ? updates.name : cg.title);
-          const updatedEmoji = updates.emoji !== undefined ? updates.emoji : cg.emoji;
-          const updatedTarget = updates.targetAmount !== undefined ? updates.targetAmount : cg.targetAmount;
-          const updatedCur = updates.currentAmount !== undefined ? updates.currentAmount : cg.currentAmount;
-          const updatedMonthly = updates.monthlyPlannedDeposit !== undefined ? updates.monthlyPlannedDeposit : (updates.monthlyDeposit !== undefined ? updates.monthlyDeposit : cg.monthlyPlannedDeposit);
-          const updatedDeadline = updates.deadlineDate !== undefined ? updates.deadlineDate : cg.deadlineDate;
-          const updatedAgreement = updates.coupleAgreement !== undefined ? updates.coupleAgreement : cg.coupleAgreement;
-          const updatedArchived = updates.archived !== undefined ? updates.archived : cg.archived;
-
-          const isCoupleGoalCategory = updates.category && ['viagem', 'imovel', 'veiculo', 'reforma', 'reserva', 'liberdade', 'outro'].includes(updates.category as string);
-          const goalCategory = isCoupleGoalCategory ? (updates.category as import('../types/finance').CoupleGoal['category']) : cg.category;
-
-          const updatedGoal: import('../types/finance').CoupleGoal = {
-            ...cg,
-            title: updatedTitle,
-            emoji: updatedEmoji,
-            targetAmount: updatedTarget,
-            currentAmount: updatedCur,
-            monthlyPlannedDeposit: updatedMonthly,
-            deadlineDate: updatedDeadline,
-            coupleAgreement: updatedAgreement,
-            archived: updatedArchived,
-            category: goalCategory,
-            isCompleted: updatedCur >= updatedTarget && updatedTarget > 0,
-          };
-          return updatedGoal;
-        }
-        return cg;
-      });
-
-      return {
-        ...prev,
-        piggyBanks: updatedPiggy,
-        coupleGoals: updatedCoupleGoals,
-      };
+        const updatedItem: SavingsPiggyBank = {
+          ...p,
+          name: updatedName,
+          emoji: updatedEmoji,
+          targetAmount: updatedTarget,
+          monthlyDeposit: updatedMonthly,
+          currentAmount: updatedCur,
+          totalInvested: updatedInvested,
+          yieldAccumulated: updatedYield,
+          archived: updatedArchived,
+          coupleAgreement: updatedAgreement,
+          isFireEligible: updatedFireEligible,
+          category: piggyCategory,
+          completed: updatedCur >= updatedTarget && updatedTarget > 0,
+        };
+        return updatedItem;
+      }
+      return p;
     });
+
+    const updatedCoupleGoals: import('../types/finance').CoupleGoal[] = (prev.coupleGoals || []).map(cg => {
+      if (cg.id === id) {
+        const updatedTitle = updates.title !== undefined ? updates.title : (updates.name !== undefined ? updates.name : cg.title);
+        const updatedEmoji = updates.emoji !== undefined ? updates.emoji : cg.emoji;
+        const updatedTarget = updates.targetAmount !== undefined ? updates.targetAmount : cg.targetAmount;
+        const updatedCur = updates.currentAmount !== undefined ? updates.currentAmount : cg.currentAmount;
+        const updatedMonthly = updates.monthlyPlannedDeposit !== undefined ? updates.monthlyPlannedDeposit : (updates.monthlyDeposit !== undefined ? updates.monthlyDeposit : cg.monthlyPlannedDeposit);
+        const updatedDeadline = updates.deadlineDate !== undefined ? updates.deadlineDate : cg.deadlineDate;
+        const updatedAgreement = updates.coupleAgreement !== undefined ? updates.coupleAgreement : cg.coupleAgreement;
+        const updatedArchived = updates.archived !== undefined ? updates.archived : cg.archived;
+        const updatedFireEligible = updates.isFireEligible !== undefined ? updates.isFireEligible : cg.isFireEligible;
+        const updatedInvested = updates.totalInvested !== undefined ? updates.totalInvested : cg.totalInvested;
+        const updatedYield = updates.yieldAccumulated !== undefined ? updates.yieldAccumulated : cg.yieldAccumulated;
+
+        const isCoupleGoalCategory = updates.category && ['viagem', 'imovel', 'veiculo', 'reforma', 'reserva', 'liberdade', 'outro'].includes(updates.category as string);
+        const goalCategory = isCoupleGoalCategory ? (updates.category as import('../types/finance').CoupleGoal['category']) : cg.category;
+
+        const updatedGoal: import('../types/finance').CoupleGoal = {
+          ...cg,
+          title: updatedTitle,
+          emoji: updatedEmoji,
+          targetAmount: updatedTarget,
+          currentAmount: updatedCur,
+          totalInvested: updatedInvested,
+          yieldAccumulated: updatedYield,
+          monthlyPlannedDeposit: updatedMonthly,
+          deadlineDate: updatedDeadline,
+          coupleAgreement: updatedAgreement,
+          isFireEligible: updatedFireEligible,
+          archived: updatedArchived,
+          category: goalCategory,
+          isCompleted: updatedCur >= updatedTarget && updatedTarget > 0,
+        };
+        return updatedGoal;
+      }
+      return cg;
+    });
+
+    const nextSnap: AppState = {
+      ...prev,
+      piggyBanks: updatedPiggy,
+      coupleGoals: updatedCoupleGoals,
+    };
+    stateRef.current = nextSnap;
+    setState(nextSnap);
   };
 
   const archivePiggyBank = (id: string, archive: boolean = true) => {
@@ -3589,30 +3823,36 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
   };
 
   const deletePiggyBank = (id: string, force = false) => {
-    setState(prev => {
-      const targetPiggy = prev.piggyBanks.find(p => p.id === id);
-      const targetGoal = (prev.coupleGoals || []).find(cg => cg.id === id);
-      const curAmount = targetPiggy?.currentAmount || targetGoal?.currentAmount || 0;
+    const prev = stateRef.current;
+    const targetPiggy = prev.piggyBanks.find(p => p.id === id);
+    const targetGoal = (prev.coupleGoals || []).find(cg => cg.id === id);
+    const curAmount = targetPiggy?.currentAmount || targetGoal?.currentAmount || 0;
 
-      if (curAmount > 0 && !force) {
-        return {
-          ...prev,
-          piggyBanks: prev.piggyBanks.map(p => p.id === id ? { ...p, archived: true } : p),
-          coupleGoals: (prev.coupleGoals || []).map(cg => cg.id === id ? { ...cg, archived: true } : cg),
-        };
-      }
-
-      return {
-        ...prev,
-        piggyBanks: prev.piggyBanks.filter(p => p.id !== id),
-        coupleGoals: (prev.coupleGoals || []).filter(cg => cg.id !== id),
-      };
-    });
+    const nextSnap: AppState =
+      curAmount > 0 && !force
+        ? {
+            ...prev,
+            piggyBanks: prev.piggyBanks.map(p => p.id === id ? { ...p, archived: true } : p),
+            coupleGoals: (prev.coupleGoals || []).map(cg => cg.id === id ? { ...cg, archived: true } : cg),
+          }
+        : {
+            ...prev,
+            piggyBanks: prev.piggyBanks.filter(p => p.id !== id),
+            coupleGoals: (prev.coupleGoals || []).filter(cg => cg.id !== id),
+          };
+    stateRef.current = nextSnap;
+    setState(nextSnap);
   };
 
   const removePiggyBank = deletePiggyBank;
 
-  const depositPiggyBank = (id: string, amount: number, contributor?: 'partner1' | 'partner2' | 'both', note?: string) => {
+  const depositPiggyBank = (
+    id: string,
+    amount: number,
+    contributor?: 'partner1' | 'partner2' | 'both',
+    note?: string,
+    options?: { operationId?: string; completedGoalContributionConfirmed?: boolean; date?: string }
+  ): FinancialCommandResult => {
     if (!Number.isFinite(amount) || amount === 0) {
       throw new Error('Informe um valor monetário válido e diferente de zero.');
     }
@@ -3620,14 +3860,18 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
     const absAmount = Math.abs(amount);
     let achievedNow = false;
 
-    commitCommandTransition(
+    const result = commitCommandTransition(
       (snap) =>
         executeGoalAdjustmentCommand(snap, {
           goalId: id,
+          targetType: 'piggy_bank',
           direction,
           amount: absAmount,
           contributor: contributor || 'both',
           note,
+          operationId: options?.operationId,
+          completedGoalContributionConfirmed: options?.completedGoalContributionConfirmed,
+          date: options?.date,
           authoredByUid: getCommandAuthorUid(),
           scope: getCommandScope(),
         }),
@@ -3656,20 +3900,74 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
     if (achievedNow) {
       triggerCelebration();
     }
+    return result;
   };
 
   const depositToPiggyBank = depositPiggyBank;
 
-  const withdrawPiggyBank = (id: string, amount: number) => {
-    if (!Number.isFinite(amount) || amount <= 0) {
+  const withdrawPiggyBank = (
+    id: string,
+    amount: number,
+    options?: {
+      operationId?: string;
+      date?: string;
+      note?: string;
+      withdrawalChannel?: 'virtual_reallocation' | 'asset_redemption';
+      executionMode?: 'planned' | 'pending_settlement' | 'occurred_manual' | 'reconciled';
+      grossAmountR$?: number;
+      netAmountR$?: number;
+      destinationAccountId?: string;
+      settlementDate?: string;
+      partitions?: WithdrawalPurposePartition[];
+      overrideInsufficientPlanning?: boolean;
+    }
+  ): FinancialCommandResult => {
+    const grossR$ = options?.grossAmountR$ ?? amount;
+    if (!Number.isFinite(grossR$) || grossR$ <= 0) {
       throw new Error('Informe um valor positivo e válido para resgate.');
     }
-    commitCommandTransition((snap) =>
+    const uses26B =
+      options?.withdrawalChannel !== undefined ||
+      options?.executionMode !== undefined ||
+      options?.netAmountR$ !== undefined ||
+      options?.destinationAccountId !== undefined ||
+      options?.partitions !== undefined ||
+      options?.overrideInsufficientPlanning !== undefined;
+
+    if (uses26B) {
+      return commitCommandTransition((snap) =>
+        executeWithdrawalCommand(snap, {
+          goalId: id,
+          sourceType: 'piggy_bank',
+          grossAmountR$: grossR$,
+          netAmountR$: options?.netAmountR$ ?? amount,
+          withdrawalChannel: options?.withdrawalChannel || 'asset_redemption',
+          executionMode: options?.executionMode || 'occurred_manual',
+          destinationAccountId: options?.destinationAccountId,
+          settlementDate: options?.settlementDate,
+          partitions: options?.partitions,
+          overrideInsufficientPlanning: options?.overrideInsufficientPlanning,
+          operationId: options?.operationId,
+          date: options?.date,
+          note: options?.note,
+          contributor: 'both',
+          authoredByUid: getCommandAuthorUid(),
+          scope: getCommandScope(),
+          reserveFloorR$: autoCalculatedProtectionTarget,
+        })
+      );
+    }
+
+    return commitCommandTransition((snap) =>
       executeGoalAdjustmentCommand(snap, {
         goalId: id,
+        targetType: 'piggy_bank',
         direction: 'withdrawal',
         amount,
         contributor: 'both',
+        operationId: options?.operationId,
+        date: options?.date,
+        note: options?.note,
         authoredByUid: getCommandAuthorUid(),
         scope: getCommandScope(),
       })
@@ -3969,11 +4267,14 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
   };
 
   const setGoalCoupleAgreement = (goalId: string, agreement: import('../types/finance').CoupleAgreement) => {
-    setState(prev => ({
+    const prev = stateRef.current;
+    const nextSnap: AppState = {
       ...prev,
       piggyBanks: prev.piggyBanks.map(p => p.id === goalId ? { ...p, coupleAgreement: agreement } : p),
       coupleGoals: (prev.coupleGoals || []).map(cg => cg.id === goalId ? { ...cg, coupleAgreement: agreement } : cg),
-    }));
+    };
+    stateRef.current = nextSnap;
+    setState(nextSnap);
   };
 
   const recordWeeklyCheckIn = (date?: string) => {
@@ -4306,29 +4607,64 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
     });
   };
 
-  const depositToProtection = (amount: number) => {
-    setState(prev => {
-      const newInvested = prev.protectionTotalInvested + amount;
-      const newCurrent = prev.protectionCurrentAmount + amount;
-      const complete = newCurrent >= autoCalculatedProtectionTarget;
-      if (complete && !prev.isProtectionComplete) {
-        triggerCelebration();
+  const depositToProtection = (
+    amount: number,
+    options?: { operationId?: string; note?: string; date?: string }
+  ): FinancialCommandResult => {
+    if (!Number.isFinite(amount) || amount <= 0) {
+      throw new Error('Informe um valor positivo válido para aporte na Proteção.');
+    }
+    let completedNow = false;
+    const res = commitCommandTransition(
+      (snap) =>
+        executeGoalAdjustmentCommand(snap, {
+          goalId: 'protection_reserve',
+          targetType: 'protection',
+          direction: 'deposit',
+          amount,
+          contributor: 'both',
+          note: options?.note || 'Aporte no Bloco 1 — Proteção',
+          operationId: options?.operationId,
+          date: options?.date,
+          reserveFloorR$: autoCalculatedProtectionTarget,
+          authoredByUid: getCommandAuthorUid(),
+          scope: getCommandScope(),
+        }),
+      (cmdRes, preSnap) => {
+        if (!preSnap.isProtectionComplete && cmdRes.state.protectionCurrentAmount >= autoCalculatedProtectionTarget) {
+          completedNow = true;
+        }
+        return undefined;
       }
-      return {
-        ...prev,
-        protectionTotalInvested: newInvested,
-        protectionCurrentAmount: newCurrent,
-        isProtectionComplete: complete,
-      };
-    });
+    );
+    if (completedNow) {
+      triggerCelebration();
+    }
+    return res;
   };
 
-  const withdrawFromProtection = (amount: number) => {
-    setState(prev => ({
-      ...prev,
-      protectionCurrentAmount: Math.max(0, prev.protectionCurrentAmount - amount),
-      isProtectionComplete: Math.max(0, prev.protectionCurrentAmount - amount) >= autoCalculatedProtectionTarget,
-    }));
+  const withdrawFromProtection = (
+    amount: number,
+    options?: { operationId?: string; note?: string; date?: string }
+  ): FinancialCommandResult => {
+    if (!Number.isFinite(amount) || amount <= 0) {
+      throw new Error('Informe um valor positivo válido para resgate da Proteção.');
+    }
+    return commitCommandTransition((snap) =>
+      executeGoalAdjustmentCommand(snap, {
+        goalId: 'protection_reserve',
+        targetType: 'protection',
+        direction: 'withdrawal',
+        amount,
+        contributor: 'both',
+        note: options?.note || 'Resgate do Bloco 1 — Proteção',
+        operationId: options?.operationId,
+        date: options?.date,
+        reserveFloorR$: autoCalculatedProtectionTarget,
+        authoredByUid: getCommandAuthorUid(),
+        scope: getCommandScope(),
+      })
+    );
   };
 
   const toggleGoalComplete = (id: string) => {
@@ -4342,65 +4678,382 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
         }
         return p;
       }),
+      coupleGoals: (prev.coupleGoals || []).map(cg =>
+        cg.id === id ? { ...cg, isCompleted: !cg.isCompleted } : cg
+      ),
     }));
   };
 
-  const depositToGoal = (id: string, amount: number) => {
-    depositPiggyBank(id, amount);
+  const depositToGoal = (
+    id: string,
+    amount: number,
+    options?: { operationId?: string; completedGoalContributionConfirmed?: boolean; date?: string; note?: string }
+  ): FinancialCommandResult => {
+    return depositPiggyBank(id, amount, 'both', options?.note, options);
   };
 
-  const withdrawFromGoal = (id: string, amount: number) => {
-    withdrawPiggyBank(id, amount);
+  const withdrawFromGoal = (
+    id: string,
+    amount: number,
+    options?: {
+      operationId?: string;
+      date?: string;
+      note?: string;
+      withdrawalChannel?: 'virtual_reallocation' | 'asset_redemption';
+      executionMode?: 'planned' | 'pending_settlement' | 'occurred_manual' | 'reconciled';
+      grossAmountR$?: number;
+      netAmountR$?: number;
+      destinationAccountId?: string;
+      settlementDate?: string;
+      partitions?: WithdrawalPurposePartition[];
+      overrideInsufficientPlanning?: boolean;
+    }
+  ): FinancialCommandResult => {
+    return withdrawPiggyBank(id, amount, options);
   };
 
-  const depositToFreedom = (amount: number) => {
-    setState(prev => ({
-      ...prev,
-      freedomTotalInvested: prev.freedomTotalInvested + amount,
-    }));
+  const depositToFreedom = (
+    amount: number,
+    options?: { operationId?: string; note?: string; date?: string }
+  ): FinancialCommandResult => {
+    if (!Number.isFinite(amount) || amount <= 0) {
+      throw new Error('Informe um valor positivo válido para aporte no Bloco Liberdade.');
+    }
+    return commitCommandTransition((snap) =>
+      executeGoalAdjustmentCommand(snap, {
+        goalId: 'freedom_block',
+        targetType: 'freedom',
+        direction: 'deposit',
+        amount,
+        contributor: 'both',
+        note: options?.note || 'Aporte no Bloco 3 — Liberdade Financeira',
+        operationId: options?.operationId,
+        date: options?.date,
+        authoredByUid: getCommandAuthorUid(),
+        scope: getCommandScope(),
+      })
+    );
   };
 
-  const withdrawFromFreedom = (amount: number) => {
-    setState(prev => ({
-      ...prev,
-      freedomTotalInvested: Math.max(0, prev.freedomTotalInvested - amount),
-    }));
+  const withdrawFromFreedom = (
+    amount: number,
+    options?: { operationId?: string; note?: string; date?: string }
+  ): FinancialCommandResult => {
+    if (!Number.isFinite(amount) || amount <= 0) {
+      throw new Error('Informe um valor positivo válido para resgate do Bloco Liberdade.');
+    }
+    return commitCommandTransition((snap) =>
+      executeGoalAdjustmentCommand(snap, {
+        goalId: 'freedom_block',
+        targetType: 'freedom',
+        direction: 'withdrawal',
+        amount,
+        contributor: 'both',
+        note: options?.note || 'Resgate do Bloco 3 — Liberdade Financeira',
+        operationId: options?.operationId,
+        date: options?.date,
+        authoredByUid: getCommandAuthorUid(),
+        scope: getCommandScope(),
+      })
+    );
   };
 
   const updateProtectionBankBalance = (totalInvested: number, currentBankAmount: number) => {
-    setState(prev => ({
-      ...prev,
-      protectionTotalInvested: totalInvested,
-      protectionCurrentAmount: currentBankAmount,
-      protectionYieldAccumulated: currentBankAmount - totalInvested,
-      isProtectionComplete: currentBankAmount >= autoCalculatedProtectionTarget,
-    }));
+    if (!Number.isFinite(totalInvested) || totalInvested < 0 || !Number.isFinite(currentBankAmount) || currentBankAmount < 0) {
+      throw new Error('Os valores do banco na Proteção não podem ser negativos.');
+    }
+    const costCents = Math.round(totalInvested * 100);
+    const valCents = Math.round(currentBankAmount * 100);
+
+    commitCommandTransition((snap) => {
+      const preCostCents = Math.round((snap.protectionTotalInvested ?? snap.protectionCurrentAmount ?? 0) * 100);
+      const preValCents = Math.round((snap.protectionCurrentAmount || 0) * 100);
+
+      if (preCostCents === 0 && preValCents === 0 && valCents > 0) {
+        return executeInitialPositionCommand(snap, {
+          targetType: 'protection',
+          targetId: 'protection_reserve',
+          targetName: 'Bloco 1 · Reserva de Emergência',
+          costBasisCents: costCents,
+          currentValuationCents: valCents,
+          authoredByUid: getCommandAuthorUid(),
+          scope: getCommandScope(),
+          reserveFloorR$: autoCalculatedProtectionTarget,
+        });
+      }
+
+      if (costCents === preCostCents && valCents !== preValCents) {
+        return executeValuationAdjustmentCommand(snap, {
+          targetType: 'protection',
+          targetId: 'protection_reserve',
+          targetName: 'Bloco 1 · Reserva de Emergência',
+          signedDeltaCents: valCents - preValCents,
+          authoredByUid: getCommandAuthorUid(),
+          scope: getCommandScope(),
+          reserveFloorR$: autoCalculatedProtectionTarget,
+        });
+      }
+
+      const deltaCents = valCents - preValCents;
+      const baseRes =
+        deltaCents !== 0
+          ? executeValuationAdjustmentCommand(snap, {
+              targetType: 'protection',
+              targetId: 'protection_reserve',
+              targetName: 'Bloco 1 · Reserva de Emergência',
+              signedDeltaCents: deltaCents,
+              authoredByUid: getCommandAuthorUid(),
+              scope: getCommandScope(),
+              reserveFloorR$: autoCalculatedProtectionTarget,
+            })
+          : {
+              status: 'success' as const,
+              reasonCode: 'EXECUTED' as const,
+              message: 'Custo base da Proteção atualizado.',
+              state: snap,
+              touchedEntities: { protectionUpdated: true },
+            };
+      if (baseRes.status !== 'success') return baseRes;
+
+      return {
+        ...baseRes,
+        state: {
+          ...baseRes.state,
+          protectionTotalInvested: costCents / 100,
+          protectionCurrentAmount: valCents / 100,
+          protectionYieldAccumulated: (valCents - costCents) / 100,
+          isProtectionComplete: currentBankAmount >= autoCalculatedProtectionTarget,
+        },
+        touchedEntities: {
+          ...baseRes.touchedEntities,
+          protectionUpdated: true,
+        },
+      };
+    });
   };
 
   const updateFreedomBankBalance = (totalInvested: number, currentBankAmount: number) => {
-    setState(prev => ({
-      ...prev,
-      freedomTotalInvested: totalInvested,
-      freedomYieldAccumulated: currentBankAmount - totalInvested,
-    }));
+    if (!Number.isFinite(totalInvested) || totalInvested < 0 || !Number.isFinite(currentBankAmount) || currentBankAmount < 0) {
+      throw new Error('Os valores da corretora/banco na Liberdade não podem ser negativos.');
+    }
+    const costCents = Math.round(totalInvested * 100);
+    const valCents = Math.round(currentBankAmount * 100);
+
+    commitCommandTransition((snap) => {
+      const preCostCents = Math.round((snap.freedomTotalInvested || 0) * 100);
+      const preValCents = preCostCents + Math.round((snap.freedomYieldAccumulated || 0) * 100);
+
+      if (preCostCents === 0 && preValCents === 0 && valCents > 0) {
+        return executeInitialPositionCommand(snap, {
+          targetType: 'freedom',
+          targetId: 'freedom_block',
+          targetName: 'Bloco 3 · Liberdade Financeira',
+          costBasisCents: costCents,
+          currentValuationCents: valCents,
+          authoredByUid: getCommandAuthorUid(),
+          scope: getCommandScope(),
+        });
+      }
+
+      if (costCents === preCostCents && valCents !== preValCents) {
+        return executeValuationAdjustmentCommand(snap, {
+          targetType: 'freedom',
+          targetId: 'freedom_block',
+          targetName: 'Bloco 3 · Liberdade Financeira',
+          signedDeltaCents: valCents - preValCents,
+          authoredByUid: getCommandAuthorUid(),
+          scope: getCommandScope(),
+        });
+      }
+
+      const deltaCents = valCents - preValCents;
+      const baseRes =
+        deltaCents !== 0
+          ? executeValuationAdjustmentCommand(snap, {
+              targetType: 'freedom',
+              targetId: 'freedom_block',
+              targetName: 'Bloco 3 · Liberdade Financeira',
+              signedDeltaCents: deltaCents,
+              authoredByUid: getCommandAuthorUid(),
+              scope: getCommandScope(),
+            })
+          : {
+              status: 'success' as const,
+              reasonCode: 'EXECUTED' as const,
+              message: 'Custo base da Liberdade atualizado.',
+              state: snap,
+              touchedEntities: { freedomUpdated: true },
+            };
+      if (baseRes.status !== 'success') return baseRes;
+
+      return {
+        ...baseRes,
+        state: {
+          ...baseRes.state,
+          freedomTotalInvested: costCents / 100,
+          freedomYieldAccumulated: (valCents - costCents) / 100,
+        },
+        touchedEntities: {
+          ...baseRes.touchedEntities,
+          freedomUpdated: true,
+        },
+      };
+    });
   };
 
   const updateGoalBankBalance = (id: string, totalInvested: number, currentBankAmount: number) => {
-    setState(prev => ({
-      ...prev,
-      piggyBanks: prev.piggyBanks.map(p => {
-        if (p.id === id) {
-          return {
-            ...p,
-            totalInvested,
-            currentAmount: currentBankAmount,
-            yieldAccumulated: currentBankAmount - totalInvested,
-            completed: currentBankAmount >= p.targetAmount,
-          };
-        }
-        return p;
-      }),
-    }));
+    if (!Number.isFinite(totalInvested) || totalInvested < 0 || !Number.isFinite(currentBankAmount) || currentBankAmount < 0) {
+      throw new Error('Os valores de saldo e aporte do objetivo não podem ser negativos.');
+    }
+    const costCents = Math.round(totalInvested * 100);
+    const valCents = Math.round(currentBankAmount * 100);
+
+    commitCommandTransition((snap) => {
+      const targetPiggy = snap.piggyBanks.find((p) => p.id === id);
+      const targetGoal = (snap.coupleGoals || []).find((g) => g.id === id);
+      if (!targetPiggy && !targetGoal) {
+        throw new Error('Objetivo não encontrado para atualização bancária.');
+      }
+
+      const preCostCents = Math.round(((targetPiggy?.totalInvested ?? targetGoal?.totalInvested) ?? (targetPiggy?.currentAmount ?? targetGoal?.currentAmount ?? 0)) * 100);
+      const preValCents = Math.round(((targetPiggy?.currentAmount ?? targetGoal?.currentAmount ?? 0)) * 100);
+      const goalName = targetPiggy?.name || targetGoal?.title || id;
+
+      if (preCostCents === 0 && preValCents === 0 && valCents > 0) {
+        return executeInitialPositionCommand(snap, {
+          targetType: 'piggy_bank',
+          targetId: id,
+          targetName: goalName,
+          costBasisCents: costCents,
+          currentValuationCents: valCents,
+          authoredByUid: getCommandAuthorUid(),
+          scope: getCommandScope(),
+        });
+      }
+
+      if (costCents === preCostCents && valCents !== preValCents) {
+        return executeValuationAdjustmentCommand(snap, {
+          targetType: 'piggy_bank',
+          targetId: id,
+          targetName: goalName,
+          signedDeltaCents: valCents - preValCents,
+          authoredByUid: getCommandAuthorUid(),
+          scope: getCommandScope(),
+        });
+      }
+
+      const deltaCents = valCents - preValCents;
+      const baseRes =
+        deltaCents !== 0
+          ? executeValuationAdjustmentCommand(snap, {
+              targetType: 'piggy_bank',
+              targetId: id,
+              targetName: goalName,
+              signedDeltaCents: deltaCents,
+              authoredByUid: getCommandAuthorUid(),
+              scope: getCommandScope(),
+            })
+          : {
+              status: 'success' as const,
+              reasonCode: 'EXECUTED' as const,
+              message: 'Saldo bancário do objetivo atualizado.',
+              state: snap,
+              touchedEntities: { piggyBanks: [id], coupleGoals: [id] },
+            };
+      if (baseRes.status !== 'success') return baseRes;
+
+      const yieldR$ = (valCents - costCents) / 100;
+      return {
+        ...baseRes,
+        state: {
+          ...baseRes.state,
+          piggyBanks: baseRes.state.piggyBanks.map((p) => {
+            if (p.id !== id) return p;
+            const committed = p.committedCents ?? 0;
+            const utilized = p.utilizedCents ?? 0;
+            return {
+              ...p,
+              totalInvested: costCents / 100,
+              currentAmount: valCents / 100,
+              availableCents: valCents,
+              accumulatedCents: valCents + committed + utilized,
+              yieldAccumulated: yieldR$,
+              completed: p.targetAmount > 0 ? currentBankAmount >= p.targetAmount : p.completed,
+              revision: (p.revision ?? 0) + 1,
+            };
+          }),
+          coupleGoals: (baseRes.state.coupleGoals || []).map((g) => {
+            if (g.id !== id) return g;
+            const committed = g.committedCents ?? 0;
+            const utilized = g.utilizedCents ?? 0;
+            return {
+              ...g,
+              totalInvested: costCents / 100,
+              currentAmount: valCents / 100,
+              availableCents: valCents,
+              accumulatedCents: valCents + committed + utilized,
+              yieldAccumulated: yieldR$,
+              isCompleted: g.targetAmount > 0 ? currentBankAmount >= g.targetAmount : g.isCompleted,
+              revision: (g.revision ?? 0) + 1,
+            };
+          }),
+        },
+        touchedEntities: {
+          ...baseRes.touchedEntities,
+          piggyBanks: [id],
+          coupleGoals: [id],
+        },
+      };
+    });
+  };
+
+  const transferBetweenBlocks = (
+    params: Omit<BlockTransferCommandParams, 'authoredByUid' | 'scope' | 'reserveFloorR$'>
+  ): FinancialCommandResult => {
+    return commitCommandTransition((snap) =>
+      executeBlockTransferCommand(snap, {
+        ...params,
+        reserveFloorR$: emergencyReserveFloorAmount,
+        authoredByUid: getCommandAuthorUid(),
+        scope: getCommandScope(),
+      })
+    );
+  };
+
+  const recordInitialPosition = (
+    params: Omit<InitialPositionCommandParams, 'authoredByUid' | 'scope' | 'reserveFloorR$'>
+  ): FinancialCommandResult => {
+    return commitCommandTransition((snap) =>
+      executeInitialPositionCommand(snap, {
+        ...params,
+        reserveFloorR$: autoCalculatedProtectionTarget,
+        authoredByUid: getCommandAuthorUid(),
+        scope: getCommandScope(),
+      })
+    );
+  };
+
+  const adjustPatrimonialValuation = (
+    params: Omit<ValuationAdjustmentCommandParams, 'authoredByUid' | 'scope' | 'reserveFloorR$'>
+  ): FinancialCommandResult => {
+    return commitCommandTransition((snap) =>
+      executeValuationAdjustmentCommand(snap, {
+        ...params,
+        reserveFloorR$: autoCalculatedProtectionTarget,
+        authoredByUid: getCommandAuthorUid(),
+        scope: getCommandScope(),
+      })
+    );
+  };
+
+  const reverseFinancialOperation = (operationId: string, reason?: string): FinancialCommandResult => {
+    return commitCommandTransition((snap) =>
+      reverseFinancialCommand(snap, operationId, {
+        authoredByUid: getCommandAuthorUid(),
+        reserveFloorR$: emergencyReserveFloorAmount,
+        reason,
+      })
+    );
   };
 
   const restoreTierDefaultPercentages = (tierKey?: LifeTierKey) => {
@@ -4555,7 +5208,9 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
     targetGoalName?: string,
     note?: string
   ) => {
-    if (amount <= 0) return;
+    if (!Number.isFinite(amount) || amount <= 0) {
+      throw new Error('Informe um valor positivo para destinar a sobra.');
+    }
 
     const sourceCatInfo = CATEGORIES_BASE[sourceCategory];
     const catName = sourceCatInfo?.name || sourceCategory;
@@ -4566,81 +5221,152 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
         ? 'Bloco Liberdade'
         : targetGoalName || 'Cofrinho de Objetivo';
 
-    const newTransfer: SurplusTransferRecord = {
-      id: `surplus-tr-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-      sourceCategory,
-      targetType,
-      targetGoalId,
-      targetGoalName: destName,
-      amount,
-      date: new Date().toISOString().split('T')[0],
-      monthKey: state.currentMonth,
-      note: note || `Sobra de ${catName} direcionada para ${destName}`,
-    };
+    const todayStr = new Date().toISOString().split('T')[0];
+    const transferId = `surplus-tr-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    const expenseId = `exp-surplus-tr-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`;
 
-    setState(prev => {
-      let nextProtAmount = prev.protectionCurrentAmount;
-      let nextProtInvested = prev.protectionTotalInvested;
-      let nextProtComplete = prev.isProtectionComplete;
-      let nextFreedomInvested = prev.freedomTotalInvested;
-      let nextPiggyBanks = prev.piggyBanks;
+    commitCommandTransition(
+      (snap) => {
+        const catBudget = categoriesSpending[sourceCategory]?.budget ?? 0;
+        const alreadyAllocatedInSnap = (snap.surplusTransfers || [])
+          .filter((t) => t.monthKey === snap.currentMonth && t.sourceCategory === sourceCategory)
+          .reduce((sum, t) => sum + (t.amount || 0), 0);
+        const alreadyAllocatedInView = (state.surplusTransfers || [])
+          .filter((t) => t.monthKey === state.currentMonth && t.sourceCategory === sourceCategory)
+          .reduce((sum, t) => sum + (t.amount || 0), 0);
+        const viewRemaining = categoriesSpending[sourceCategory]?.remaining ?? 0;
+        const dynamicRemaining = Math.max(0, viewRemaining - Math.max(0, alreadyAllocatedInSnap - alreadyAllocatedInView));
+        if (catBudget > 0 && amount > dynamicRemaining + 0.01) {
+          throw new Error(
+            `Sobra disponível em ${catName} (R$ ${dynamicRemaining.toFixed(2)}) insuficiente para destinar R$ ${amount.toFixed(2)}. A mesma sobra não pode financiar dois destinos.`
+          );
+        }
 
-      if (targetType === 'protection') {
-        nextProtAmount += amount;
-        nextProtInvested += amount;
-        nextProtComplete = nextProtAmount >= autoCalculatedProtectionTarget;
-      } else if (targetType === 'freedom') {
-        nextFreedomInvested += amount;
-      } else if (targetType === 'goal' && targetGoalId) {
-        nextPiggyBanks = prev.piggyBanks.map(g => {
-          if (g.id === targetGoalId) {
-            const nextCur = g.currentAmount + amount;
-            const nextInv = (g.totalInvested || g.currentAmount * 0.85) + amount;
-            return {
-              ...g,
-              currentAmount: nextCur,
-              totalInvested: nextInv,
-              completed: nextCur >= g.targetAmount,
-            };
-          }
-          return g;
-        });
+        const amountCents = Math.round(amount * 100);
+        const cmdRes = runFinancialCommand(snap, {
+          id: `op-surplus-${transferId}`,
+          type: 'GOAL_DEPOSIT',
+          amountCents,
+          amountR$: amountCents / 100,
+          authorizedBy: 'both',
+          authoredByUid: getCommandAuthorUid(),
+          scope: getCommandScope(),
+          sourceRef: { type: 'category', id: sourceCategory, name: catName },
+          targetRef:
+            targetType === 'protection'
+              ? { type: 'protection', id: 'protection_reserve', name: destName }
+              : targetType === 'freedom'
+              ? { type: 'freedom', id: 'freedom_block', name: destName }
+              : { type: 'piggy_bank', id: targetGoalId || '', name: destName },
+          competence: snap.currentMonth,
+          date: todayStr,
+          occurredAt: todayStr,
+          state: 'occurred_manual',
+          surplusTransferId: transferId,
+          notes: note || `Sobra de ${catName} direcionada para ${destName}`,
+        }, { reserveFloorR$: autoCalculatedProtectionTarget });
+
+        if (cmdRes.status !== 'success') {
+          return cmdRes;
+        }
+
+        const newTransfer: SurplusTransferRecord = {
+          id: transferId,
+          sourceCategory,
+          targetType,
+          targetGoalId,
+          targetGoalName: destName,
+          amount: amountCents / 100,
+          date: todayStr,
+          monthKey: snap.currentMonth,
+          note: note || `Sobra de ${catName} direcionada para ${destName}`,
+        };
+
+        const transferExpense: ExpenseItem = {
+          id: expenseId,
+          description: `Alocação de Sobra: → ${destName}`,
+          amount: amountCents / 100,
+          amountCents,
+          category: sourceCategory,
+          date: todayStr,
+          paidBy: 'both',
+          operationId: cmdRes.operation?.id,
+          authoredByUid: getCommandAuthorUid(),
+          notes: `Transferência seletiva de sobra da categoria ${catName} para ${destName}.`,
+        };
+
+        const newNotif: AppNotification = {
+          id: `notif-surplus-${Date.now()}`,
+          title: 'Sobra Alocada com Sucesso! 🎯',
+          message: `R$ ${amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} de sobra da categoria ${catName} foram transferidos para "${destName}".`,
+          timestamp: 'Agora mesmo',
+          type: 'success',
+          isRead: false,
+        };
+
+        return {
+          ...cmdRes,
+          state: {
+            ...cmdRes.state,
+            expenses: [transferExpense, ...cmdRes.state.expenses],
+            surplusTransfers: [newTransfer, ...(cmdRes.state.surplusTransfers || [])],
+            notifications: [newNotif, ...cmdRes.state.notifications],
+          },
+          touchedEntities: {
+            ...cmdRes.touchedEntities,
+            expenses: [expenseId],
+            surplusTransfersUpdated: true,
+          },
+        };
       }
-
-      // Add expense record representing the transfer from the category budget so the sobra is consumed and traced
-      const transferExpense: ExpenseItem = {
-        id: `exp-surplus-tr-${Date.now()}`,
-        description: `Alocação de Sobra: → ${destName}`,
-        amount,
-        category: sourceCategory,
-        date: new Date().toISOString().split('T')[0],
-        paidBy: 'both',
-        notes: `Transferência seletiva de sobra da categoria ${catName} para ${destName}.`,
-      };
-
-      const newNotif: AppNotification = {
-        id: `notif-surplus-${Date.now()}`,
-        title: 'Sobra Alocada com Sucesso! 🎯',
-        message: `R$ ${amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} de sobra da categoria ${catName} foram transferidos para "${destName}".`,
-        timestamp: 'Agora mesmo',
-        type: 'success',
-        isRead: false,
-      };
-
-      return {
-        ...prev,
-        expenses: [transferExpense, ...prev.expenses],
-        protectionCurrentAmount: nextProtAmount,
-        protectionTotalInvested: nextProtInvested,
-        isProtectionComplete: nextProtComplete,
-        freedomTotalInvested: nextFreedomInvested,
-        piggyBanks: nextPiggyBanks,
-        surplusTransfers: [newTransfer, ...(prev.surplusTransfers || [])],
-        notifications: [newNotif, ...prev.notifications],
-      };
-    });
+    );
 
     triggerCelebration();
+  };
+
+  const previewCategoryReinforcementAction = useCallback(
+    (params: PreviewCategoryReinforcementParams): PreviewCategoryReinforcementResult => {
+      return previewCategoryReinforcement(stateRef.current, params);
+    },
+    []
+  );
+
+  const reinforceCategoryFromSource = (
+    params: Omit<ExecuteCategoryReinforcementParams, 'authorizedBy' | 'authoredByUid'>
+  ): FinancialCommandResult => {
+    const actorUid = currentUser?.uid || (viewMode === 'partner1' || viewMode === 'partner2' ? viewMode : 'both');
+    const result = executePatrimonialCommand(
+      (prev) =>
+        executeCategoryReinforcementCommand(prev, {
+          ...params,
+          authorizedBy: actorUid,
+          authoredByUid: actorUid,
+        }),
+      (cmdRes, prev) => {
+        const count = cmdRes.operations?.length || 1;
+        const cats = (cmdRes.operations || [cmdRes.operation])
+          .filter(Boolean)
+          .map((o) => o!.targetRef?.name || o!.targetRef?.id)
+          .join(', ');
+        const totalReinforced = (cmdRes.operations || [cmdRes.operation])
+          .filter(Boolean)
+          .reduce((s, o) => s + (o!.amountR$ ?? o!.amountCents / 100), 0);
+        const newNotif: AppNotification = {
+          id: `notif-reinf-${Date.now()}`,
+          title: 'Reforço Temporário Aplicado',
+          message: `${formatCurrency(totalReinforced)} adicionados ao teto de ${cats} em ${params.competence || prev.currentMonth} (${count} ${count === 1 ? 'registro' : 'registros'}) sem alterar renda nem metas base.`,
+          timestamp: 'Agora mesmo',
+          type: 'success',
+          isRead: false,
+        };
+        return {
+          ...cmdRes.state,
+          notifications: [newNotif, ...(cmdRes.state.notifications || [])],
+        };
+      }
+    );
+    triggerCelebration();
+    return result;
   };
 
   const reallocateCategoryBudget = (fromCategory: CategoryKey, toCategory: CategoryKey, amount: number, note?: string) => {
@@ -4648,53 +5374,47 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
     const fromName = CATEGORIES_BASE[fromCategory]?.name || fromCategory;
     const toName = CATEGORIES_BASE[toCategory]?.name || toCategory;
     const todayStr = new Date().toISOString().split('T')[0];
+    const actorUid = currentUser?.uid || (viewMode === 'partner1' || viewMode === 'partner2' ? viewMode : 'both');
 
-    const debitExpense: ExpenseItem = {
-      id: `exp-vaso-debit-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`,
-      description: `Vaso Comunicante: Transferência → ${toName}`,
-      amount: amount,
-      category: fromCategory,
-      date: todayStr,
-      paidBy: 'both',
-      notes: note || `Transferência de saldo por Vaso Comunicante de ${fromName} para cobrir excesso em ${toName}.`,
-    };
-
-    const creditExpense: ExpenseItem = {
-      id: `exp-vaso-credit-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`,
-      description: `Vaso Comunicante: Compensação ← ${fromName}`,
-      amount: -amount,
-      category: toCategory,
-      date: todayStr,
-      paidBy: 'both',
-      notes: note || `Crédito compensatório de Vaso Comunicante recebido de ${fromName}.`,
-    };
-
-    const newTransfer: SurplusTransferRecord = {
-      id: `surplus-vc-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-      sourceCategory: fromCategory,
-      targetType: 'category',
-      targetGoalName: toName,
-      amount,
-      date: todayStr,
-      monthKey: state.currentMonth,
-      note: note || `Vaso comunicante: ${fromName} nivelou ${toName} (+R$ ${amount.toFixed(2)})`,
-    };
-
-    const newNotif: AppNotification = {
-      id: `notif-vc-${Date.now()}`,
-      title: 'Vasos Comunicantes Nivelados! ⚖️',
-      message: `R$ ${amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} de sobra em ${fromName} foram transferidos para equilibrar ${toName}. Sem culpa e sem neura!`,
-      timestamp: 'Agora mesmo',
-      type: 'success',
-      isRead: false,
-    };
-
-    setState(prev => ({
-      ...prev,
-      expenses: [debitExpense, creditExpense, ...prev.expenses],
-      surplusTransfers: [newTransfer, ...(prev.surplusTransfers || [])],
-      notifications: [newNotif, ...prev.notifications],
-    }));
+    executePatrimonialCommand(
+      (prev) =>
+        executeCategoryReallocationCommand(prev, {
+          fromCategory,
+          toCategory,
+          amountR$: amount,
+          competence: prev.currentMonth,
+          date: todayStr,
+          authorizedBy: actorUid,
+          authoredByUid: actorUid,
+          scope: viewMode === 'couple' ? 'casal' : viewMode,
+          note: note || `Vaso comunicante: ${fromName} nivelou ${toName} (+R$ ${amount.toFixed(2)})`,
+        }),
+      (cmdRes, prev) => {
+        const newTransfer: SurplusTransferRecord = {
+          id: `surplus-vc-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+          sourceCategory: fromCategory,
+          targetType: 'category',
+          targetGoalName: toName,
+          amount,
+          date: todayStr,
+          monthKey: prev.currentMonth,
+          note: note || `Vaso comunicante: ${fromName} nivelou ${toName} (+R$ ${amount.toFixed(2)})`,
+        };
+        const newNotif: AppNotification = {
+          id: `notif-vc-${Date.now()}`,
+          title: 'Vasos Comunicantes Nivelados! ⚖️',
+          message: `R$ ${amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} de sobra em ${fromName} foram transferidos para equilibrar ${toName}. Sem culpa e sem gerar despesa negativa!`,
+          timestamp: 'Agora mesmo',
+          type: 'success',
+          isRead: false,
+        };
+        return {
+          ...cmdRes.state,
+          surplusTransfers: [newTransfer, ...(cmdRes.state.surplusTransfers || [])],
+          notifications: [newNotif, ...(cmdRes.state.notifications || [])],
+        };
+      }
+    );
 
     triggerCelebration();
   };
@@ -4772,67 +5492,114 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
     const todayStr = new Date().toISOString().split('T')[0];
     const totalAllocated = validAllocations.reduce((sum, a) => sum + a.amount, 0);
 
-    setState(prev => {
-      let nextProtAmount = prev.protectionCurrentAmount;
-      let nextProtInvested = prev.protectionTotalInvested;
-      let nextProtComplete = prev.isProtectionComplete;
-      let nextFreedomInvested = prev.freedomTotalInvested;
-      let nextPiggyBanks = [...prev.piggyBanks];
-      const newExpenses = [...prev.expenses];
-      const newTransfers = [...(prev.surplusTransfers || [])];
+    commitCommandTransition((snap) => {
+      if (sourceCategory) {
+        const catBudget = categoriesSpending[sourceCategory]?.budget ?? 0;
+        const alreadyAllocatedInSnap = (snap.surplusTransfers || [])
+          .filter((t) => t.monthKey === snap.currentMonth && t.sourceCategory === sourceCategory)
+          .reduce((sum, t) => sum + (t.amount || 0), 0);
+        const alreadyAllocatedInView = (state.surplusTransfers || [])
+          .filter((t) => t.monthKey === state.currentMonth && t.sourceCategory === sourceCategory)
+          .reduce((sum, t) => sum + (t.amount || 0), 0);
+        const viewRemaining = categoriesSpending[sourceCategory]?.remaining ?? 0;
+        const dynamicRemaining = Math.max(0, viewRemaining - Math.max(0, alreadyAllocatedInSnap - alreadyAllocatedInView));
+        if (catBudget > 0 && totalAllocated > dynamicRemaining + 0.01) {
+          throw new Error(
+            `Sobras insuficientes em ${CATEGORIES_BASE[sourceCategory]?.name || sourceCategory} para distribuir R$ ${totalAllocated.toFixed(2)}.`
+          );
+        }
+      }
 
-      validAllocations.forEach(alloc => {
+      let workingSnap = snap;
+      const mergedTouched: NonNullable<FinancialCommandResult['touchedEntities']> = {
+        expenses: [],
+        surplusTransfersUpdated: true,
+      };
+      const newExpenses: ExpenseItem[] = [];
+      const newTransfers: SurplusTransferRecord[] = [];
+      let lastOp: FinancialOperationRecord | undefined;
+
+      for (let idx = 0; idx < validAllocations.length; idx++) {
+        const alloc = validAllocations[idx];
         const destLabel = alloc.targetGoalName || (
           alloc.targetType === 'protection' ? 'Reserva de Emergência' :
           alloc.targetType === 'freedom' ? 'Bloco Liberdade' :
           alloc.targetType === 'leisure' ? 'Recompensa Livre do Casal' : 'Cofrinho de Metas'
         );
+        const transferId = `surplus-dist-${Date.now()}-${idx}-${Math.random().toString(36).slice(2, 5)}`;
+        const amountCents = Math.round(alloc.amount * 100);
+        let linkedOpId: string | undefined;
 
-        if (alloc.targetType === 'protection') {
-          nextProtAmount += alloc.amount;
-          nextProtInvested += alloc.amount;
-          nextProtComplete = nextProtAmount >= autoCalculatedProtectionTarget;
-        } else if (alloc.targetType === 'freedom') {
-          nextFreedomInvested += alloc.amount;
-        } else if (alloc.targetType === 'goal' && alloc.targetGoalId) {
-          nextPiggyBanks = nextPiggyBanks.map(g => {
-            if (g.id === alloc.targetGoalId) {
-              const nextCur = g.currentAmount + alloc.amount;
-              const nextInv = (g.totalInvested || g.currentAmount * 0.85) + alloc.amount;
-              return {
-                ...g,
-                currentAmount: nextCur,
-                totalInvested: nextInv,
-                completed: nextCur >= g.targetAmount,
-              };
-            }
-            return g;
-          });
+        if (alloc.targetType !== 'leisure') {
+          const cmdRes = runFinancialCommand(workingSnap, {
+            id: `op-${transferId}`,
+            type: 'GOAL_DEPOSIT',
+            amountCents,
+            amountR$: amountCents / 100,
+            authorizedBy: 'both',
+            authoredByUid: getCommandAuthorUid(),
+            scope: getCommandScope(),
+            sourceRef: { type: 'category', id: sourceCategory || 'all_surplus', name: sourceCategory || 'Sobras do Mês' },
+            targetRef:
+              alloc.targetType === 'protection'
+                ? { type: 'protection', id: 'protection_reserve', name: destLabel }
+                : alloc.targetType === 'freedom'
+                ? { type: 'freedom', id: 'freedom_block', name: destLabel }
+                : { type: 'piggy_bank', id: alloc.targetGoalId || '', name: destLabel },
+            competence: workingSnap.currentMonth,
+            date: todayStr,
+            occurredAt: todayStr,
+            state: 'occurred_manual',
+            surplusTransferId: transferId,
+            notes: `Distribuição percentual (${alloc.percentage}%): ${destLabel}`,
+          }, { reserveFloorR$: autoCalculatedProtectionTarget });
+
+          if (cmdRes.status !== 'success') {
+            return cmdRes;
+          }
+          workingSnap = cmdRes.state;
+          lastOp = cmdRes.operation;
+          linkedOpId = cmdRes.operation?.id;
+          if (cmdRes.touchedEntities?.financialOperations) {
+            mergedTouched.financialOperations = Array.from(new Set([...(mergedTouched.financialOperations || []), ...cmdRes.touchedEntities.financialOperations]));
+          }
+          if (cmdRes.touchedEntities?.piggyBanks) {
+            mergedTouched.piggyBanks = Array.from(new Set([...(mergedTouched.piggyBanks || []), ...cmdRes.touchedEntities.piggyBanks]));
+          }
+          if (cmdRes.touchedEntities?.coupleGoals) {
+            mergedTouched.coupleGoals = Array.from(new Set([...(mergedTouched.coupleGoals || []), ...cmdRes.touchedEntities.coupleGoals]));
+          }
+          if (cmdRes.touchedEntities?.protectionUpdated) mergedTouched.protectionUpdated = true;
+          if (cmdRes.touchedEntities?.freedomUpdated) mergedTouched.freedomUpdated = true;
         }
 
-        const catKey = sourceCategory || 'lazer';
+        const expId = `exp-dist-surplus-${Date.now()}-${idx}-${Math.random().toString(36).slice(2, 5)}`;
+        mergedTouched.expenses!.push(expId);
         newExpenses.unshift({
-          id: `exp-dist-surplus-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`,
+          id: expId,
           description: `Distribuição de Sobra: → ${destLabel} (${alloc.percentage}%)`,
-          amount: alloc.amount,
-          category: catKey,
+          amount: amountCents / 100,
+          amountCents,
+          category: sourceCategory || 'lazer',
           date: todayStr,
           paidBy: 'both',
+          operationId: linkedOpId,
+          authoredByUid: getCommandAuthorUid(),
           notes: `Alocação percentual de sobra (${alloc.percentage}%) para ${destLabel}.`,
         });
 
         newTransfers.unshift({
-          id: `surplus-dist-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+          id: transferId,
           sourceCategory: sourceCategory || 'all_surplus',
           targetType: alloc.targetType,
           targetGoalId: alloc.targetGoalId,
           targetGoalName: destLabel,
-          amount: alloc.amount,
+          amount: amountCents / 100,
           date: todayStr,
-          monthKey: prev.currentMonth,
+          monthKey: snap.currentMonth,
           note: `Distribuição percentual (${alloc.percentage}%): ${destLabel}`,
         });
-      });
+      }
 
       const newNotif: AppNotification = {
         id: `notif-dist-surplus-${Date.now()}`,
@@ -4844,15 +5611,17 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
       };
 
       return {
-        ...prev,
-        expenses: newExpenses,
-        protectionCurrentAmount: nextProtAmount,
-        protectionTotalInvested: nextProtInvested,
-        isProtectionComplete: nextProtComplete,
-        freedomTotalInvested: nextFreedomInvested,
-        piggyBanks: nextPiggyBanks,
-        surplusTransfers: newTransfers,
-        notifications: [newNotif, ...prev.notifications],
+        status: 'success',
+        reasonCode: 'EXECUTED',
+        message: 'Distribuição de sobras consolidada com integridade.',
+        operation: lastOp,
+        state: {
+          ...workingSnap,
+          expenses: [...newExpenses, ...workingSnap.expenses],
+          surplusTransfers: [...newTransfers, ...(workingSnap.surplusTransfers || [])],
+          notifications: [newNotif, ...workingSnap.notifications],
+        },
+        touchedEntities: mergedTouched,
       };
     });
 
@@ -5120,175 +5889,94 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
     });
   };
 
-  const executeMonthlyDeposit = (mKey: string) => {
-    setState(prev => {
-      const guide = prev.monthlyDepositGuides?.[mKey] || getMonthlyDepositGuide(mKey);
-      const items = guide.items;
-      const totalDeposited = items.reduce((s, it) => s + it.totalAmount, 0);
-
-      let nextProtAmount = prev.protectionCurrentAmount;
-      let nextProtInvested = prev.protectionTotalInvested;
-      let nextProtComplete = prev.isProtectionComplete;
-      let nextFreedomInvested = prev.freedomTotalInvested;
-      let nextPiggyBanks = [...prev.piggyBanks];
-
-      const newSurplusTransfers: SurplusTransferRecord[] = [];
-
-      items.forEach(it => {
-        if (it.block === 'protection') {
-          nextProtAmount += it.totalAmount;
-          nextProtInvested += it.totalAmount;
-          if (nextProtAmount >= autoCalculatedProtectionTarget) {
-            nextProtComplete = true;
-          }
-        } else if (it.block === 'freedom') {
-          nextFreedomInvested += it.totalAmount;
-        } else if (it.block === 'goals' && it.targetGoalId) {
-          nextPiggyBanks = nextPiggyBanks.map(g => {
-            if (g.id === it.targetGoalId) {
-              const nextCur = g.currentAmount + it.totalAmount;
-              const nextInv = (g.totalInvested || g.currentAmount * 0.85) + it.totalAmount;
-              return {
-                ...g,
-                currentAmount: nextCur,
-                totalInvested: nextInv,
-                completed: nextCur >= g.targetAmount,
-              };
-            }
-            return g;
-          });
-        }
-
-        // Trace and record surplus destinations for audit trail
-        if (it.surplusAmount > 0) {
-          newSurplusTransfers.push({
-            id: `surplus-dep-${mKey}-${it.id}`,
-            sourceCategory: 'lazer',
-            targetType: it.block === 'protection' ? 'protection' : it.block === 'freedom' ? 'freedom' : 'goal',
-            targetGoalId: it.targetGoalId,
-            targetGoalName: it.title,
-            amount: it.surplusAmount,
-            date: new Date().toISOString().split('T')[0],
-            monthKey: mKey,
-            note: `Aporte de sobra direcionada no Guia Mensal (${it.title})`,
-          });
-        }
-      });
-
-      const completionRecord: MonthDepositCompletionRecord = {
+  const executeMonthlyDepositItem = (
+    mKey: string,
+    itemId: string,
+    extraAmountR$?: number,
+    options?: Omit<ExecuteMonthlyDepositItemParams, 'monthKey' | 'itemId' | 'extraAmountR$'>
+  ): FinancialCommandResult => {
+    const res = commitCommandTransition((snap) => {
+      const preparedSnap: AppState = snap.monthlyDepositGuides?.[mKey]
+        ? snap
+        : {
+            ...snap,
+            monthlyDepositGuides: {
+              ...(snap.monthlyDepositGuides || {}),
+              [mKey]: getMonthlyDepositGuide(mKey),
+            },
+          };
+      return executeMonthlyDepositItemCommand(preparedSnap, {
         monthKey: mKey,
-        completedAt: new Date().toISOString(),
-        totalDeposited,
-        items,
-      };
-
-      const updatedGuide: MonthlyDepositGuide = {
-        ...guide,
-        status: 'completed',
-        completedAt: new Date().toISOString(),
-      };
-
-      const monthName = formatMonthYear(mKey);
-      const successNotif: AppNotification = {
-        id: `notif-monthly-dep-${Date.now()}`,
-        title: 'Aportes do Mês Confirmados! 🏆✨',
-        message: `Os investimentos do mês de ${monthName} já foram feitos com sucesso! R$ ${totalDeposited.toLocaleString('pt-BR')} foram guardados. O futuro de vocês agradece.`,
-        timestamp: 'Agora mesmo',
-        type: 'success',
-        isRead: false,
-      };
-
-      const updatedSurplusTransfers = [
-        ...(prev.surplusTransfers || []).filter(t => !t.id.startsWith(`surplus-dep-${mKey}-`)),
-        ...newSurplusTransfers,
-      ];
-
-      return {
-        ...prev,
-        protectionCurrentAmount: nextProtAmount,
-        protectionTotalInvested: nextProtInvested,
-        isProtectionComplete: nextProtComplete,
-        freedomTotalInvested: nextFreedomInvested,
-        piggyBanks: nextPiggyBanks,
-        surplusTransfers: updatedSurplusTransfers,
-        monthlyDepositGuides: {
-          ...(prev.monthlyDepositGuides || {}),
-          [mKey]: updatedGuide,
-        },
-        completedMonthDeposits: {
-          ...(prev.completedMonthDeposits || {}),
-          [mKey]: completionRecord,
-        },
-        notifications: [successNotif, ...prev.notifications],
-      };
+        itemId,
+        extraAmountR$,
+        operationId: options?.operationId,
+        completedGoalContributionConfirmed: options?.completedGoalContributionConfirmed,
+        date: options?.date,
+        reserveFloorR$: autoCalculatedProtectionTarget,
+        authoredByUid: getCommandAuthorUid(),
+        scope: getCommandScope(),
+      });
     });
 
     triggerCelebration();
+    return res;
   };
 
-  const resetMonthlyDeposit = (mKey: string) => {
-    setState(prev => {
-      const existingCompletion = prev.completedMonthDeposits?.[mKey];
-      let nextProtAmount = prev.protectionCurrentAmount;
-      let nextProtInvested = prev.protectionTotalInvested;
-      let nextProtComplete = prev.isProtectionComplete;
-      let nextFreedomInvested = prev.freedomTotalInvested;
-      let nextPiggyBanks = [...prev.piggyBanks];
-
-      // Reverter valores creditados com exatidão matemática
-      if (existingCompletion?.items) {
-        existingCompletion.items.forEach(it => {
-          if (it.block === 'protection') {
-            nextProtAmount = Math.max(0, nextProtAmount - it.totalAmount);
-            nextProtInvested = Math.max(0, nextProtInvested - it.totalAmount);
-            nextProtComplete = nextProtAmount >= autoCalculatedProtectionTarget;
-          } else if (it.block === 'freedom') {
-            nextFreedomInvested = Math.max(0, nextFreedomInvested - it.totalAmount);
-          } else if (it.block === 'goals' && it.targetGoalId) {
-            nextPiggyBanks = nextPiggyBanks.map(g => {
-              if (g.id === it.targetGoalId) {
-                const nextCur = Math.max(0, g.currentAmount - it.totalAmount);
-                const nextInv = Math.max(0, (g.totalInvested || g.currentAmount) - it.totalAmount);
-                return {
-                  ...g,
-                  currentAmount: nextCur,
-                  totalInvested: nextInv,
-                  completed: nextCur >= g.targetAmount,
-                };
-              }
-              return g;
-            });
-          }
+  const executeMonthlyDeposit = (
+    mKey: string,
+    options?: Omit<ExecuteMonthlyDepositParams, 'monthKey'>
+  ): FinancialCommandResult => {
+    const res = commitCommandTransition(
+      (snap) => {
+        const preparedSnap: AppState = snap.monthlyDepositGuides?.[mKey]
+          ? snap
+          : {
+              ...snap,
+              monthlyDepositGuides: {
+                ...(snap.monthlyDepositGuides || {}),
+                [mKey]: getMonthlyDepositGuide(mKey),
+              },
+            };
+        return executeMonthlyDepositCommand(preparedSnap, {
+          ...options,
+          monthKey: mKey,
+          reserveFloorR$: autoCalculatedProtectionTarget,
+          authoredByUid: options?.authoredByUid || getCommandAuthorUid(),
+          scope: options?.scope || getCommandScope(),
         });
-      }
-
-      // Reverter registros de sobras atrelados a este guia do mês
-      const nextSurplus = (prev.surplusTransfers || []).filter(
-        t => !t.id.startsWith(`surplus-dep-${mKey}-`)
-      );
-
-      const nextCompleted = { ...(prev.completedMonthDeposits || {}) };
-      delete nextCompleted[mKey];
-      const nextGuides = { ...(prev.monthlyDepositGuides || {}) };
-      if (nextGuides[mKey]) {
-        nextGuides[mKey] = {
-          ...nextGuides[mKey],
-          status: 'pending_approval',
-          completedAt: undefined,
+      },
+      (cmdRes) => {
+        if (cmdRes.idempotentReplay) return cmdRes.state;
+        const totalDeposited = cmdRes.state.completedMonthDeposits?.[mKey]?.totalDeposited ?? 0;
+        const monthName = formatMonthYear(mKey);
+        const successNotif: AppNotification = {
+          id: `notif-monthly-dep-${Date.now()}`,
+          title: 'Aportes do Mês Confirmados! 🏆✨',
+          message: `Os investimentos do mês de ${monthName} já foram feitos com sucesso! R$ ${totalDeposited.toLocaleString('pt-BR')} foram guardados. O futuro de vocês agradece.`,
+          timestamp: 'Agora mesmo',
+          type: 'success',
+          isRead: false,
+        };
+        return {
+          ...cmdRes.state,
+          notifications: [successNotif, ...cmdRes.state.notifications],
         };
       }
-      return {
-        ...prev,
-        protectionCurrentAmount: nextProtAmount,
-        protectionTotalInvested: nextProtInvested,
-        isProtectionComplete: nextProtComplete,
-        freedomTotalInvested: nextFreedomInvested,
-        piggyBanks: nextPiggyBanks,
-        surplusTransfers: nextSurplus,
-        completedMonthDeposits: nextCompleted,
-        monthlyDepositGuides: nextGuides,
-      };
-    });
+    );
+
+    if (!res.idempotentReplay) {
+      triggerCelebration();
+    }
+    return res;
+  };
+
+  const resetMonthlyDeposit = (mKey: string): FinancialCommandResult => {
+    return commitCommandTransition((snap) =>
+      reverseMonthlyDepositCommand(snap, mKey, {
+        authoredByUid: getCommandAuthorUid(),
+        reserveFloorR$: autoCalculatedProtectionTarget,
+      })
+    );
   };
 
   const commitStateSync = (updater: (prev: AppState) => AppState): AppState => {
@@ -5653,19 +6341,34 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
   };
 
   const depositCollegeInvestment = (amount: number) => {
-    setState(prev => ({
-      ...prev,
-      freedomTotalInvested: prev.freedomTotalInvested + amount,
-      collegeModeData: {
-        active: true,
-        courseName: prev.collegeModeData?.courseName || 'Medicina',
-        currentSemester: prev.collegeModeData?.currentSemester || 5,
-        totalSemesters: prev.collegeModeData?.totalSemesters || 12,
-        monthlyStipend: prev.collegeModeData?.monthlyStipend ?? 0,
-        totalInvestedInCollege: (prev.collegeModeData?.totalInvestedInCollege ?? 0) + amount,
-        ...prev.collegeModeData,
-      },
-    }));
+    if (!Number.isFinite(amount) || amount <= 0) {
+      throw new Error('Informe um valor positivo para o aporte na faculdade.');
+    }
+    commitCommandTransition(
+      (snap) =>
+        executeGoalAdjustmentCommand(snap, {
+          goalId: 'freedom_block',
+          targetType: 'freedom',
+          direction: 'deposit',
+          amount,
+          contributor: 'both',
+          note: 'Aporte investido durante Modo Faculdade',
+          authoredByUid: getCommandAuthorUid(),
+          scope: getCommandScope(),
+        }),
+      (cmdRes) => ({
+        ...cmdRes.state,
+        collegeModeData: {
+          active: true,
+          courseName: cmdRes.state.collegeModeData?.courseName || 'Medicina',
+          currentSemester: cmdRes.state.collegeModeData?.currentSemester || 5,
+          totalSemesters: cmdRes.state.collegeModeData?.totalSemesters || 12,
+          monthlyStipend: cmdRes.state.collegeModeData?.monthlyStipend ?? 0,
+          ...cmdRes.state.collegeModeData,
+          totalInvestedInCollege: (cmdRes.state.collegeModeData?.totalInvestedInCollege ?? 0) + amount,
+        },
+      })
+    );
 
     confetti({
       particleCount: 60,
@@ -5717,75 +6420,70 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
     amount: number,
     targetType: 'goal' | 'freedom',
     targetGoalId?: string,
-    targetGoalName?: string
-  ) => {
-    if (amount <= 0) return;
-    if (amount > emergencyReserveExcessAmount) {
-      console.warn('Tentativa de realocar valor maior que o excesso da reserva');
-      return;
+    targetGoalName?: string,
+    options?: { completedGoalContributionConfirmed?: boolean; operationId?: string }
+  ): FinancialCommandResult => {
+    if (!Number.isFinite(amount) || amount <= 0) {
+      throw new Error('Informe um valor positivo para realocar o excesso da reserva.');
+    }
+    if (amount > emergencyReserveExcessAmount + 0.001) {
+      throw new Error(
+        `O valor R$ ${amount.toFixed(2)} excede o excesso disponível da reserva (R$ ${emergencyReserveExcessAmount.toFixed(2)}). O piso sagrado de 3 meses não pode ser violado.`
+      );
     }
 
-    setState(prev => {
-      const nextProtAmount = Math.max(0, prev.protectionCurrentAmount - amount);
-      const nextProtInvested = Math.max(0, prev.protectionTotalInvested - amount);
-      const nextProtComplete = nextProtAmount >= autoCalculatedProtectionTarget;
+    const destLabel = targetType === 'freedom' ? 'Bloco 3 Liberdade' : targetGoalName || 'Objetivo';
+    const transferId = `surplus-reserve-${Date.now()}`;
 
-      let nextPiggyBanks = prev.piggyBanks;
-      let nextFreedomInvested = prev.freedomTotalInvested;
-      const destLabel = targetType === 'freedom' ? 'Bloco 3 Liberdade' : targetGoalName || 'Objetivo';
+    const res = commitCommandTransition(
+      (snap) =>
+        executeBlockTransferCommand(snap, {
+          sourceType: 'protection',
+          sourceId: 'protection_reserve',
+          sourceName: 'Bloco 1 · Reserva de Proteção',
+          targetType: targetType === 'freedom' ? 'freedom' : 'piggy_bank',
+          targetId: targetType === 'freedom' ? 'freedom_block' : targetGoalId || '',
+          targetName: destLabel,
+          amount,
+          operationId: options?.operationId,
+          reserveFloorR$: emergencyReserveFloorAmount,
+          completedGoalContributionConfirmed: options?.completedGoalContributionConfirmed,
+          note: `Realocação voluntária de excesso da reserva para ${destLabel}`,
+          authoredByUid: getCommandAuthorUid(),
+          scope: getCommandScope(),
+        }),
+      (cmdRes) => {
+        const newTransfer: SurplusTransferRecord = {
+          id: transferId,
+          sourceCategory: 'protecao',
+          targetType,
+          targetGoalId,
+          targetGoalName: destLabel,
+          amount,
+          date: new Date().toISOString().split('T')[0],
+          monthKey: cmdRes.state.currentMonth,
+          note: `Realocação voluntária de excesso da reserva para ${destLabel}`,
+        };
 
-      if (targetType === 'goal' && targetGoalId) {
-        nextPiggyBanks = prev.piggyBanks.map(g => {
-          if (g.id === targetGoalId) {
-            const nextCur = g.currentAmount + amount;
-            const nextInv = (g.totalInvested || g.currentAmount * 0.85) + amount;
-            return {
-              ...g,
-              currentAmount: nextCur,
-              totalInvested: nextInv,
-              completed: nextCur >= g.targetAmount,
-            };
-          }
-          return g;
-        });
-      } else if (targetType === 'freedom') {
-        nextFreedomInvested += amount;
+        const notif: AppNotification = {
+          id: `notif-reserve-realloc-${Date.now()}`,
+          title: 'Excesso da Reserva Realocado! 🎯',
+          message: `R$ ${amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} foram transferidos do excesso da reserva para "${destLabel}", mantendo o piso sagrado de 3 meses 100% blindado.`,
+          timestamp: 'Agora mesmo',
+          type: 'success',
+          isRead: false,
+        };
+
+        return {
+          ...cmdRes.state,
+          surplusTransfers: [newTransfer, ...(cmdRes.state.surplusTransfers || [])],
+          notifications: [notif, ...cmdRes.state.notifications],
+        };
       }
-
-      const newTransfer: SurplusTransferRecord = {
-        id: `surplus-reserve-${Date.now()}`,
-        sourceCategory: 'protecao',
-        targetType,
-        targetGoalId,
-        targetGoalName: destLabel,
-        amount,
-        date: new Date().toISOString().split('T')[0],
-        monthKey: prev.currentMonth,
-        note: `Realocação voluntária de excesso da reserva para ${destLabel}`,
-      };
-
-      const notif: AppNotification = {
-        id: `notif-reserve-realloc-${Date.now()}`,
-        title: 'Excesso da Reserva Realocado! 🎯',
-        message: `R$ ${amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} foram transferidos do excesso da reserva para "${destLabel}", mantendo o piso sagrado de 3 meses 100% blindado.`,
-        timestamp: 'Agora mesmo',
-        type: 'success',
-        isRead: false,
-      };
-
-      return {
-        ...prev,
-        protectionCurrentAmount: nextProtAmount,
-        protectionTotalInvested: nextProtInvested,
-        isProtectionComplete: nextProtComplete,
-        piggyBanks: nextPiggyBanks,
-        freedomTotalInvested: nextFreedomInvested,
-        surplusTransfers: [newTransfer, ...(prev.surplusTransfers || [])],
-        notifications: [notif, ...prev.notifications],
-      };
-    });
+    );
 
     triggerCelebration();
+    return res;
   };
 
   const advanceInstallmentPayment = (payload: AdvanceInstallmentPayload) => {
@@ -5990,6 +6688,155 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
     return selectReconciledBudgetMatrix(state, matrixScope, state.currentMonth);
   }, [state, viewMode]);
 
+  const verifiableCashSummary = useMemo(() => {
+    const cashScope =
+      viewMode === 'partner1' ? 'partner1' : viewMode === 'partner2' ? 'partner2' : 'casal';
+    return selectVerifiableCashSummary(state, cashScope);
+  }, [state, viewMode]);
+
+  const setCashBalanceAnchor = (input: {
+    accountId: string;
+    status: 'known' | 'unknown';
+    confirmedBalanceR$?: number;
+    cutoffDate?: string;
+    reason?: string;
+  }) => {
+    const nowIso = new Date().toISOString();
+    const cutoffDate = input.cutoffDate || nowIso.slice(0, 10);
+    const uid = getCommandAuthorUid();
+    const scope = getCommandScope();
+    const isKnown = input.status === 'known' && Number.isFinite(input.confirmedBalanceR$ ?? 0);
+    const balanceCents = isKnown ? Math.round((input.confirmedBalanceR$ ?? 0) * 100) : 0;
+
+    setState(prev => {
+      const targetAcc =
+        (prev.linkedAccounts || []).find(a => a.id === input.accountId || a.canonicalAccountId === input.accountId) ||
+        (prev.pluggyAccounts || []).find(a => a.id === input.accountId || a.accountId === input.accountId || a.canonicalAccountId === input.accountId);
+      const canonicalId = targetAcc?.canonicalAccountId || input.accountId;
+      const existing = (prev.cashBalanceAnchors || []).filter(
+        a => a.accountId !== input.accountId && a.canonicalAccountId !== canonicalId && a.id !== `anchor-${canonicalId}`
+      );
+      const prevAnchor = (prev.cashBalanceAnchors || []).find(
+        a => a.accountId === input.accountId || a.canonicalAccountId === canonicalId || a.id === `anchor-${canonicalId}`
+      );
+      const nextAnchor: CashBalanceAnchor = {
+        id: prevAnchor?.id || `anchor-${canonicalId}`,
+        accountId: input.accountId,
+        canonicalAccountId: canonicalId,
+        accountType: targetAcc?.accountType,
+        date: cutoffDate,
+        balanceCents,
+        balanceStatus: isKnown ? 'known' : 'unknown',
+        scope,
+        origin: 'manual_confirmed',
+        coverageType: 'cutoff_inclusive',
+        includedUntilDate: cutoffDate,
+        confirmedAt: nowIso,
+        confirmedByUid: uid,
+        notes: input.reason,
+        revision: (prevAnchor?.revision ?? 0) + 1,
+      };
+      const nextLinkedAccounts = (prev.linkedAccounts || []).map(acc =>
+        acc.id === input.accountId || acc.canonicalAccountId === canonicalId
+          ? {
+              ...acc,
+              balance: isKnown ? balanceCents / 100 : acc.balance,
+              verificationStatus: (isKnown ? 'verified' : 'unverified') as 'verified' | 'unverified',
+              lastSynced: cutoffDate,
+            }
+          : acc
+      );
+      const nextPluggyAccounts = (prev.pluggyAccounts || []).map(acc =>
+        acc.id === input.accountId || acc.accountId === input.accountId || acc.canonicalAccountId === canonicalId
+          ? {
+              ...acc,
+              balance: isKnown ? balanceCents / 100 : acc.balance,
+              verificationStatus: (isKnown ? 'verified' : 'unverified') as 'verified' | 'unverified',
+            }
+          : acc
+      );
+      return {
+        ...prev,
+        cashBalanceAnchors: [...existing, nextAnchor],
+        linkedAccounts: nextLinkedAccounts,
+        pluggyAccounts: nextPluggyAccounts,
+      };
+    });
+  };
+
+  const linkCanonicalAccount = (accountId: string, canonicalAccountId: string) => {
+    const trimmed = canonicalAccountId.trim();
+    if (!trimmed) return;
+    setState(prev => ({
+      ...prev,
+      linkedAccounts: (prev.linkedAccounts || []).map(acc =>
+        acc.id === accountId
+          ? {
+              ...acc,
+              canonicalAccountId: trimmed,
+              verificationStatus: acc.verificationStatus === 'ambiguous_duplicate' ? 'verified' : acc.verificationStatus,
+            }
+          : acc
+      ),
+      pluggyAccounts: (prev.pluggyAccounts || []).map(acc =>
+        acc.id === accountId || acc.accountId === accountId
+          ? {
+              ...acc,
+              canonicalAccountId: trimmed,
+              verificationStatus: acc.verificationStatus === 'ambiguous_duplicate' ? 'verified' : acc.verificationStatus,
+            }
+          : acc
+      ),
+    }));
+  };
+
+  const previewWithdrawal = (params: GoalWithdrawalCommandParams): GoalWithdrawalPreviewResult => {
+    return previewGoalWithdrawal(stateRef.current, params);
+  };
+
+  const executeWithdrawal = (
+    params: Omit<GoalWithdrawalCommandParams, 'authoredByUid' | 'scope' | 'reserveFloorR$'>
+  ): FinancialCommandResult => {
+    return commitCommandTransition((snap) =>
+      executeWithdrawalCommand(snap, {
+        ...params,
+        authoredByUid: getCommandAuthorUid(),
+        scope: getCommandScope(),
+        reserveFloorR$: autoCalculatedProtectionTarget,
+      })
+    );
+  };
+
+  const reconcileBankTransactionWithOperation = (
+    bankTransactionId: string,
+    operationId: string,
+    options?: Omit<ReconcileWithdrawalStatementParams, 'bankTransactionId' | 'operationId' | 'reconciledByUid'>
+  ): FinancialCommandResult => {
+    return commitCommandTransition((snap) =>
+      reconcileWithdrawalWithStatementCommand(snap, {
+        ...options,
+        bankTransactionId,
+        operationId,
+        reconciledByUid: getCommandAuthorUid(),
+      })
+    );
+  };
+
+  const confirmInternalTransferPair = (
+    debitTxId: string,
+    creditTxId: string,
+    note?: string
+  ): FinancialCommandResult => {
+    return commitCommandTransition((snap) =>
+      confirmInternalTransferPairCommand(snap, {
+        debitTxId,
+        creditTxId,
+        authorizedBy: getCommandAuthorUid(),
+        note,
+      })
+    );
+  };
+
   return (
     <FinanceContext.Provider
       value={{
@@ -6066,6 +6913,17 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
         updateProtectionBankBalance,
         updateFreedomBankBalance,
         updateGoalBankBalance,
+        transferBetweenBlocks,
+        recordInitialPosition,
+        adjustPatrimonialValuation,
+        reverseFinancialOperation,
+        verifiableCashSummary,
+        setCashBalanceAnchor,
+        linkCanonicalAccount,
+        previewWithdrawal,
+        executeWithdrawal,
+        reconcileBankTransactionWithOperation,
+        confirmInternalTransferPair,
         updateProfile,
         patchCoupleProfile,
         headerSaveError,
@@ -6146,7 +7004,11 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
         keepCustomPercentagesOnTierChange,
         pendingTierChangePrompt,
         dismissTierChangePrompt,
-        // Direcionamento Seletivo de Sobras Orçamentárias
+        // Direcionamento Seletivo de Sobras Orçamentárias & Reforço Temporário 26C
+        eligibleReinforcementSources,
+        reinforcementSummary,
+        previewCategoryReinforcementAction,
+        reinforceCategoryFromSource,
         surplusTransfers: state.surplusTransfers || [],
         allocateCategorySurplus,
         reallocateCategoryBudget,
@@ -6163,6 +7025,7 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
         approveMonthlyDepositGuide,
         adjustMonthlyDepositItem,
         executeMonthlyDeposit,
+        executeMonthlyDepositItem,
         resetMonthlyDeposit,
         pushSettings: state.pushSettings || DEFAULT_PUSH_SETTINGS,
         updatePushSettings,
