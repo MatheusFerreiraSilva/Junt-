@@ -1,4 +1,4 @@
-import { CategoryKey, LifeTierInfo, LifeTierKey, IncomeSourceClassification, IncomeItem } from '../types/finance';
+import { LifeTierInfo, LifeTierKey, IncomeSourceClassification, IncomeItem } from '../types/finance';
 
 /**
  * MOTOR DINÂMICO DE FAIXAS DE RENDA E IDENTIDADE VISUAL AMBIENTAL (JUNTÔ)

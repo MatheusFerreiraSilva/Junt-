@@ -1,6 +1,6 @@
 import { AvatarSettings, MemberAvatar } from '../avatars/AvatarUI';
 import React, { useState, useMemo, useEffect, useRef } from 'react';
-import { Users, DollarSign, AlertTriangle, CheckCircle2, Sparkles, RefreshCw, Save, Check, X, RotateCcw, Trash2, Palette, Building, Smartphone, Tag, Plus, Bell, Copy, UploadCloud, FileText, Lock, Unlock, Calendar } from 'lucide-react';
+import { Users, DollarSign, AlertTriangle, CheckCircle2, Sparkles, RefreshCw, Save, Check, X, RotateCcw, Trash2, Palette, Building, Smartphone, Tag, Bell, Copy, UploadCloud, Lock, Unlock, Calendar } from 'lucide-react';
 import { useFinance, CATEGORIES_BASE, ACCENT_THEMES } from '../context/FinanceContext';
 import { CategoryKey, DestinationKey, AccentTheme, LifeTierInfo } from '../types/finance';
 import { getLifeTier } from '../utils/incomeTiersEngine';
@@ -16,11 +16,6 @@ import {
   DESTINATION_NAMES,
   type RebalanceResult,
 } from '../utils/rebalanceBudgetEngine';
-import {
-  getCurrentMonthlyReviewSchedule,
-  requestPushNotificationPermission,
-  triggerBrowserPushNotification,
-} from '../utils/monthlyReviewNotifications';
 import {
   requestPushPermission,
   sendTestNotification,
@@ -41,7 +36,6 @@ export const SettingsScreen: React.FC = () => {
   const {
     state,
     totalIncome,
-    updateProfile,
     patchCoupleProfile,
     headerSaveError,
     syncConflict,
@@ -49,42 +43,19 @@ export const SettingsScreen: React.FC = () => {
     resolveHeaderConflict,
     categoryLocks,
     applyBudgetRebalanceProposal,
-    toggleProtectionComplete,
-    resetToSampleData,
-    toggleThemeMode,
     appearanceSyncStatus,
     retryAppearanceSync,
     saveCurrentAppearance,
-    setAccentTheme,
     setModeTheme,
     clearAllData,
-    clearExpenses,
-    clearInstallments,
-    clearPiggyBanks,
-    clearIncomes,
     triggerCelebration,
-    autoCalculatedProtectionTarget,
-    monthlyFixedExpensesAvg,
-    installmentCommitmentPercentage,
-    installmentLimitPercentage,
-    activeModeThemeKey,
     // Faixas & Porcentagens Personalizadas
-    activeLifeTier,
     restoreTierDefaultPercentages,
     applyNewTierDefaults,
     keepCustomPercentagesOnTierChange,
     pendingTierChangePrompt,
-    isCustomizedPercentages: isCustomInContext,
-    // Pluggy & Accounts
-    pluggyAccounts,
-    updatePluggyAccount,
-    addPluggyAccount,
-    removePluggyAccount,
-    syncPluggyData,
-    isSyncingBanks,
     // Keyword Rules & Subscriptions
     keywordRules,
-    updateKeywordRules,
     addKeywordRule,
     removeKeywordRule,
     autoCategorizeDescription,
@@ -92,12 +63,9 @@ export const SettingsScreen: React.FC = () => {
     dismissSubscription,
     confirmSubscriptionAsExpense,
     // Couple fusion & Auth
-    currentUser,
-    userProfile,
     coupleAccount,
     generateNewInviteCode,
     joinCoupleWithInviteCode,
-    unlinkCouple,
     pushSettings,
     updatePushSettings,
   } = useFinance();
@@ -216,7 +184,6 @@ export const SettingsScreen: React.FC = () => {
   };
 
   // Secondary Tools
-  const [showDataTools, setShowDataTools] = useState(false);
   const [saveSuccessMsg, setSaveSuccessMsg] = useState(false);
 
   const [isAddingAccount, setIsAddingAccount] = useState(false);
@@ -234,7 +201,6 @@ export const SettingsScreen: React.FC = () => {
 
   // Push notification state
   const [pushStatusMsg, setPushStatusMsg] = useState<string | null>(null);
-  const reviewSchedule = useMemo(() => getCurrentMonthlyReviewSchedule(), []);
 
   // Synchronization with Competence Snapshot & Context changes
   useEffect(() => {
@@ -723,26 +689,6 @@ export const SettingsScreen: React.FC = () => {
     setNewKeyword('');
     setNewKeySubcat('');
     triggerCelebration();
-  };
-
-  const handleTestPush = async () => {
-    const perm = await requestPushNotificationPermission();
-    if (perm === 'granted') {
-      const sent = triggerBrowserPushNotification(
-        'Revisão Mensal do Casal 👫',
-        reviewSchedule.primaryMessage
-      );
-      if (sent) {
-        setPushStatusMsg('Notificação de teste enviada para seu dispositivo!');
-      } else {
-        setPushStatusMsg('Notificação ativada no navegador.');
-      }
-    } else if (perm === 'denied') {
-      setPushStatusMsg('Permissão bloqueada no navegador. Habilite nas configurações do site.');
-    } else {
-      setPushStatusMsg('Permissão solicitada ao navegador.');
-    }
-    setTimeout(() => setPushStatusMsg(null), 4000);
   };
 
   const testMatch = useMemo(() => {

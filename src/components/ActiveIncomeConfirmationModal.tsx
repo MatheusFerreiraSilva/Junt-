@@ -1,16 +1,7 @@
 import React, { useState } from 'react';
 import {
   Sparkles,
-  Building,
-  User,
-  ArrowRight,
-  ShieldCheck,
-  CheckCircle2,
   X,
-  HelpCircle,
-  Coins,
-  Repeat,
-  AlertTriangle,
 } from 'lucide-react';
 import { useFinance } from '../context/FinanceContext';
 import { IncomeSourceClassification, PendingIncomeConfirmation } from '../types/finance';

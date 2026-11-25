@@ -2,15 +2,9 @@ import React, { useState } from 'react';
 import {
   X,
   Sparkles,
-  Shield,
-  Target,
-  Calendar,
   Check,
   CreditCard,
   Zap,
-  Users,
-  User,
-  Info,
 } from 'lucide-react';
 import { useFinance, CATEGORIES_BASE } from '../../context/FinanceContext';
 import { CategoryKey, FundingSourceType } from '../../types/finance';
@@ -33,7 +27,6 @@ export const StrategicSpendingIntentModal: React.FC<StrategicSpendingIntentModal
 }) => {
   const {
     state,
-    emergencyReserveFloorAmount,
     emergencyReserveExcessAmount,
     addStrategicIntent,
     triggerCelebration,

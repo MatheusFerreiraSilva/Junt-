@@ -23,7 +23,7 @@ import {
   ChevronRight,
   Users,
 } from 'lucide-react';
-import { useFinance, ACCENT_THEMES } from '../context/FinanceContext';
+import { useFinance } from '../context/FinanceContext';
 import { JuntoLogo } from './JuntoLogo';
 
 export type ScreenId =
@@ -75,7 +75,6 @@ export const Navigation: React.FC<NavigationProps> = ({
     isCloudSynced,
     viewMode,
     setViewMode,
-    setAppMode,
   } = useFinance();
 
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);

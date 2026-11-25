@@ -1,16 +1,10 @@
 import React, { useState } from 'react';
 import {
-  AlertTriangle,
   CheckCircle2,
-  Trash2,
-  Check,
-  Sparkles,
   ChevronDown,
   ChevronUp,
-  Layers,
 } from 'lucide-react';
 import { useFinance, CATEGORIES_BASE } from '../context/FinanceContext';
-import { DuplicateGroup } from '../utils/coupleReconciliation';
 import { formatCurrency } from '../utils/formatters';
 
 export const DuplicateReconciliationCard: React.FC = () => {

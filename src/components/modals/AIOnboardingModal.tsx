@@ -3,19 +3,7 @@ import {
   Sparkles,
   X,
   ArrowRight,
-  ArrowLeft,
   Check,
-  Building,
-  Home,
-  Utensils,
-  Target,
-  Shield,
-  Percent,
-  RefreshCw,
-  Users,
-  DollarSign,
-  Heart,
-  Laptop,
 } from 'lucide-react';
 import { useFinance } from '../../context/FinanceContext';
 import { authenticatedApi } from '../../lib/authenticatedApi';
@@ -92,7 +80,6 @@ export const AIOnboardingModal: React.FC<AIOnboardingModalProps> = ({ isOpen, on
   const [isInitialHomePhase, setIsInitialHomePhase] = useState(state.profile.isInitialHomePhase || false);
   const [specialNotes, setSpecialNotes] = useState('');
 
-  const [isLoadingAI, setIsLoadingAI] = useState(false);
   const [aiResult, setAiResult] = useState<AIInterpretationResult | null>(null);
 
   const [analysisError, setAnalysisError] = useState('');
@@ -106,7 +93,6 @@ export const AIOnboardingModal: React.FC<AIOnboardingModalProps> = ({ isOpen, on
 
   const handleRunAIAnalysis = async () => {
     setAnalysisError('');
-    setIsLoadingAI(true);
     setStep(4);
 
     try {
@@ -136,8 +122,6 @@ export const AIOnboardingModal: React.FC<AIOnboardingModalProps> = ({ isOpen, on
     } catch (err: unknown) {
       setAnalysisError(err instanceof Error ? err.message : 'Não foi possível gerar o planejamento. Tente novamente.');
       setStep(3);
-    } finally {
-      setIsLoadingAI(false);
     }
   };
 

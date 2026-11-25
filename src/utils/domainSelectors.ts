@@ -3,17 +3,12 @@ import {
   ExpenseItem,
   IncomeItem,
   InstallmentPurchase,
-  FixedBillAlert,
   SavingsPiggyBank,
   CoupleGoal,
-  MedicalShift,
   BankImportedTransaction,
-  SurplusTransferRecord,
   CategoryKey,
   PaidBy,
   BudgetPlanContract,
-  MacroGroupKey,
-  MacroGroupAllocation,
   BudgetPlanPolicyMeta,
   DestinationKey,
   ExpenseNature,
@@ -24,8 +19,6 @@ import {
   TransactionSplit,
   CategoryKeywordRule,
   FinancialOperationRecord,
-  FinancialOperationType,
-  FinancialOperationState,
   FundingSourceType,
   SplitLineType,
   ReconciledBudgetMatrixResult,
@@ -34,7 +27,6 @@ import {
   ReconciledCategoryRow,
   CategoryMatrixEntryCents,
   CeilingState,
-  FixedBillRegistryConflict,
   CashBalanceAnchor,
   CashAccountVerificationItem,
   VerifiableCashSummary,
@@ -48,15 +40,18 @@ import {
 } from './financialCommands';
 import {
   apportionCentsByScope,
-  CATEGORY_PRESENTATION_META,
+  mapToCanonicalCategoryKey,
   projectCanonicalExpenseSlices,
   projectInstallmentOccurrencesForCompetence,
   projectSharedFixedOccurrences,
   resolveExpenseCompetenceMonth,
+  roundMoney,
   selectCanonicalFixedBillsRegistry,
   toSafeCents,
   type ResolvedSliceNature,
 } from './occurrenceProjection';
+
+export { roundMoney };
 
 export {
   roundMoneyCentsCompatible,
@@ -144,12 +139,7 @@ export interface NormalizedFinancialEvent {
   affectsNetWorth: boolean;
 }
 
-/**
-  * Safely rounds amounts to exactly 2 decimal places to prevent float precision drift.
-  */
-export function roundMoney(amount: number): number {
-  return Math.round(amount * 100) / 100;
-}
+
 
 /**
   * Checks if an entity belongs to the requested scope.
@@ -2389,25 +2379,7 @@ export function selectConsolidatedAssetTotal(
   return roundMoney(unlinkedAccountBalances + totalProtected);
 }
 
-const CANONICAL_CATEGORY_ALIAS_MAP: Record<string, CategoryKey> = {
-  moradia: 'moradia',
-  casa: 'moradia',
-  limpeza: 'moradia',
-  transporte: 'transporte',
-  comida: 'comida',
-  alimentacao: 'comida',
-  lazer: 'lazer',
-  vestuario: 'lazer',
-  protecao: 'protecao',
-  saude: 'protecao',
-  farmacia: 'protecao',
-  profissional: 'profissional',
-};
 
-function mapToCanonicalMatrixCategory(rawCat?: string): CategoryKey {
-  if (!rawCat) return 'moradia';
-  return CANONICAL_CATEGORY_ALIAS_MAP[rawCat] || 'moradia';
-}
 
 function resolveReinforcementSourceLabel(
   state: AppState,
@@ -2502,7 +2474,7 @@ export function selectCategoryReinforcementSummary(
 
     if (op.type === 'CATEGORY_REINFORCEMENT') {
       if (op.targetRef?.type !== 'category' || !op.targetRef.id) continue;
-      const cat = mapToCanonicalMatrixCategory(op.targetRef.id);
+      const cat = mapToCanonicalCategoryKey(op.targetRef.id);
       reinforcementCents[cat] += scopedCents;
 
       const linkedWithdrawal = op.sourceOperationId ? opById.get(op.sourceOperationId) : undefined;
@@ -2549,8 +2521,8 @@ export function selectCategoryReinforcementSummary(
       ) {
         continue;
       }
-      const fromCat = mapToCanonicalMatrixCategory(op.sourceRef.id);
-      const toCat = mapToCanonicalMatrixCategory(op.targetRef.id);
+      const fromCat = mapToCanonicalCategoryKey(op.sourceRef.id);
+      const toCat = mapToCanonicalCategoryKey(op.targetRef.id);
       if (fromCat === toCat) continue;
       reallocOutCents[fromCat] += scopedCents;
       reallocInCents[toCat] += scopedCents;
@@ -2565,7 +2537,7 @@ export function selectCategoryReinforcementSummary(
       if (!adj || !adj.expiresAt || adj.expiresAt.slice(0, 7) !== currentMonthKey) continue;
       const cents = toSafeCents(adj.amount);
       if (cents <= 0) continue;
-      const cat = mapToCanonicalMatrixCategory(adj.category);
+      const cat = mapToCanonicalCategoryKey(adj.category);
       reinforcementCents[cat] += cents;
       const provenance: ReinforcementProvenanceRef = {
         operationId: `legacy-adj-${adjId}`,
@@ -2718,7 +2690,7 @@ export function selectReconciledBudgetMatrix(
   );
 
   for (const occ of fixedOccurrences) {
-    const cat = mapToCanonicalMatrixCategory(occ.categoryKey);
+    const cat = mapToCanonicalCategoryKey(occ.categoryKey);
     if (occ.status === 'paid') {
       catFixedCents[cat] += occ.apportionedAmountCents;
     } else {
@@ -2763,7 +2735,7 @@ export function selectReconciledBudgetMatrix(
       );
       if (!split.isInScope) continue;
 
-      const cat = mapToCanonicalMatrixCategory(slice.category);
+      const cat = mapToCanonicalCategoryKey(slice.category);
       if (slice.hasReliableNature) {
         catVarCents[cat] += split.scopedCents;
       } else {
@@ -2783,7 +2755,7 @@ export function selectReconciledBudgetMatrix(
   for (const instOcc of instOccurrences) {
     if (instOcc.isFixedNature) continue;
     if (instOcc.isExcludedFromMonthlyBudget) continue;
-    const cat = mapToCanonicalMatrixCategory(instOcc.category);
+    const cat = mapToCanonicalCategoryKey(instOcc.category);
     if (instOcc.status === 'paid' || instOcc.status === 'advanced') {
       catVarCents[cat] += instOcc.scopedCents;
     } else {

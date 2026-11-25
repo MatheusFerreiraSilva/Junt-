@@ -4,30 +4,14 @@ import {
   AlertTriangle,
   CheckCircle2,
   ChevronRight,
-  TrendingDown,
-  TrendingUp,
-  Clock,
   Sparkles,
   ShieldAlert,
-  BarChart2,
-  Building,
   Copy,
   Check,
-  User,
-  Heart,
   RefreshCw,
-  Mail,
-  Lock,
   Trash2,
   X,
   Plus,
-  Coins,
-  CreditCard,
-  Target,
-  Zap,
-  Shield,
-  Eye,
-  Info,
   Layers,
   ArrowUpRight,
   Edit3,
@@ -40,7 +24,6 @@ import {
   formatShortMonthYear,
   formatMonthYear,
   getNextMonth,
-  formatHumanDuration,
 } from '../utils/formatters';
 import { MonthSelector } from '../components/MonthSelector';
 import { ScreenId } from '../components/Navigation';
@@ -80,7 +63,6 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
   onOpenIncomeModal,
   onOpenInstallmentModal,
   onOpenDepositModal,
-  onOpenAIOnboardingModal,
   onOpenBankSyncModal,
   onOpenWeeklyPulse,
 }) => {
@@ -89,16 +71,13 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
     totalIncome,
     totalSpentThisMonth,
     remainingToSpendThisMonth,
-    isOverBudget,
     totalSavedInPiggyBanks,
     categoriesSpending,
     highestBlownCategory,
     activeInstallments,
-    totalActiveInstallmentsAmountMonth,
     nextMonthCommittedInstallmentsAmount,
     installmentCommitmentPercentage,
     isInstallmentCommitmentHigh,
-    justFinishedInstallment,
     partner1ShareSpent,
     partner2ShareSpent,
     jointExpensesTotal,
@@ -109,29 +88,18 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
     displayedIncome,
     displayedTotalSpent,
     displayedRemaining,
-    detectedSubscriptions,
-    confirmSubscriptionAsExpense,
-    dismissSubscription,
     // Add profile and fusion capabilities
-    currentUser,
-    userProfile,
     coupleAccount,
     joinCoupleWithInviteCode,
     triggerCelebration,
     clearAllData,
-    pluggyAccounts,
     syncPluggyData,
     isSyncingBanks,
     // Faixas de renda & customização
     activeLifeTier,
     tierProgress,
-    bonusShiftCalculation,
-    dynamicIncomeAnalysis,
     isCustomizedPercentages,
-    depositToProtection,
-    simulateNewDepositConfirmation,
     dismissMonthSurplusNotification,
-    surplusTransfers,
     getMonthlyDepositGuide,
     executeMonthlyDeposit,
     addNotification,
@@ -155,7 +123,6 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
   const [fusionLoading, setFusionLoading] = useState(false);
   const [fusionFeedback, setFusionFeedback] = useState<{ text: string; type: 'success' | 'error' | null }>({ text: '', type: null });
   const [copiedCode, setCopiedCode] = useState(false);
-  const [hideAIHero, setHideAIHero] = useState(false);
   const [showClearModal, setShowClearModal] = useState(false);
   const [isClearing, setIsClearing] = useState(false);
   const [activeConfirmationModal, setActiveConfirmationModal] = useState<PendingIncomeConfirmation | null>(null);
@@ -168,17 +135,6 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
 
   // Dashboard Sub-Sections Tab State (prevents infinite vertical scrolling)
   const [activeDashboardTab, setActiveDashboardTab] = useState<DashboardTab>('actions');
-
-  const [allocatedBonus, setAllocatedBonus] = useState(false);
-
-  const handleApplyBonusToInvestments = () => {
-    if (bonusShiftCalculation.toInvestments > 0) {
-      depositToProtection(bonusShiftCalculation.toInvestments);
-      setAllocatedBonus(true);
-      triggerCelebration();
-      setTimeout(() => setAllocatedBonus(false), 3000);
-    }
-  };
 
   const handleHomeScreenFusion = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -216,13 +172,6 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
   const p1IncomePct = totalIncome > 0 ? Math.round((state.profile.partner1Income / totalIncome) * 100) : 50;
   const p2IncomePct = 100 - p1IncomePct;
 
-  // Order categories from highest spent to lowest spent
-  const sortedCategories = useMemo(() => {
-    return (Object.keys(CATEGORIES_BASE) as CategoryKey[]).sort(
-      (a, b) => categoriesSpending[b].spent - categoriesSpending[a].spent
-    );
-  }, [categoriesSpending]);
-
   // Current month's expenses sorted newest first
   const currentMonthExpenses = useMemo(() => {
     return state.expenses
@@ -236,8 +185,9 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
     return remainingToSpendThisMonth / progress.daysRemaining;
   }, [progress.daysRemaining, remainingToSpendThisMonth]);
 
-  // Thermometer status logic
-  const budgetConsumedPercent = displayedIncome > 0 ? (displayedTotalSpent / displayedIncome) * 100 : 0;
+  const budgetConsumedPercent = displayedIncome > 0
+    ? Math.min(999, (displayedTotalSpent / displayedIncome) * 100)
+    : 0;
   
   // Couple Donut Chart Data (Renda Total no centro, Economia do Mês e as 5 Áreas da Vida detalhadas)
   const coupleSavings = Math.max(0, totalIncome - displayedTotalSpent);
@@ -279,16 +229,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
     return list;
   }, [coupleSavings, categoriesSpending, totalIncome]);
 
-  let thermometerStatus: 'safe' | 'warning' | 'danger' = 'safe';
-
-  if (displayedRemaining < 0) {
-    thermometerStatus = 'danger';
-  } else if (budgetConsumedPercent > progress.percentPassed + 15) {
-    thermometerStatus = 'warning';
-  }
-
   const tier = activeLifeTier;
-  const isAboveInflection = totalIncome > 35000;
 
   if (state.appMode === 'faculdade') {
     return (
@@ -872,7 +813,6 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                 name: row.name,
                 description: '',
               };
-              const percent = Math.min(100, row.percentageUsed);
 
               let barFill = 'bg-accent-primary';
               let statusBadge = (

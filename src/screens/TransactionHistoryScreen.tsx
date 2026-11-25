@@ -1,36 +1,18 @@
 import React, { useState, useMemo } from 'react';
 import {
   Search,
-  Filter,
-  Calendar,
-  CreditCard,
-  Building,
-  User,
-  Users,
-  Tag,
   Trash2,
   Edit3,
   Plus,
-  ArrowUpDown,
-  Download,
-  ShoppingBag,
-  Utensils,
-  Home,
-  Tv,
-  Sparkles,
-  CheckCircle2,
-  ListFilter,
   X,
   Info,
   TrendingUp,
   TrendingDown,
-  RefreshCw,
-  Layers,
   ArrowRightLeft,
 } from 'lucide-react';
 import { useFinance, CATEGORIES_BASE } from '../context/FinanceContext';
-import { CategoryKey, PaidBy, ExpenseItem, IncomeItem } from '../types/finance';
-import { formatCurrency, formatMonthYear } from '../utils/formatters';
+import { CategoryKey, ExpenseItem } from '../types/finance';
+import { formatCurrency } from '../utils/formatters';
 import { DuplicateReconciliationCard } from '../components/DuplicateReconciliationCard';
 import { TransactionTriageBottomSheet } from '../components/modals/TransactionTriageBottomSheet';
 import { StatementAuditModal } from '../components/modals/StatementAuditModal';
@@ -55,7 +37,6 @@ export const TransactionHistoryScreen: React.FC<TransactionHistoryScreenProps> =
     deleteExpense,
     deleteIncome,
     reverseFinancialOperation,
-    getExpenseSplit,
     viewMode,
     detectedDuplicates,
   } = useFinance();

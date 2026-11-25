@@ -6,17 +6,12 @@ import {
   Heart,
   ChevronDown,
   ChevronUp,
-  Info,
   Zap,
-  Award,
-  ArrowRight,
   PieChart,
   CheckCircle2,
-  Calendar,
 } from 'lucide-react';
-import { useFinance, CATEGORIES_BASE } from '../context/FinanceContext';
+import { useFinance } from '../context/FinanceContext';
 import { formatCurrency } from '../utils/formatters';
-import { CategoryKey } from '../types/finance';
 import { BudgetRebalanceModal } from './modals/BudgetRebalanceModal';
 
 export const LifeTierHeroCard: React.FC = () => {

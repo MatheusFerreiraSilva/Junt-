@@ -3,15 +3,11 @@ import {
   X,
   Check,
   Shield,
-  Target,
-  Calendar,
-  Wallet,
   Users,
   User,
   CreditCard,
   Zap,
   Sparkles,
-  ArrowRight,
   Info,
 } from 'lucide-react';
 import { useFinance, CATEGORIES_BASE } from '../../context/FinanceContext';
@@ -31,7 +27,6 @@ export const TransactionTriageBottomSheet: React.FC<TransactionTriageBottomSheet
 }) => {
   const {
     state,
-    emergencyReserveFloorAmount,
     emergencyReserveExcessAmount,
     updateExpenseTriage,
     triggerCelebration,

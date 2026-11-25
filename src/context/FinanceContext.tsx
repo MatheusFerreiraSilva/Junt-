@@ -40,9 +40,7 @@ import {
 import {
   doc,
   getDoc,
-  setDoc,
   updateDoc,
-  deleteDoc,
   onSnapshot,
 } from 'firebase/firestore';
 import { auth, db } from '../lib/firebase';
@@ -62,7 +60,6 @@ import {
   PiggyBankUpdatePayload,
   CoupleProfile,
   PaidBy,
-  LinkedBankAccount,
   SpendingAlertRule,
   AppNotification,
   MonthTrendRecord,
@@ -85,7 +82,6 @@ import {
   AdvanceInstallmentPayload,
   FoodPacingMetrics,
   AIPredictiveInsight,
-  FoodPillarType,
   FundingSourceType,
   StrategicSpendingIntent,
   PushNotificationSettings,
@@ -111,7 +107,6 @@ import {
 import {
   DEFAULT_SHIFT_PRESETS,
   DEFAULT_HOSPITAL_MAPPING_RULES,
-  getSampleMedicalShifts,
 } from '../utils/shiftsEngine';
 import {
   LIFE_TIERS,
@@ -122,20 +117,12 @@ import {
   calculateDynamicCombinedNetIncome,
   isEligibleReceivedIncomeEntry,
   computeEligibleReceivedIncomeAmount,
-  isInternalTransfer,
-  DEFAULT_MEDICAL_SOURCE_RULES,
 } from '../utils/incomeTiersEngine';
-import { getNextMonth, addMonths, formatCurrency, formatMonthYear } from '../utils/formatters';
+import { getNextMonth, formatCurrency, formatMonthYear } from '../utils/formatters';
 import {
   DEFAULT_KEYWORD_RULES,
   categorizeTransaction,
-  detectRecurringSubscriptions,
 } from '../utils/categorizationEngine';
-import {
-  getCurrentMonthlyReviewSchedule,
-  triggerBrowserPushNotification,
-  requestPushNotificationPermission,
-} from '../utils/monthlyReviewNotifications';
 import {
   detectDuplicateExpenses,
   calculateCoupleSettlement,
@@ -148,8 +135,6 @@ import { calculateFoodPacingMetrics } from '../utils/foodPacingEngine';
 import { generateAIPredictiveInsights } from '../utils/aiPredictiveInsightsEngine';
 import {
   upgradeBudgetPlanContract,
-  selectEligibleNetIncome,
-  projectExpenseSplits,
   roundMoney,
   selectReconciledBudgetMatrix,
   executeExpenseCreateCommand,
@@ -2386,8 +2371,8 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
 
   const resolveDuplicateMerge = useCallback((primaryId: string, duplicateIdsToDelete: string[]) => {
     setState(prev => {
-      const toDelete = new Set(duplicateIdsToDelete);
-      const filtered = prev.expenses.filter(e => !toDelete.has(e.id));
+      const toDelete = new Set(duplicateIdsToDelete.filter(id => id !== primaryId));
+      const filtered = prev.expenses.filter(e => e.id === primaryId || !toDelete.has(e.id));
       return {
         ...prev,
         expenses: filtered,
@@ -5335,7 +5320,7 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
     params: Omit<ExecuteCategoryReinforcementParams, 'authorizedBy' | 'authoredByUid'>
   ): FinancialCommandResult => {
     const actorUid = currentUser?.uid || (viewMode === 'partner1' || viewMode === 'partner2' ? viewMode : 'both');
-    const result = executePatrimonialCommand(
+    const result = commitCommandTransition(
       (prev) =>
         executeCategoryReinforcementCommand(prev, {
           ...params,
@@ -5376,7 +5361,7 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
     const todayStr = new Date().toISOString().split('T')[0];
     const actorUid = currentUser?.uid || (viewMode === 'partner1' || viewMode === 'partner2' ? viewMode : 'both');
 
-    executePatrimonialCommand(
+    commitCommandTransition(
       (prev) =>
         executeCategoryReallocationCommand(prev, {
           fromCategory,

@@ -4,7 +4,6 @@ import type {
   CategoryKey,
   CoupleGoal,
   CoupleGoalContribution,
-  DreamSimulation,
   ExpenseItem,
   FinancialCommandReasonCode,
   FinancialCommandResult,
@@ -12,14 +11,12 @@ import type {
   FinancialOperationRecord,
   FinancialOperationState,
   FundingSourceType,
-  LinkedBankAccount,
   MonthlyDepositGuide,
   MonthlyDepositItem,
   MonthDepositCompletionRecord,
   PaidBy,
   SavingsPiggyBank,
   StrategicSpendingIntent,
-  SurplusTransferRecord,
   TransactionSplit,
   WithdrawalPurposePartition,
 } from '../types/finance';
@@ -32,6 +29,7 @@ import {
   projectInstallmentOccurrencesForCompetence,
   projectSharedFixedOccurrences,
   resolveExpenseCompetenceMonth,
+  roundMoney,
   selectCanonicalFixedBillsRegistry,
   toSafeCents,
 } from './occurrenceProjection';
@@ -78,9 +76,7 @@ export type MonetaryNormalizationResult =
       error: string;
     };
 
-export function roundMoneyCentsCompatible(val: number): number {
-  return Math.round(val * 100) / 100;
-}
+export const roundMoneyCentsCompatible = roundMoney;
 
 function isValidFiniteNumber(v: unknown): v is number {
   return typeof v === 'number' && Number.isFinite(v);
@@ -431,7 +427,7 @@ export function runFinancialCommand(
 
   const normalizedFingerprint = computeOperationFingerprint(rawOperation, money.amountCents);
   const existingOps = state.financialOperations || [];
-  let nextFinancialOperations = [...existingOps];
+  const nextFinancialOperations = [...existingOps];
   const existingOp = existingOps.find((op) => op.id === rawOperation.id);
 
   if (existingOp) {
@@ -1855,6 +1851,7 @@ export function reverseFinancialCommand(
     financialOperations: [operationId],
   };
 
+  const nextFinancialOperations = [...ops];
   let nextPiggyBanks = [...(state.piggyBanks || [])];
   let nextCoupleGoals = [...(state.coupleGoals || [])];
   const nextLinkedAccounts = [...(state.linkedAccounts || [])];
@@ -2418,7 +2415,7 @@ export function reverseFinancialCommand(
 
   const nextState: AppState = {
     ...state,
-    financialOperations: ops.map((op) => (op.id === operationId ? revertedOriginal : op)),
+    financialOperations: nextFinancialOperations.map((op) => (op.id === operationId ? revertedOriginal : op)),
     piggyBanks: nextPiggyBanks,
     coupleGoals: nextCoupleGoals,
     linkedAccounts: nextLinkedAccounts,
@@ -5674,6 +5671,72 @@ export function executeCategoryReinforcementCommand(
   state: AppState,
   params: ExecuteCategoryReinforcementParams
 ): FinancialCommandResult {
+  const existingPrefixOps = params.operationIdPrefix
+    ? (state.financialOperations || []).filter(
+        (op) =>
+          op.type === 'CATEGORY_REINFORCEMENT' &&
+          op.id.startsWith(`${params.operationIdPrefix}-`) &&
+          op.state !== 'reverted' &&
+          op.state !== 'estornado'
+      )
+    : [];
+
+  if (existingPrefixOps.length > 0 && params.operationIdPrefix) {
+    const desiredCents =
+      params.amountCents !== undefined
+        ? Math.round(params.amountCents)
+        : params.amountR$ !== undefined
+        ? Math.round(params.amountR$ * 100)
+        : existingPrefixOps.reduce((s, o) => s + readOperationAmountCents(o), 0);
+    const dist = distributeReinforcementCents(desiredCents, params.targets, params.mode);
+    if (dist.ok) {
+      const competence = params.competence || state.currentMonth || '2026-11';
+      const dateStr = params.date || `${competence}-15`;
+      const replayOps: FinancialOperationRecord[] = [];
+      let replayMatchedAll = dist.items.filter((i) => i.amountCents > 0).length === existingPrefixOps.length;
+      if (replayMatchedAll) {
+        for (let i = 0; i < dist.items.length; i++) {
+          const item = dist.items[i];
+          if (item.amountCents <= 0) continue;
+          const expectedId = `${params.operationIdPrefix}-${i + 1}-${item.category}`;
+          const existing = existingPrefixOps.find((o) => o.id === expectedId);
+          if (!existing || readOperationAmountCents(existing) !== item.amountCents) {
+            replayMatchedAll = false;
+            break;
+          }
+          const candidateCheck = runFinancialCommand(state, {
+            ...existing,
+            amountCents: item.amountCents,
+            amountR$: item.amountR$,
+            authorizedBy: params.authorizedBy,
+            authoredByUid: params.authoredByUid || params.authorizedBy,
+            scope: params.scope === 'partner1' || params.scope === 'partner2' ? params.scope : 'couple',
+            competence,
+            date: dateStr,
+            ...(params.expectedRevision !== undefined ? { expectedRevision: params.expectedRevision } : {}),
+            ...(params.reconciliationRef !== undefined ? { reconciliationRef: params.reconciliationRef } : {}),
+            ...(params.note !== undefined ? { notes: params.note } : {}),
+          });
+          if (candidateCheck.status !== 'success') {
+            return candidateCheck;
+          }
+          replayOps.push(existing);
+        }
+        if (replayMatchedAll && replayOps.length > 0) {
+          return {
+            status: 'success',
+            reasonCode: 'IDEMPOTENT_REPLAY',
+            message: 'Reforço temporário já registrado anteriormente (replay idempotente).',
+            state,
+            operation: replayOps[0],
+            operations: replayOps,
+            idempotentReplay: true,
+          };
+        }
+      }
+    }
+  }
+
   const preview = previewCategoryReinforcement(state, params);
   if (!preview.ok) {
     return failResult('failure', preview.reasonCode || 'INVALID_AMOUNT', preview.error || 'Prévia de reforço inválida.', state);

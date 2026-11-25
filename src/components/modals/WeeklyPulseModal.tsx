@@ -5,18 +5,9 @@ import {
   ArrowDownLeft,
   ArrowUpRight,
   Wallet,
-  CheckCircle2,
   Calendar,
-  AlertCircle,
-  TrendingUp,
-  Heart,
   ChevronRight,
-  ShieldCheck,
-  Target,
-  RefreshCw,
-  Zap,
 } from 'lucide-react';
-import { useFinance } from '../../context/FinanceContext';
 import { formatCurrency } from '../../utils/formatters';
 import { WeeklyPulseData } from '../../utils/notificationEngine';
 
@@ -33,11 +24,7 @@ export const WeeklyPulseModal: React.FC<WeeklyPulseModalProps> = ({
   pulseData,
   onExecuteAction,
 }) => {
-  const { state } = useFinance();
-
   if (!isOpen) return null;
-
-  const isCollege = state.appMode === 'faculdade';
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-5 bg-slate-950/80 backdrop-blur-md animate-in fade-in duration-200">

@@ -6,19 +6,12 @@ import {
   AlertTriangle,
   RotateCcw,
   Check,
-  ChevronRight,
   Shield,
-  Tag,
-  Calendar as CalendarIcon,
-  CreditCard,
-  User,
-  Users,
   Info,
 } from 'lucide-react';
-import { useFinance, CATEGORIES_BASE } from '../../context/FinanceContext';
-import { CategoryKey, PaidBy } from '../../types/finance';
+import { useFinance } from '../../context/FinanceContext';
+import { CategoryKey } from '../../types/finance';
 import { formatCurrency, formatMonthYear, getNextMonth, getPreviousMonth } from '../../utils/formatters';
-import { MonthSelector } from '../MonthSelector';
 import {
   calculateFixedBillsSummary,
   FixedBillOccurrence,

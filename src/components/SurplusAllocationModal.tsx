@@ -3,14 +3,10 @@ import {
   Sparkles,
   ArrowRight,
   Shield,
-  Target,
-  Unlock,
   CheckCircle2,
   X,
   History,
   Info,
-  DollarSign,
-  TrendingUp,
 } from 'lucide-react';
 import { useFinance, CATEGORIES_BASE } from '../context/FinanceContext';
 import { CategoryKey } from '../types/finance';
@@ -26,7 +22,6 @@ interface SurplusAllocationModalProps {
 export const SurplusAllocationModal: React.FC<SurplusAllocationModalProps> = ({
   isOpen,
   onClose,
-  onOpenGoalsTab,
   onOpenGuideModal,
 }) => {
   const {

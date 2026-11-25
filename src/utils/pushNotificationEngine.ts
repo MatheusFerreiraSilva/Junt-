@@ -1,4 +1,4 @@
-import { AppState, PushNotificationSettings, CategoryKey } from '../types/finance';
+import { AppState, PushNotificationSettings } from '../types/finance';
 
 export const DEFAULT_PUSH_SETTINGS: PushNotificationSettings = {
   enabled: true,

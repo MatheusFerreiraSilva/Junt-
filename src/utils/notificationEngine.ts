@@ -68,7 +68,6 @@ export interface NotificationMetrics {
 }
 
 const STORAGE_LOGS_KEY = 'junto_notification_logs_v1';
-const STORAGE_SCHEDULE_KEY = 'junto_notification_schedule_v1';
 
 /**
  * Gets the current date & time in Horário de Brasília (UTC-3)

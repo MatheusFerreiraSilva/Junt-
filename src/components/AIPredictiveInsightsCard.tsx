@@ -1,20 +1,14 @@
 import React, { useState } from 'react';
 import {
   Sparkles,
-  Heart,
-  TrendingUp,
   Target,
   Shield,
   X,
   CheckCircle2,
-  ChevronRight,
   ArrowRight,
-  Coffee,
-  Smile,
-  Zap,
 } from 'lucide-react';
-import { useFinance, CATEGORIES_BASE } from '../context/FinanceContext';
-import { AIPredictiveInsight, CategoryKey } from '../types/finance';
+import { useFinance } from '../context/FinanceContext';
+import { CategoryKey } from '../types/finance';
 import { formatCurrency } from '../utils/formatters';
 
 interface AIPredictiveInsightsCardProps {
@@ -26,9 +20,6 @@ interface AIPredictiveInsightsCardProps {
 
 export const AIPredictiveInsightsCard: React.FC<AIPredictiveInsightsCardProps> = ({
   className = '',
-  onOpenGoalModal,
-  onNavigateToGoals,
-  onOpenExpenseModal,
 }) => {
   const {
     aiPredictiveInsights,
@@ -106,7 +97,6 @@ export const AIPredictiveInsightsCard: React.FC<AIPredictiveInsightsCardProps> =
       {activeInsights.map(insight => {
         const isReward = insight.type === 'reward_proposal';
         const isFatigue = insight.type === 'fatigue_pattern';
-        const isEfficiency = insight.type === 'efficiency_proposal';
 
         return (
           <div

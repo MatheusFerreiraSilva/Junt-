@@ -1,15 +1,8 @@
 import React, { useState } from 'react';
 import {
-  ShoppingBag,
-  UtensilsCrossed,
-  Bike,
   Sparkles,
   ShieldCheck,
   Calendar,
-  AlertCircle,
-  TrendingDown,
-  Info,
-  ChevronRight,
 } from 'lucide-react';
 import { useFinance } from '../context/FinanceContext';
 import { formatCurrency } from '../utils/formatters';

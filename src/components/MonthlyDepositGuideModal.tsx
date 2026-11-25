@@ -5,7 +5,6 @@ import {
   Shield,
   Target,
   Unlock,
-  Edit3,
   X,
   ExternalLink,
   Check,
@@ -15,7 +14,6 @@ import {
   Copy,
   SlidersHorizontal,
   Layers,
-  ArrowRight,
 } from 'lucide-react';
 import { useFinance } from '../context/FinanceContext';
 import { MonthlyDepositItem } from '../types/finance';
@@ -63,9 +61,7 @@ export const MonthlyDepositGuideModal: React.FC<MonthlyDepositGuideModalProps> =
 
   // Ceiling calculations
   const ceiling = guide.suggestedCeiling ?? investmentCeiling.suggestedCeiling;
-  const programmedBase = guide.programmedBase ?? investmentCeiling.programmedBase;
   const eligibleSurplus = guide.eligibleSurplus ?? investmentCeiling.eligibleSurplus;
-  const shieldedEssential = guide.shieldedEssential ?? investmentCeiling.shieldedFixedEssential;
 
   // Local editing states for surplus and base amounts
   const [surplusInputs, setSurplusInputs] = useState<Record<string, string>>({});

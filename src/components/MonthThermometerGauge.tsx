@@ -28,7 +28,6 @@ export const MonthThermometerGauge: React.FC<MonthThermometerGaugeProps> = ({
     overflowAmount,
     statusState,
     statusLabel,
-    statusDescription,
     daysRemainingInMonth,
     safeDailyLimit,
   } = engineResult;

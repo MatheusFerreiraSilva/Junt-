@@ -219,7 +219,7 @@ export const ReinforcementProvenanceDialog: React.FC<ReinforcementProvenanceDial
                           cls: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/70 dark:text-emerald-300 border-emerald-300 dark:border-emerald-800',
                           icon: <CheckCircle2 className="w-3 h-3" />,
                         }
-                      : src.evidenceType === 'piggy_bank_reserve'
+                      : src.evidenceType === 'virtual_earmark'
                       ? {
                           label: 'Reserva em cofrinho',
                           cls: 'bg-sky-100 text-sky-800 dark:bg-sky-950/70 dark:text-sky-300 border-sky-300 dark:border-sky-800',

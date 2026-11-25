@@ -2,9 +2,9 @@ import {
   AppState,
   CeilingState,
   ExpenseItem,
-  PaidBy,
   ReinforcementProvenanceRef,
 } from '../types/finance';
+import { formatCurrency } from './formatters';
 import {
   apportionCentsByScope,
   clampDayToMonth,
@@ -495,7 +495,7 @@ export function calculateThermometerEngine(
   } else if (isOverBudget) {
     statusState = 'ajuste_necessario';
     statusLabel = 'Ajuste Necessário';
-    statusDescription = `O consumo excedeu o orçamento em ${formatCurrency(deficitAmount)}. Recomendamos recalibrar compras do fim de semana.`;
+    statusDescription = `O consumo excedeu o orçamento em ${formatCurrency(deficitAmount, true)}. Recomendamos recalibrar compras do fim de semana.`;
   } else if (
     percentVal > 85 ||
     (daysRemainingInMonth > 10 && percentVal > (currentDayOfMonth / daysInMonth) * 100 + 20)
@@ -658,10 +658,10 @@ export function calculateThermometerEngine(
   );
 
   const projectionHypotheses = [
-    `Compromissos fixos e parcelas de ${formatCurrency(pendingCommitmentsAmount)} contados exatamente 1x`,
-    `Projeção histórica por ritmo realizado de ${formatCurrency(roundMoney(dailyRunRate))}/dia (${remainingDays} dias restantes)`,
-    `Cenário teto limitando gastos a ${formatCurrency(safeDailyLimit)}/dia nos ${daysRemainingInMonth} dias`,
-    `Aportes programados de ${formatCurrency(programmedSavings)} blindados no início do mês`,
+    `Compromissos fixos e parcelas de ${formatCurrency(pendingCommitmentsAmount, true)} contados exatamente 1x`,
+    `Projeção histórica por ritmo realizado de ${formatCurrency(roundMoney(dailyRunRate), true)}/dia (${remainingDays} dias restantes)`,
+    `Cenário teto limitando gastos a ${formatCurrency(safeDailyLimit, true)}/dia nos ${daysRemainingInMonth} dias`,
+    `Aportes programados de ${formatCurrency(programmedSavings, true)} blindados no início do mês`,
   ];
 
   // 11. Coverage & Confidence Status
@@ -815,8 +815,4 @@ export function calculateThermometerEngine(
     prioritizedActions: prioritizedActions.slice(0, 3),
     whatChangedSummary,
   };
-}
-
-function formatCurrency(val: number): string {
-  return val.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 }

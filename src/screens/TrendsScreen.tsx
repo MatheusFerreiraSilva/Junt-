@@ -2,8 +2,6 @@ import React, { useState } from 'react';
 import {
   TrendingUp,
   BarChart3,
-  Calendar,
-  Layers,
   ArrowUpRight,
   ArrowDownRight,
   Sparkles,
@@ -32,7 +30,6 @@ export const TrendsScreen: React.FC = () => {
 
   const p1SharePct = totalSpentThisMonth > 0 ? Math.round((partner1ShareSpent / totalSpentThisMonth) * 100) : 50;
   const p2SharePct = 100 - p1SharePct;
-  const jointPct = totalSpentThisMonth > 0 ? Math.round((jointExpensesTotal / totalSpentThisMonth) * 100) : 0;
 
   // Find max value for scaling charts
   const maxMonthlyTotal = Math.max(...historicalTrends.map((t: MonthTrendRecord) => t.total), totalIncome * 1.1);

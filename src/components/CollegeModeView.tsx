@@ -1,25 +1,10 @@
 import React, { useState } from 'react';
 import {
   GraduationCap,
-  Calendar,
   Sparkles,
-  TrendingUp,
-  DollarSign,
-  Award,
-  CheckCircle2,
-  ChevronRight,
-  ShieldCheck,
   Plus,
-  ArrowRight,
-  BookOpen,
-  Home,
-  Utensils,
-  PartyPopper,
-  Zap,
-  Info,
   Edit3,
   RefreshCw,
-  Sliders,
 } from 'lucide-react';
 import { useFinance } from '../context/FinanceContext';
 import { formatCurrency } from '../utils/formatters';

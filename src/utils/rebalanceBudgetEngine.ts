@@ -800,7 +800,6 @@ function buildConsistentCategoryGroupMatrix(params: {
   const sumMinVar = ALL_CATEGORIES.reduce((s, c) => s + minVarByCat[c], 0);
   const maxPossibleFixed = Math.max(sumMinFixed, consumptionCents - sumMinVar);
   const effectiveFixedCents = Math.max(sumMinFixed, Math.min(maxPossibleFixed, targetFixedCents));
-  const effectiveVarCents = Math.max(0, consumptionCents - effectiveFixedCents);
 
   // Allocate effectiveFixedCents across categories respecting [minFixedByCat[c], catTotal - minVarByCat[c]]
   const fixedAllocated: Record<CategoryKey, number> = { ...minFixedByCat };

@@ -1,35 +1,20 @@
 import React, { useState, useEffect } from 'react';
 import {
-  Bell,
   X,
-  Check,
-  AlertTriangle,
-  Info,
-  Sparkles,
   Trash2,
-  Sliders,
   CheckCheck,
-  TrendingUp,
-  BarChart2,
   Send,
-  ShieldAlert,
-  Award,
-  Calendar,
   Smartphone,
   CheckCircle2,
-  Eye,
-  Clock,
   Zap,
 } from 'lucide-react';
-import { useFinance, CATEGORIES_BASE } from '../context/FinanceContext';
+import { useFinance } from '../context/FinanceContext';
 import { formatCurrency } from '../utils/formatters';
 import {
   getNotificationLogs,
   getNotificationMetrics,
-  markNotificationOpened,
   detectPlatform,
   getIOSInstallationStatus,
-  getBrasiliaTime,
   triggerWeeklyPulseNotification,
   triggerUrgencyNotification,
   triggerConquestNotification,
@@ -48,7 +33,6 @@ interface NotificationCenterProps {
 export const NotificationCenter: React.FC<NotificationCenterProps> = ({
   isOpen,
   onClose,
-  onOpenDepositModal,
 }) => {
   const {
     state,
@@ -72,7 +56,6 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
 
   const iosStatus = getIOSInstallationStatus();
   const platform = detectPlatform();
-  const brTime = getBrasiliaTime();
 
   useEffect(() => {
     if (isOpen) {

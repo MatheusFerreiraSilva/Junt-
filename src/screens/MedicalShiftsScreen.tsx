@@ -17,7 +17,7 @@ import {
   Award,
 } from 'lucide-react';
 import { useFinance } from '../context/FinanceContext';
-import { MedicalShift, ShiftSector } from '../types/finance';
+import { MedicalShift } from '../types/finance';
 import {
   SECTOR_CONFIG,
   CONTRACT_CONFIG,

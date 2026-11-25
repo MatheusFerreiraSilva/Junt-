@@ -6,13 +6,7 @@ import {
   Check,
   AlertCircle,
   Sparkles,
-  ArrowRight,
-  Building2,
   RefreshCw,
-  Tag,
-  CreditCard,
-  DollarSign,
-  ChevronDown,
 } from 'lucide-react';
 import { useFinance, CATEGORIES_BASE } from '../context/FinanceContext';
 import { useDialogFocus } from '../hooks/useDialogFocus';

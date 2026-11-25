@@ -8,38 +8,26 @@ import {
   Sparkles,
   TrendingUp,
   Calculator,
-  DollarSign,
-  AlertCircle,
   Edit3,
-  ArrowRight,
   Lock,
   PieChart,
-  Info,
   X,
-  ChevronRight,
-  RefreshCw,
-  Award,
   Building,
   Camera,
   Upload,
-  Image as ImageIcon,
   Trash2,
-  Sliders,
-  Percent,
-  Flame,
   CheckCircle2,
-  HelpCircle,
   ArrowLeftRight,
   RotateCcw,
 } from 'lucide-react';
 import { useFinance, CATEGORIES_BASE } from '../context/FinanceContext';
 import { SavingsPiggyBank } from '../types/finance';
 import { formatCurrency, formatHumanDuration, formatMonthYear } from '../utils/formatters';
-import { compressImageFile, GOAL_PHOTO_PRESETS, GoalPhotoPreset } from '../utils/imageCompressor';
+import { compressImageFile, GOAL_PHOTO_PRESETS } from '../utils/imageCompressor';
 import { MonthlyDepositGuideModal } from '../components/MonthlyDepositGuideModal';
 import { DonutChart } from '../components/DonutChart';
 import { ReallocateReserveExcessModal } from '../components/ReallocateReserveExcessModal';
-import { ClaymorphicIcon, ClayIconType } from '../components/ClaymorphicIcon';
+import { ClaymorphicIcon } from '../components/ClaymorphicIcon';
 import { PixDiscountComparatorModal } from '../components/modals/PixDiscountComparatorModal';
 import { StrategicSpendingIntentModal } from '../components/modals/StrategicSpendingIntentModal';
 import { CategoryReinforcementModal } from '../components/modals/CategoryReinforcementModal';
@@ -72,11 +60,9 @@ export const GoalsScreen: React.FC<GoalsScreenProps> = () => {
     triggerCelebration,
     setProtectionComplete,
     viewMode,
-    currentAccent,
     investmentCeiling,
     getMonthlyDepositGuide,
     executeMonthlyDeposit,
-    resetMonthlyDeposit,
     transferBetweenBlocks,
     reverseFinancialOperation,
     strategicIntents,
@@ -120,7 +106,6 @@ export const GoalsScreen: React.FC<GoalsScreenProps> = () => {
   const [isUploadingPhoto, setIsUploadingPhoto] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const editFileInputRef = useRef<HTMLInputElement>(null);
-  const createFileInputRef = useRef<HTMLInputElement>(null);
 
   // Delete Goal Modal
   const [deletingGoalId, setDeletingGoalId] = useState<string | null>(null);
@@ -150,7 +135,6 @@ export const GoalsScreen: React.FC<GoalsScreenProps> = () => {
   const [goalExecutionMode, setGoalExecutionMode] = useState<'pending_settlement' | 'occurred_manual'>('occurred_manual');
   const [goalDestinationAccountId, setGoalDestinationAccountId] = useState('');
   const [goalOverrideDivergence, setGoalOverrideDivergence] = useState(false);
-  const [goalDepositPayer, setGoalDepositPayer] = useState<'partner1' | 'partner2' | 'both'>('both');
   const [goalDepositAction, setGoalDepositAction] = useState<'deposit' | 'withdraw'>('deposit');
   const [goalDepositError, setGoalDepositError] = useState<string>('');
   const [goalNeedsConfirmation, setGoalNeedsConfirmation] = useState(false);
@@ -223,7 +207,6 @@ export const GoalsScreen: React.FC<GoalsScreenProps> = () => {
   // ==========================================
   // CALCULATED PHASE LOGIC
   // ==========================================
-  const protectionRemaining = Math.max(0, autoCalculatedProtectionTarget - state.protectionCurrentAmount);
   const isPhase2 = state.isProtectionComplete;
 
   // Profile-specific styling helpers
@@ -233,13 +216,6 @@ export const GoalsScreen: React.FC<GoalsScreenProps> = () => {
       : viewMode === 'partner2'
       ? state.profile.partner2Name
       : 'Casal';
-
-  const profileThemeHeaderGradient =
-    viewMode === 'partner1'
-      ? 'from-slate-900 via-blue-950 to-indigo-950 border-sky-500/40'
-      : viewMode === 'partner2'
-      ? 'from-slate-900 via-rose-950 to-pink-950 border-rose-500/40'
-      : 'from-slate-900 via-slate-950 to-emerald-950 border-emerald-500/40';
 
   // Recommended monthly savings
   const monthlySavingsTarget = Math.round(totalIncome * 0.10);

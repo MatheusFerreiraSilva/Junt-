@@ -3,21 +3,14 @@ import {
   Sparkles,
   RefreshCw,
   Check,
-  TrendingUp,
   Sliders,
   ArrowRightLeft,
   Shield,
   Target,
   Heart,
   Zap,
-  Calendar,
-  ChevronRight,
-  Info,
-  Clock,
   Stethoscope,
   History,
-  AlertCircle,
-  HelpCircle,
 } from 'lucide-react';
 import { useFinance, CATEGORIES_BASE } from '../context/FinanceContext';
 import { formatCurrency, getMonthProgress } from '../utils/formatters';

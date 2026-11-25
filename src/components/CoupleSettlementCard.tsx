@@ -1,13 +1,9 @@
 import React, { useState } from 'react';
 import {
-  Scale,
   ArrowRight,
   CheckCircle2,
   Copy,
   Check,
-  Share2,
-  Sparkles,
-  Info,
 } from 'lucide-react';
 import { useFinance } from '../context/FinanceContext';
 import { formatCurrency, formatMonthYear } from '../utils/formatters';

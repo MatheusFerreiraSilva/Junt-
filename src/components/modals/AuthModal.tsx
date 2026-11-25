@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { X, Cloud, Users, Key, Mail, Lock, User, Check, Sparkles, LogOut, Copy, RefreshCw, Smartphone, Laptop } from 'lucide-react';
+import { X, Cloud, Users, Mail, Lock, Check, Sparkles, LogOut, Copy, RefreshCw, Smartphone, Laptop } from 'lucide-react';
 import { useFinance } from '../../context/FinanceContext';
 
 interface AuthModalProps {
@@ -13,7 +13,6 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onOpenAIO
     currentUser,
     userProfile,
     coupleAccount,
-    isCloudSynced,
     signUpWithEmail,
     signInWithEmail,
     signInWithGoogle,

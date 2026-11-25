@@ -1,4 +1,4 @@
-import { ExpenseItem, CategoryKey, PaidBy } from '../types/finance';
+import { ExpenseItem, CategoryKey } from '../types/finance';
 import { CATEGORIES_BASE } from '../context/FinanceContext';
 
 export interface DuplicateGroup {

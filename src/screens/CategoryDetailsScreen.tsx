@@ -4,17 +4,14 @@ import {
   Edit2,
   Plus,
   Filter,
-  Check,
   AlertTriangle,
   CreditCard,
   User,
   Users,
-  Percent,
   Sliders,
   ShieldCheck,
   Target,
   Sparkles,
-  ArrowRight,
   X,
 } from 'lucide-react';
 import { useFinance, CATEGORIES_BASE, getCategoryInfo } from '../context/FinanceContext';
@@ -47,7 +44,6 @@ export const CategoryDetailsScreen: React.FC<CategoryDetailsScreenProps> = ({
     updateCategoryPercentages,
     activeLifeTier,
     totalIncome,
-    reconciledBudgetMatrix,
   } = useFinance();
 
   const [selectedCategory, setSelectedCategory] = useState<string | 'all'>(
@@ -356,7 +352,6 @@ export const CategoryDetailsScreen: React.FC<CategoryDetailsScreenProps> = ({
           {(Object.keys(CATEGORIES_BASE) as CategoryKey[]).map(key => {
             const cat = getCategoryInfo(key);
             const spend = categoriesSpending[key];
-            const pct = Math.min(100, spend?.percentageUsed || 0);
 
             return (
               <div

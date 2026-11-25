@@ -12,7 +12,9 @@ import {
   selectGoalBalanceBreakdown,
   selectPlannedNetIncome,
   selectReconciledBudgetMatrix,
+  upgradeBudgetPlanContract,
 } from '../domainSelectors';
+import { LIFE_TIERS } from '../incomeTiersEngine';
 import { calculateThermometerEngine } from '../thermometerEngine';
 import { computeCompetenceBudgetSnapshot } from '../rebalanceBudgetEngine';
 import {
@@ -55,7 +57,7 @@ function makeState26C(overrides: Partial<AppState> = {}): AppState {
       profissional: 7.2222222222,
     },
     monthlyBudgetPlans: {
-      '2026-11': {
+      '2026-11': upgradeBudgetPlanContract({
         id: '2026-11',
         competence: '2026-11',
         plannedNetIncome: 36000,
@@ -75,9 +77,9 @@ function makeState26C(overrides: Partial<AppState> = {}): AppState {
           protecao: 3600,
           profissional: 2600,
         },
-        status: 'approved',
-      },
-      '2026-12': {
+        status: 'feasible',
+      }),
+      '2026-12': upgradeBudgetPlanContract({
         id: '2026-12',
         competence: '2026-12',
         plannedNetIncome: 36000,
@@ -97,8 +99,8 @@ function makeState26C(overrides: Partial<AppState> = {}): AppState {
           protecao: 3600,
           profissional: 2600,
         },
-        status: 'approved',
-      },
+        status: 'feasible',
+      }),
     },
     currentMonth: '2026-11',
     expenses: [],
@@ -116,7 +118,7 @@ function makeState26C(overrides: Partial<AppState> = {}): AppState {
         monthlyDeposit: 1000,
         availableCents: 1500000,
         accumulatedCents: 1500000,
-        costBasisCents: 1200000,
+        totalInvested: 12000,
         revision: 1,
       },
     ],
@@ -124,13 +126,13 @@ function makeState26C(overrides: Partial<AppState> = {}): AppState {
       {
         id: 'goal-lazer-cdb',
         title: 'Fundo Viagem & Lazer',
-        category: 'lazer',
+        category: 'viagem',
         emoji: '✈️',
         targetAmount: 20000,
         currentAmount: 15000,
         availableCents: 1500000,
         accumulatedCents: 1500000,
-        costBasisCents: 1200000,
+        totalInvested: 12000,
         partner1Contribution: 7500,
         partner2Contribution: 7500,
         monthlyPlannedDeposit: 1000,
@@ -273,7 +275,7 @@ describe('Stage 26C — Unified Category Envelope, Provenance & Cent Math', () =
     });
     expect(exec.status).toBe('success');
 
-    expect(selectPlannedNetIncome(exec.state, 'casal', '2026-11').plannedNetIncome).toBe(36000);
+    expect(selectPlannedNetIncome(exec.state, 'casal', '2026-11')).toBe(36000);
     const matrix = selectReconciledBudgetMatrix(exec.state, 'casal', '2026-11');
     expect(matrix.plannedNetIncome).toBe(36000);
     const thermo = calculateThermometerEngine(exec.state, 'couple');
@@ -372,7 +374,7 @@ describe('Stage 26C — Unified Category Envelope, Provenance & Cent Math', () =
     expect(mNov.categories.find((c) => c.key === 'lazer')!.effectiveBudget).toBe(14000);
 
     // Goal balance breakdown must preserve 15.000 accumulated, 8.000 committed, 7.000 available
-    const goalBreak = selectGoalBalanceBreakdown(res.state, 'goal-lazer-cdb')!;
+    const goalBreak = selectGoalBalanceBreakdown(res.state.piggyBanks[0], res.state.financialOperations);
     expect(goalBreak.accumulatedCents).toBe(1500000);
     expect(goalBreak.committedCents).toBe(800000);
     expect(goalBreak.availableCents).toBe(700000);
@@ -384,7 +386,7 @@ describe('Stage 26C — Unified Category Envelope, Provenance & Cent Math', () =
     expect(mDec.categories.find((c) => c.key === 'lazer')!.effectiveBudget).toBe(10000);
 
     const snapDec = computeCompetenceBudgetSnapshot(res.state, '2026-12');
-    expect(snapDec.categories.find((c) => c.category === 'lazer')!.temporaryReinforcementCents).toBe(0);
+    expect(snapDec.categoryReinforcementsR$.lazer).toBe(0);
   });
 
   it('Distribution residue guard: 33.33% * 3 flags 0.01% residue and unallocated cents, requiring explicit confirmation; equal_split uses largest remainder', () => {
@@ -510,7 +512,7 @@ describe('Stage 26C — Unified Category Envelope, Provenance & Cent Math', () =
           category: 'lazer',
           date: '2026-11-12',
           paidBy: 'both',
-          fundingSource: 'goal_direct',
+          fundingSource: 'piggy_bank',
           fundingGoalId: 'goal-lazer-cdb',
           nature: 'variavel',
         },
@@ -530,8 +532,8 @@ describe('Stage 26C — Unified Category Envelope, Provenance & Cent Math', () =
     expect(recExec.status).toBe('success');
 
     const summary = selectCategoryReinforcementSummary(recExec.state, 'casal', '2026-11');
-    expect(summary.byCategory.lazer.reinforcementSources[0].evidenceType).toBe('bank_reconciled');
-    expect(summary.byCategory.lazer.reinforcementSources[0].isReconciled).toBe(true);
+    expect(summary.sourcesByCategory.lazer[0].evidenceType).toBe('bank_reconciled');
+    expect(summary.sourcesByCategory.lazer[0].isReconciled).toBe(true);
 
     // GOAL_DIRECT_PURCHASE não consome teto mensal nem em Lazer
     const matrix = selectReconciledBudgetMatrix(recExec.state, 'casal', '2026-11');
@@ -570,6 +572,53 @@ describe('Stage 26C — Unified Category Envelope, Provenance & Cent Math', () =
     expect(mReverted.categories.find((c) => c.key === 'moradia')!.effectiveBudget).toBe(9000);
     expect(mReverted.categories.find((c) => c.key === 'lazer')!.effectiveBudget).toBe(10000);
   });
+
+  it('Guards against stale expectedRevision and replays identical CATEGORY_REINFORCEMENT idempotently without double-counting', () => {
+    const baseState = makeState26C();
+    const staleAttempt = executeCategoryReinforcementCommand(baseState, {
+      operationIdPrefix: 'op-reinf-stale',
+      sourceKind: 'piggy_bank',
+      sourceId: 'goal-lazer-cdb',
+      amountCents: 200000,
+      competence: '2026-11',
+      mode: 'single_100',
+      targets: [{ category: 'lazer', percentage: 100 }],
+      expectedRevision: 99,
+      authorizedBy: 'uid-ana',
+    });
+    expect(staleAttempt.status).toBe('conflict');
+
+    const firstExec = executeCategoryReinforcementCommand(baseState, {
+      operationIdPrefix: 'op-reinf-idem',
+      sourceKind: 'piggy_bank',
+      sourceId: 'goal-lazer-cdb',
+      amountCents: 200000,
+      competence: '2026-11',
+      mode: 'single_100',
+      targets: [{ category: 'lazer', percentage: 100 }],
+      expectedRevision: 1,
+      authorizedBy: 'uid-ana',
+      date: '2026-11-10',
+    });
+    expect(firstExec.status).toBe('success');
+
+    const replayExec = executeCategoryReinforcementCommand(firstExec.state, {
+      operationIdPrefix: 'op-reinf-idem',
+      sourceKind: 'piggy_bank',
+      sourceId: 'goal-lazer-cdb',
+      amountCents: 200000,
+      competence: '2026-11',
+      mode: 'single_100',
+      targets: [{ category: 'lazer', percentage: 100 }],
+      expectedRevision: 1,
+      authorizedBy: 'uid-ana',
+      date: '2026-11-10',
+    });
+    expect(replayExec.status).toBe('success');
+    expect(replayExec.idempotentReplay).toBe(true);
+    const summary = selectCategoryReinforcementSummary(replayExec.state, 'casal', '2026-11');
+    expect(summary.reinforcementCents.lazer).toBe(200000);
+  });
 });
 
 describe('Stage 26C — Blue Origin UI, Read-Only Provenance & Non-Mutating Preview (RTL)', () => {
@@ -597,6 +646,7 @@ describe('Stage 26C — Blue Origin UI, Read-Only Provenance & Non-Mutating Prev
         amountCents: 500000,
         amountR$: 5000,
         date: '2026-11-05',
+        state: 'reconciled',
         evidenceType: 'bank_reconciled',
         isReconciled: true,
         reconciliationRef: 'fitid-btg-5000',
@@ -611,6 +661,7 @@ describe('Stage 26C — Blue Origin UI, Read-Only Provenance & Non-Mutating Prev
         amountCents: 300000,
         amountR$: 3000,
         date: '2026-11-08',
+        state: 'occurred_manual',
         evidenceType: 'manual_declared',
         isReconciled: false,
       },
@@ -646,7 +697,7 @@ describe('Stage 26C — Blue Origin UI, Read-Only Provenance & Non-Mutating Prev
     expect(screen.getByTestId('provenance-sources-total').textContent).toContain('2 origens');
     expect(screen.getByText(/Conciliado em banco/i)).toBeTruthy();
     expect(screen.getByText(/Declarado manualmente/i)).toBeTruthy();
-    expect(screen.getByText(/-R\$\s*2\.000,00/)).toBeTruthy();
+    expect(screen.getByText(/-R\$\s*2\.000(,00)?/)).toBeTruthy();
 
     fireEvent.click(screen.getByText('Fechar consulta'));
     expect(parentCardClick).not.toHaveBeenCalled();
@@ -726,9 +777,9 @@ describe('Stage 26C — Blue Origin UI, Read-Only Provenance & Non-Mutating Prev
 
     // Switch to custom percentage and enter 33.33% * 3 -> triggers residue warning banner
     fireEvent.click(screen.getByText('Porcentagem editável'));
-    const moradiaCheckbox = screen.getByLabelText(/Moradia/i);
-    const comidaCheckbox = screen.getByLabelText(/Alimentação|Comida/i);
-    const lazerCheckbox = screen.getByLabelText(/Lazer/i);
+    const moradiaCheckbox = screen.getByRole('checkbox', { name: /Moradia/i });
+    const comidaCheckbox = screen.getByRole('checkbox', { name: /Comida/i });
+    const lazerCheckbox = screen.getByRole('checkbox', { name: /Lazer/i });
     if (!(moradiaCheckbox as HTMLInputElement).checked) fireEvent.click(moradiaCheckbox);
     if (!(comidaCheckbox as HTMLInputElement).checked) fireEvent.click(comidaCheckbox);
     if (!(lazerCheckbox as HTMLInputElement).checked) fireEvent.click(lazerCheckbox);
@@ -777,24 +828,7 @@ describe('Stage 26C — Blue Origin UI, Read-Only Provenance & Non-Mutating Prev
     render(
       <MonthThermometerGauge
         engineResult={engine}
-        activeLifeTier={{
-          key: 'tier-1',
-          name: 'Casal em Crescimento',
-          minIncome: 0,
-          maxIncome: 50000,
-          description: 'Plano base',
-          emblem: '🌱',
-          colorClass: 'bg-emerald-100',
-          percentages: {
-            moradia: 25,
-            transporte: 10,
-            comida: 20,
-            lazer: 25,
-            protecao: 10,
-            profissional: 5,
-            investimentos: 5,
-          },
-        }}
+        activeLifeTier={LIFE_TIERS.voo_alto}
         onOpenRaioX={onOpenRaioX}
       />
     );
@@ -806,7 +840,16 @@ describe('Stage 26C — Blue Origin UI, Read-Only Provenance & Non-Mutating Prev
     expect(screen.getByText(/Fundo Viagem & Lazer/i)).toBeTruthy();
     cleanup();
 
-    localStorage.setItem('junto_finance_state_v1', JSON.stringify(stateWithReinf));
+    localStorage.setItem(
+      'junto_app_financeiro_state_v5:local',
+      JSON.stringify({
+        version: 1,
+        coupleId: null,
+        state: stateWithReinf,
+        baseline: {},
+        headerBaseline: null,
+      })
+    );
     render(
       <FinanceProvider>
         <AvatarProvider>

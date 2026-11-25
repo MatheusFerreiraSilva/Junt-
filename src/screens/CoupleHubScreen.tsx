@@ -7,24 +7,14 @@ import {
   ArrowUpRight,
   ArrowDownLeft,
   CheckCircle2,
-  DollarSign,
   Heart,
   Trash2,
-  Check,
   X,
   CreditCard,
-  Zap,
-  PieChart,
-  BookmarkCheck,
   Palmtree,
-  Plane,
   Edit3,
   Archive,
   RefreshCw,
-  Calendar,
-  AlertCircle,
-  HelpCircle,
-  Link as LinkIcon,
   Sparkles,
 } from 'lucide-react';
 import { useFinance } from '../context/FinanceContext';
@@ -35,9 +25,7 @@ import {
   DreamSimulation,
   CategoryKey,
   PaidBy,
-  SavingsPiggyBank,
 } from '../types/finance';
-import { formatCurrency } from '../utils/formatters';
 import { FixedBillsPanelModal } from '../components/modals/FixedBillsPanelModal';
 import { selectCanonicalFixedBillsRegistry } from '../utils/occurrenceProjection';
 import { selectFixedBillOccurrences } from '../utils/fixedBillEngine';
@@ -67,8 +55,6 @@ export const CoupleHubScreen: React.FC = () => {
     updateDreamSimulation,
     deleteDreamSimulation,
     convertDreamToGoal,
-    setGoalCoupleAgreement,
-    monthlyFixedExpensesAvg,
     previewWithdrawal,
   } = useFinance();
 
@@ -2247,6 +2233,372 @@ export const CoupleHubScreen: React.FC = () => {
                   className="flex-1 py-2.5 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black shadow-md transition-colors cursor-pointer"
                 >
                   Confirmar Baixa
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* MODAL: WISHLIST MODAL (CRIAR / EDITAR DESEJO)                             */}
+      {/* ========================================================================= */}
+      {isWishlistModalOpen && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-slate-900 rounded-3xl p-6 max-w-md w-full border border-slate-200 dark:border-slate-800 shadow-2xl space-y-4 animate-in zoom-in-95 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
+              <h3 className="text-lg font-black text-slate-900 dark:text-white font-display">
+                {editingWishlist ? 'Editar Desejo' : 'Novo Desejo do Casal'}
+              </h3>
+              <button
+                type="button"
+                onClick={() => setIsWishlistModalOpen(false)}
+                className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveWishlist} className="space-y-3.5">
+              <div>
+                <label className="text-xs font-bold text-slate-600 dark:text-slate-400 block mb-1">
+                  O que desejam conquistar?
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={wishlistForm.title}
+                  onChange={(e) => setWishlistForm({ ...wishlistForm, title: e.target.value })}
+                  placeholder="Ex: Cafeteira, Notebook, Sofá novo..."
+                  className="w-full px-3.5 py-2.5 text-xs font-bold rounded-2xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="text-xs font-bold text-slate-600 dark:text-slate-400 block mb-1">
+                    Emoji
+                  </label>
+                  <input
+                    type="text"
+                    value={wishlistForm.emoji}
+                    onChange={(e) => setWishlistForm({ ...wishlistForm, emoji: e.target.value })}
+                    className="w-full px-3.5 py-2.5 text-xs font-bold rounded-2xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white text-center"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-bold text-slate-600 dark:text-slate-400 block mb-1">
+                    Valor Estimado (R$)
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={wishlistForm.estimatedPrice}
+                    onChange={(e) => setWishlistForm({ ...wishlistForm, estimatedPrice: e.target.value })}
+                    placeholder="1500"
+                    className="w-full px-3.5 py-2.5 text-xs font-bold rounded-2xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="text-xs font-bold text-slate-600 dark:text-slate-400 block mb-1">
+                    Categoria
+                  </label>
+                  <select
+                    value={wishlistForm.category}
+                    onChange={(e) => setWishlistForm({ ...wishlistForm, category: e.target.value as CategoryKey })}
+                    className="w-full px-3 py-2.5 text-xs font-bold rounded-2xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white"
+                  >
+                    <option value="lazer">Lazer</option>
+                    <option value="moradia">Moradia</option>
+                    <option value="transporte">Transporte</option>
+                    <option value="comida">Comida</option>
+                    <option value="protecao">Proteção</option>
+                    <option value="profissional">Profissional</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="text-xs font-bold text-slate-600 dark:text-slate-400 block mb-1">
+                    Prioridade
+                  </label>
+                  <select
+                    value={wishlistForm.priority}
+                    onChange={(e) => setWishlistForm({ ...wishlistForm, priority: e.target.value as 'alta' | 'media' | 'baixa' })}
+                    className="w-full px-3 py-2.5 text-xs font-bold rounded-2xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white"
+                  >
+                    <option value="alta">Alta</option>
+                    <option value="media">Média</option>
+                    <option value="baixa">Baixa</option>
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="text-xs font-bold text-slate-600 dark:text-slate-400 block mb-1">
+                  Quem sugeriu?
+                </label>
+                <select
+                  value={wishlistForm.requestedBy}
+                  onChange={(e) => setWishlistForm({ ...wishlistForm, requestedBy: e.target.value as 'partner1' | 'partner2' | 'both' })}
+                  className="w-full px-3 py-2.5 text-xs font-bold rounded-2xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white"
+                >
+                  <option value="both">Casal (Ambos)</option>
+                  <option value="partner1">{p1Name}</option>
+                  <option value="partner2">{p2Name}</option>
+                </select>
+              </div>
+
+              <div className="pt-3 flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setIsWishlistModalOpen(false)}
+                  className="flex-1 py-2.5 rounded-2xl border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 text-xs font-bold hover:bg-slate-50 dark:hover:bg-slate-800 cursor-pointer"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  className="flex-1 py-2.5 rounded-2xl bg-amber-500 hover:bg-amber-600 text-white text-xs font-black shadow-md cursor-pointer"
+                >
+                  {editingWishlist ? 'Salvar Desejo' : 'Adicionar Desejo'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* MODAL: FIXED BILL MODAL (CRIAR / EDITAR CONTA FIXA)                       */}
+      {/* ========================================================================= */}
+      {isBillModalOpen && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-slate-900 rounded-3xl p-6 max-w-md w-full border border-slate-200 dark:border-slate-800 shadow-2xl space-y-4 animate-in zoom-in-95 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
+              <h3 className="text-lg font-black text-slate-900 dark:text-white font-display">
+                {editingBill ? 'Editar Conta Fixa' : 'Nova Conta Fixa do Casal'}
+              </h3>
+              <button
+                type="button"
+                onClick={() => setIsBillModalOpen(false)}
+                className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveBill} className="space-y-3.5">
+              <div>
+                <label className="text-xs font-bold text-slate-600 dark:text-slate-400 block mb-1">
+                  Nome da Conta Fixa
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={billForm.title}
+                  onChange={(e) => setBillForm({ ...billForm, title: e.target.value })}
+                  placeholder="Ex: Aluguel, Condomínio, Internet..."
+                  className="w-full px-3.5 py-2.5 text-xs font-bold rounded-2xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="text-xs font-bold text-slate-600 dark:text-slate-400 block mb-1">
+                    Valor Previsto (R$)
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={billForm.amount}
+                    onChange={(e) => setBillForm({ ...billForm, amount: e.target.value })}
+                    placeholder="0,00"
+                    className="w-full px-3.5 py-2.5 text-xs font-bold rounded-2xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-bold text-slate-600 dark:text-slate-400 block mb-1">
+                    Dia do Vencimento
+                  </label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="31"
+                    required
+                    value={billForm.dueDay}
+                    onChange={(e) => setBillForm({ ...billForm, dueDay: e.target.value })}
+                    className="w-full px-3.5 py-2.5 text-xs font-bold rounded-2xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="text-xs font-bold text-slate-600 dark:text-slate-400 block mb-1">
+                    Categoria
+                  </label>
+                  <select
+                    value={billForm.category}
+                    onChange={(e) => setBillForm({ ...billForm, category: e.target.value as CategoryKey })}
+                    className="w-full px-3 py-2.5 text-xs font-bold rounded-2xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white"
+                  >
+                    <option value="moradia">Moradia</option>
+                    <option value="transporte">Transporte</option>
+                    <option value="comida">Comida</option>
+                    <option value="lazer">Lazer</option>
+                    <option value="protecao">Proteção</option>
+                    <option value="profissional">Profissional</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="text-xs font-bold text-slate-600 dark:text-slate-400 block mb-1">
+                    Responsável
+                  </label>
+                  <select
+                    value={billForm.assignedPayer}
+                    onChange={(e) => setBillForm({ ...billForm, assignedPayer: e.target.value as PaidBy })}
+                    className="w-full px-3 py-2.5 text-xs font-bold rounded-2xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white"
+                  >
+                    <option value="both">Casal (50/50)</option>
+                    <option value="partner1">{p1Name}</option>
+                    <option value="partner2">{p2Name}</option>
+                  </select>
+                </div>
+              </div>
+
+              <label className="flex items-center gap-2 text-xs font-bold text-slate-700 dark:text-slate-300 cursor-pointer pt-1">
+                <input
+                  type="checkbox"
+                  checked={billForm.autoPay}
+                  onChange={(e) => setBillForm({ ...billForm, autoPay: e.target.checked })}
+                  className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                />
+                <span>Débito automático ativo</span>
+              </label>
+
+              <div className="pt-3 flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setIsBillModalOpen(false)}
+                  className="flex-1 py-2.5 rounded-2xl border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 text-xs font-bold hover:bg-slate-50 dark:hover:bg-slate-800 cursor-pointer"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  className="flex-1 py-2.5 rounded-2xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-black shadow-md cursor-pointer"
+                >
+                  {editingBill ? 'Salvar Conta' : 'Criar Conta Fixa'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* MODAL: DREAM SIMULATION MODAL (CRIAR / EDITAR SONHO)                      */}
+      {/* ========================================================================= */}
+      {isDreamModalOpen && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-slate-900 rounded-3xl p-6 max-w-md w-full border border-slate-200 dark:border-slate-800 shadow-2xl space-y-4 animate-in zoom-in-95 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
+              <h3 className="text-lg font-black text-slate-900 dark:text-white font-display">
+                {editingDream ? 'Editar Simulação de Sonho' : 'Novo Sonho de Longo Prazo'}
+              </h3>
+              <button
+                type="button"
+                onClick={() => setIsDreamModalOpen(false)}
+                className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveDream} className="space-y-3.5">
+              <div>
+                <label className="text-xs font-bold text-slate-600 dark:text-slate-400 block mb-1">
+                  Nome do Sonho
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={dreamForm.title}
+                  onChange={(e) => setDreamForm({ ...dreamForm, title: e.target.value })}
+                  placeholder="Ex: Apartamento próprio, Ano sabático..."
+                  className="w-full px-3.5 py-2.5 text-xs font-bold rounded-2xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="text-xs font-bold text-slate-600 dark:text-slate-400 block mb-1">
+                    Emoji
+                  </label>
+                  <input
+                    type="text"
+                    value={dreamForm.emoji}
+                    onChange={(e) => setDreamForm({ ...dreamForm, emoji: e.target.value })}
+                    className="w-full px-3.5 py-2.5 text-xs font-bold rounded-2xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white text-center"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-bold text-slate-600 dark:text-slate-400 block mb-1">
+                    Custo Total (R$)
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={dreamForm.totalCost}
+                    onChange={(e) => setDreamForm({ ...dreamForm, totalCost: e.target.value })}
+                    placeholder="450000"
+                    className="w-full px-3.5 py-2.5 text-xs font-bold rounded-2xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="text-xs font-bold text-slate-600 dark:text-slate-400 block mb-1">
+                    Entrada Inicial (R$)
+                  </label>
+                  <input
+                    type="text"
+                    value={dreamForm.downPayment}
+                    onChange={(e) => setDreamForm({ ...dreamForm, downPayment: e.target.value })}
+                    placeholder="50000"
+                    className="w-full px-3.5 py-2.5 text-xs font-bold rounded-2xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-bold text-slate-600 dark:text-slate-400 block mb-1">
+                    Aporte Mensal (R$)
+                  </label>
+                  <input
+                    type="text"
+                    value={dreamForm.monthlySavings}
+                    onChange={(e) => setDreamForm({ ...dreamForm, monthlySavings: e.target.value })}
+                    placeholder="2500"
+                    className="w-full px-3.5 py-2.5 text-xs font-bold rounded-2xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white"
+                  />
+                </div>
+              </div>
+
+              <div className="pt-3 flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setIsDreamModalOpen(false)}
+                  className="flex-1 py-2.5 rounded-2xl border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 text-xs font-bold hover:bg-slate-50 dark:hover:bg-slate-800 cursor-pointer"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  className="flex-1 py-2.5 rounded-2xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-black shadow-md cursor-pointer"
+                >
+                  {editingDream ? 'Salvar Sonho' : 'Simular Sonho'}
                 </button>
               </div>
             </form>

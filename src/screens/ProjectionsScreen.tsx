@@ -1,12 +1,5 @@
 import React, { useCallback, useState, useMemo } from 'react';
-import {
-  TrendingUp,
-  Sparkles,
-  Info,
-  Calendar,
-  DollarSign,
-  Heart,
-} from 'lucide-react';
+import { Sparkles } from 'lucide-react';
 import { useFinance } from '../context/FinanceContext';
 import { formatCurrency, formatCompactCurrency } from '../utils/formatters';
 

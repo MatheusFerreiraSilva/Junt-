@@ -6,16 +6,11 @@ import {
   ArrowLeft,
   Check,
   Sparkles,
-  Users,
-  User,
-  Shield,
-  Scissors,
   Plus,
   Trash2,
   AlertCircle,
   CheckCircle2,
   Store,
-  Tag,
   DollarSign,
   Percent,
 } from 'lucide-react';
@@ -35,7 +30,6 @@ import {
 import {
   validateTransactionSplits,
   apportionSplitsByPercentage,
-  apportionDiscountOrFreight,
   roundMoney,
 } from '../../utils/domainSelectors';
 import { formatCurrency } from '../../utils/formatters';
@@ -261,8 +255,6 @@ export const ExpenseModal: React.FC<ExpenseModalProps> = ({
 
   const dialogRef = useDialogFocus(isOpen, onClose);
 
-  const totalIncome = state.profile.partner1Income + state.profile.partner2Income;
-  const partner1IncomePct = totalIncome > 0 ? Math.round((state.profile.partner1Income / totalIncome) * 100) : 50;
   const currentParsedAmount = parseFloat(amount.replace(',', '.')) || 0;
   const totalCents = Math.round(currentParsedAmount * 100);
 
@@ -950,9 +942,7 @@ export const ExpenseModal: React.FC<ExpenseModalProps> = ({
 
                   {/* Splits List */}
                   <div className="space-y-2.5 max-h-[36vh] overflow-y-auto pr-1">
-                    {splits.map((s, idx) => {
-                      const splitVal = parseFloat(s.amount.replace(',', '.')) || 0;
-                      return (
+                    {splits.map((s, idx) => (
                         <div
                           key={s.id}
                           className="p-3 rounded-2xl bg-slate-50/80 dark:bg-slate-800/60 border border-slate-200/90 dark:border-slate-700/80 space-y-2"
@@ -1074,8 +1064,7 @@ export const ExpenseModal: React.FC<ExpenseModalProps> = ({
                             </div>
                           </div>
                         </div>
-                      );
-                    })}
+                    ))}
                   </div>
 
                   {splitMode === 'percentage' && (
@@ -1789,7 +1778,7 @@ export const ExpenseModal: React.FC<ExpenseModalProps> = ({
                           <span className="text-[10px] uppercase font-bold text-slate-400 block">
                             Fatias Classificadas ({splits.length}):
                           </span>
-                          {splits.map((s, idx) => (
+                          {splits.map((s) => (
                             <div key={s.id} className="flex items-center justify-between text-xs py-0.5">
                               <span className="flex items-center gap-1.5 min-w-0">
                                 <span>{CATEGORIES_BASE[s.category]?.emoji}</span>

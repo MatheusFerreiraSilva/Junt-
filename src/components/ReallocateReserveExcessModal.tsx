@@ -5,9 +5,7 @@ import {
   Target,
   Unlock,
   Sparkles,
-  ArrowRight,
   AlertCircle,
-  CheckCircle2,
 } from 'lucide-react';
 import { useFinance } from '../context/FinanceContext';
 import { formatCurrency } from '../utils/formatters';

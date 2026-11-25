@@ -1,19 +1,11 @@
 import React from 'react';
 import {
   X,
-  Info,
-  Calendar,
-  CreditCard,
   Building,
-  User,
   ShieldCheck,
-  Tag,
   Trash2,
   Edit3,
-  ExternalLink,
   Layers,
-  Sparkles,
-  RefreshCw,
 } from 'lucide-react';
 import { StatementItem } from '../../utils/unifiedLedger';
 import { formatCurrency } from '../../utils/formatters';

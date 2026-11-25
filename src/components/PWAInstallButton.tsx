@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Download, Smartphone, Share2, PlusSquare, Check, X, Sparkles } from 'lucide-react';
+import { Download, Smartphone, Share2, PlusSquare, Check, X } from 'lucide-react';
 import { usePWAInstall } from '../hooks/usePWAInstall';
 
 interface PWAInstallButtonProps {

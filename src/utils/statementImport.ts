@@ -254,9 +254,6 @@ export async function parseCsvStatement(
   const rawHeader = data.shift() || [];
   const header = rawHeader.map(normalize);
 
-  const findExact = (...names: string[]) =>
-    header.findIndex(h => names.some(n => h === normalize(n)));
-
   const findIncludes = (...names: string[]) =>
     header.findIndex(h => names.some(n => h.includes(normalize(n))));
 
@@ -264,14 +261,19 @@ export async function parseCsvStatement(
   const di = findIncludes('data', 'date', 'data lancamento', 'data transacao', 'dt');
   const de = findIncludes('descricao', 'description', 'historico', 'titulo', 'lancamento', 'memo', 'detalhes', 'estabelecimento');
 
-  // EXCLUDE 'saldo' from transaction value column search!
-  let am = findExact('valor', 'amount', 'value', 'quantia', 'valor (r$)', 'valor do lancamento');
-  if (am < 0) {
-    am = findIncludes('valor', 'amount', 'value', 'quantia', 'lancamento');
-  }
-
   // Check if header contains explicit "saldo" column
   const saldoIndex = findIncludes('saldo', 'saldo acumulado', 'saldo disponível');
+
+  // EXCLUDE 'saldo' from transaction value column search!
+  const isAmountExact = (h: string) =>
+    ['valor', 'amount', 'value', 'quantia', 'valor (r$)', 'valor do lancamento'].some(n => h === normalize(n));
+  const isAmountMatch = (h: string) =>
+    ['valor', 'amount', 'value', 'quantia', 'lancamento'].some(n => h.includes(normalize(n)));
+
+  let am = header.findIndex((h, idx) => idx !== saldoIndex && !h.includes('saldo') && isAmountExact(h));
+  if (am < 0) {
+    am = header.findIndex((h, idx) => idx !== saldoIndex && !h.includes('saldo') && isAmountMatch(h));
+  }
 
   if (di < 0 || de < 0 || am < 0) {
     throw new Error(

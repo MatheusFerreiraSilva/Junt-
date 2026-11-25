@@ -7,12 +7,6 @@ import {
   Check,
   Sparkles,
   Stethoscope,
-  Building,
-  Clock,
-  Calendar,
-  DollarSign,
-  CheckCircle2,
-  PlusCircle,
 } from 'lucide-react';
 import { useFinance } from '../../context/FinanceContext';
 import { PaidBy, ShiftSector, MedicalShift, IncomeSourceClassification } from '../../types/finance';
@@ -49,7 +43,7 @@ export const IncomeModal: React.FC<IncomeModalProps> = ({ isOpen, onClose, defau
   const [selectedPendingShiftId, setSelectedPendingShiftId] = useState<string>('');
   const [hospitalName, setHospitalName] = useState<string>('');
   const [shiftHours, setShiftHours] = useState<number>(12);
-  const [shiftSector, setShiftSector] = useState<ShiftSector>('porta');
+  const shiftSector: ShiftSector = 'porta';
   const [shiftDateWorked, setShiftDateWorked] = useState<string>(() =>
     defaultDate || new Date().toISOString().split('T')[0]
   );

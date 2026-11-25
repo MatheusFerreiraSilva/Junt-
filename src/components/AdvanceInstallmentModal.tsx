@@ -6,16 +6,14 @@ import {
   Shield,
   Target,
   Sparkles,
-  ArrowRight,
   CheckCircle2,
   AlertCircle,
   TrendingDown,
-  Layers,
   Sliders,
   DollarSign,
 } from 'lucide-react';
 import { useFinance, CATEGORIES_BASE } from '../context/FinanceContext';
-import { InstallmentPurchase, CategoryKey } from '../types/finance';
+import { InstallmentPurchase } from '../types/finance';
 import { formatCurrency, formatMonthYear, addMonths } from '../utils/formatters';
 
 interface AdvanceInstallmentModalProps {
@@ -35,19 +33,13 @@ export const AdvanceInstallmentModal: React.FC<AdvanceInstallmentModalProps> = (
     emergencyReserveFloorAmount,
     emergencyReserveExcessAmount,
     categoriesSpending,
-    totalIncome,
     advanceInstallmentPayment,
   } = useFinance();
 
-  // If no specific installment passed, let user pick from active consumption installments
-  const [selectedInstId, setSelectedInstId] = useState<string>(
-    targetInstallment?.id || (activeInstallments[0]?.id ?? '')
+  const currentInst = useMemo(
+    () => targetInstallment || activeInstallments[0] || null,
+    [targetInstallment, activeInstallments]
   );
-
-  const currentInst = useMemo(() => {
-    if (targetInstallment) return targetInstallment;
-    return activeInstallments.find(i => i.id === selectedInstId) || activeInstallments[0] || null;
-  }, [targetInstallment, activeInstallments, selectedInstId]);
 
   const remainingInstallmentsCount = currentInst
     ? Math.max(1, currentInst.installmentsCount - currentInst.paidInstallmentsCount)

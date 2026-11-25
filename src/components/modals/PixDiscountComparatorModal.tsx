@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, Sparkles, Calculator, Check, ArrowRight, ShieldCheck, HelpCircle } from 'lucide-react';
+import { X, Sparkles } from 'lucide-react';
 import { SavingsPiggyBank } from '../../types/finance';
 import { formatCurrency } from '../../utils/formatters';
 

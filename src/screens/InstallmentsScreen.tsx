@@ -1,23 +1,14 @@
 import { installmentInMonth, remainingInstallmentValue, buildInstallmentSchedule } from '../utils/installmentMoney';
 import React, { useState } from 'react';
 import {
-  CreditCard,
   Plus,
-  AlertTriangle,
-  CheckCircle2,
   Calendar,
   Sparkles,
   TrendingDown,
   Trash2,
   Check,
-  Shield,
-  Home,
-  Building,
-  RefreshCw,
   Clock,
-  ArrowRight,
   ShieldCheck,
-  DollarSign,
   Wallet,
   Zap,
   ChevronDown,
@@ -31,7 +22,6 @@ import {
   addMonths,
   formatShortMonthYear,
   formatMonthYear,
-  getNextMonth,
 } from '../utils/formatters';
 import { AdvanceInstallmentModal } from '../components/AdvanceInstallmentModal';
 
@@ -51,10 +41,8 @@ export const InstallmentsScreen: React.FC<InstallmentsScreenProps> = ({
     installmentCommitmentPercentage,
     installmentLimitPercentage,
     isInstallmentCommitmentHigh,
-    toggleInitialHomePhase,
     recordInstallmentPayment,
     reverseInstallmentPayment,
-    markInstallmentPaidStep,
     deleteInstallment,
     getExpenseSplit,
   } = useFinance();
@@ -63,7 +51,6 @@ export const InstallmentsScreen: React.FC<InstallmentsScreenProps> = ({
   const [selectedAdvanceInst, setSelectedAdvanceInst] = useState<InstallmentPurchase | null>(null);
   const [expandedScheduleId, setExpandedScheduleId] = useState<string | null>(null);
 
-  const nextMonthKey = getNextMonth(state.currentMonth);
   const completedInstallments = state.installments.filter(i => !i.active);
   const isInitialHomePhase = !!state.profile.isInitialHomePhase;
 

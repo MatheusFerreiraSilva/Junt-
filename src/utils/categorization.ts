@@ -119,7 +119,7 @@ export function detectRecurringSubscriptions(
 
   const newlyDetected: DetectedSubscription[] = [];
 
-  Object.entries(groups).forEach(([key, list]) => {
+  Object.values(groups).forEach((list) => {
     // If appears 2 or more times across different dates
     if (list.length >= 2) {
       const first = list[0];
